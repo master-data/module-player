@@ -26,6 +26,9 @@ export interface XmpTrackerSource {
   readonly channelCount: number;
   readonly orders: readonly number[];
   readonly patterns: readonly XmpTrackerPattern[];
+  readonly patternCount: number;
+  readonly initialSpeed: number;
+  readonly initialBpm: number;
   getPosition(): { order: number; pattern: number; row: number; startMs: number; endMs: number } | undefined;
 }
 

@@ -70,6 +70,9 @@ class XmpTrackerSource {
   get channelCount() { return this._data?.channelCount ?? 0; }
   get orders() { return this._data?.orders ?? []; }
   get patterns() { return this._data?.patterns ?? []; }
+  get patternCount() { return this._data?.patterns.length ?? 0; }
+  get initialSpeed() { return this._data?.speed ?? 0; }
+  get initialBpm() { return this._data?.bpm ?? 0; }
   getPosition() {
     const timeline = this._data?.timeline;
     const time = this._player._api?.getPlaybackPosition?.();

@@ -27,7 +27,7 @@ This repository is an integration layer built on the work of upstream projects a
 - **Generic WebAudio Player** and **ChannelStreamer** are by Juergen Wothke. They provide the upstream ScriptProcessor playback path and optional channel waveform support.
 - **libxmp** is by Claudio Matsuoka and its contributors. It supplies the tracker replay functionality behind the webXMP backend.
 - **Format scout** is an advisory JavaScript port of UADE's `amifilemagic.c` result paths and `eagleplayer.conf` mappings. UADE remains authoritative for replay-player selection; the upstream file-magic source is marked dual GPL/Public Domain.
-- **Demo modules**: `GSLINGER.MOD` (`02`) by Jogeir Liljedahl / Noiseless; `di.partyland` by Olof Gustafsson / Digital Illusions; and `onward.xm` (`Onward`) by Jugi / Complex. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for the complete credit record.
+- **Demo modules**: `GSLINGER.MOD` (`02`) by Jogeir Liljedahl / Noiseless; `di.partyland` by Olof Gustafsson / Digital Illusions; `elw-lock.xm` (`Dead lock`) by Elwood; and `onward.xm` (`Onward`) by Jugi / Complex. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for the complete credit record.
 
 Names and notices above identify upstream work; they do not replace the licences or required attribution. Retain the bundled file headers, [uade/LICENSES.md](uade/LICENSES.md), and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) in redistributions.
 
@@ -55,7 +55,7 @@ npx serve . -l 4173
 
 Open `http://localhost:4173/demo/`. Select **Initialize** from a user gesture, then choose a bundled module or a local file.
 
-The demo lists `di.partyland`, `GSLINGER.MOD`, and `onward.xm` in [demo/music-manifest.json](demo/music-manifest.json). It routes PC tracker extensions, including standard MOD files, to XMP first and uses UADE for Amiga formats; if UADE cannot load an unrecognised module, it retries with XMP.
+The demo lists `di.partyland`, `elw-lock.xm`, `GSLINGER.MOD`, and `onward.xm` in [demo/music-manifest.json](demo/music-manifest.json). It routes PC tracker extensions, including standard MOD files, to XMP first and uses UADE for Amiga formats; if UADE cannot load an unrecognised module, it retries with XMP.
 
 ## ESM APIs
 

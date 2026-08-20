@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Module Player</title>
   <link rel="icon" href="favicon.ico">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
   <main class="player-shell">
@@ -81,10 +81,11 @@
   </dialog>
   <dialog id="tracker-dialog" class="tracker-dialog" aria-labelledby="tracker-dialog-title">
     <header><div><p class="eyebrow">Pattern</p><h2 id="tracker-dialog-title">Tracker View</h2></div><button class="dialog-close" type="button" aria-label="Close pattern view">Close</button></header>
-    <div class="tracker-toolbar"><label>Order <select id="tracker-order" disabled></select></label><p id="tracker-status" class="panel-note">Load a supported XMP module to inspect its pattern data.</p></div>
+    <div class="tracker-toolbar"><p id="tracker-status" class="panel-note">Load a supported XMP module to inspect its pattern data.</p></div>
+    <nav id="tracker-order-map" class="tracker-order-map" aria-label="Module order map"></nav>
     <section id="tracker-scopes" class="tracker-scopes" hidden aria-label="Stereo output scopes"></section>
     <div id="tracker-grid" class="tracker-grid"></div>
   </dialog>
-  <script type="module" src="main.js?v=12"></script>
+  <script type="module" src="main.js?v=15"></script>
 </body>
 </html>

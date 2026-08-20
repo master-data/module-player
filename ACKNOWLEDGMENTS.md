@@ -20,6 +20,7 @@ The demo bundles the following separate creative works. Their authors and rights
 | --- | --- | --- | --- |
 | `GSLINGER.MOD` | `Guitar Slinger` | Jogeir Liljedahl / Noiseless | (c) 1992/93 Noiseless |
 | `di.partyland` | `Partyland` | Olof Gustafsson  | Digital Illusions |
+| `elw-lock.xm` | `Dead lock` | Elwood | |
 | `onward.xm` | `Onward` | Jugi / Complex | (c) 1995 Jugi / Complex |
 
 Their inclusion and redistribution were reviewed for this repository; retain the works and their associated attribution in downstream redistributions.

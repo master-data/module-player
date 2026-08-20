@@ -32,6 +32,7 @@ let queuedSubsongRestart;
 let subsongState;
 let selectedSubsong;
 let selectedTrackerOrder = 0;
+let trackerFollowingPlayback = true;
 let trackerAnimationFrame;
 let lastTrackerPositionKey;
 
@@ -285,6 +286,7 @@ function setXmpMetadata(filename, songInfo = {}) {
   };
   subsongState = undefined;
   selectedSubsong = undefined;
+  trackerFollowingPlayback = true;
   lastTrackerPositionKey = undefined;
   $("tracker-grid").replaceChildren();
   delete $("tracker-grid").dataset.order;
@@ -335,7 +337,7 @@ function drawTrackerScope(canvas, data) {
 function renderTrackerScopes() {
   const container = $("tracker-scopes");
   const source = xmpPlayer?.visualization;
-  if (!source || source.streamCount < 2) {
+  if (!source) {
     container.hidden = true;
     container.replaceChildren();
     return;
@@ -354,36 +356,64 @@ function renderTrackerScopes() {
     }));
   }
   for (const channel of [0, 1]) {
-    drawTrackerScope(container.children[channel].querySelector("canvas"), source.readChannel(channel));
+    const data = source.streamCount > channel ? source.readChannel(channel) : new Float32Array();
+    drawTrackerScope(container.children[channel].querySelector("canvas"), data);
   }
+}
+function setTrackerOrder(order, followPlayback = false) {
+  const tracker = xmpPlayer?.tracker;
+  if (!tracker?.available) return;
+  selectedTrackerOrder = Math.min(tracker.orders.length - 1, Math.max(0, order));
+  trackerFollowingPlayback = followPlayback;
+  lastTrackerPositionKey = undefined;
+  renderTrackerView();
+}
+function renderTrackerOrderMap(tracker, position) {
+  const map = $("tracker-order-map");
+  if (map.dataset.orders !== tracker.orders.join(",")) {
+    map.replaceChildren(...tracker.orders.map((pattern, order) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tracker-order-cell";
+      button.dataset.order = order;
+      button.setAttribute("aria-label", `Order ${order}, pattern ${pattern}`);
+      button.textContent = String(pattern).padStart(2, "0");
+      return button;
+    }));
+    map.dataset.orders = tracker.orders.join(",");
+  }
+  for (const button of map.children) {
+    const order = Number(button.dataset.order);
+    button.classList.toggle("is-selected", order === selectedTrackerOrder);
+    button.classList.toggle("is-playing", order === position?.order);
+  }
+  const focusOrder = trackerFollowingPlayback ? position?.order : selectedTrackerOrder;
+  if (focusOrder !== undefined) map.querySelector(`[data-order="${focusOrder}"]`)?.scrollIntoView({ block: "nearest", inline: "center" });
 }
 function renderTrackerView() {
   const dialog = $("tracker-dialog");
   const tracker = activeEngine === "xmp" ? xmpPlayer?.tracker : undefined;
-  const order = $("tracker-order");
   const grid = $("tracker-grid");
   if (!tracker?.available) {
-    order.disabled = true;
-    order.replaceChildren();
+    $("tracker-order-map").replaceChildren();
+    delete $("tracker-order-map").dataset.orders;
     $("tracker-status").textContent = activeEngine === "xmp" ? "Pattern decoding is available for MOD and XM modules." : "Pattern view is available for decoded XMP MOD and XM modules.";
     grid.replaceChildren();
     renderTrackerScopes();
     return;
   }
   const position = tracker.getPosition();
-  if (position) selectedTrackerOrder = position.order;
-  const ordersChanged = order.options.length !== tracker.orders.length;
-  if (ordersChanged) order.replaceChildren(...tracker.orders.map((pattern, index) => new Option(`${String(index).padStart(2, "0")} : ${String(pattern).padStart(2, "0")}`, String(index))));
+  if (position && trackerFollowingPlayback) selectedTrackerOrder = position.order;
   selectedTrackerOrder = Math.min(selectedTrackerOrder, tracker.orders.length - 1);
-  order.value = String(selectedTrackerOrder);
-  order.disabled = false;
+  renderTrackerOrderMap(tracker, position);
   const pattern = tracker.patterns[tracker.orders[selectedTrackerOrder]];
   if (!pattern) {
     $("tracker-status").textContent = "The selected order does not contain decoded pattern data.";
     grid.replaceChildren();
     return;
   }
-  $("tracker-status").textContent = `${tracker.format} / ${tracker.channelCount} channels`;
+  const row = position?.order === selectedTrackerOrder ? String(position.row).padStart(2, "0") : "--";
+  $("tracker-status").textContent = `${tracker.format}  |  ${tracker.channelCount} CH  |  ORDER ${String(selectedTrackerOrder + 1).padStart(2, "0")} / ${tracker.orders.length}  |  PAT ${String(tracker.orders[selectedTrackerOrder]).padStart(2, "0")}  |  ROW ${row} / ${String(pattern.rows.length - 1).padStart(2, "0")}  |  ${tracker.patternCount} PATTERNS  |  ${tracker.initialBpm} BPM  |  SPEED ${tracker.initialSpeed}`;
   renderTrackerScopes();
   if (grid.dataset.order !== String(selectedTrackerOrder) || grid.dataset.format !== tracker.format) {
     const table = document.createElement("table");
@@ -782,10 +812,12 @@ $("visualizer").addEventListener("change", (event) => {
   clearStagedRestart("scopes");
   startScopeLoop();
 });
-$("tracker-order").addEventListener("change", (event) => {
-  selectedTrackerOrder = Number(event.target.value);
-  lastTrackerPositionKey = undefined;
-  renderTrackerView();
+$("tracker-order-map").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-order]");
+  if (!button) return;
+  const order = Number(button.dataset.order);
+  const playingOrder = xmpPlayer?.tracker.getPosition()?.order;
+  setTrackerOrder(order, order === playingOrder);
 });
 $("buffer").addEventListener("change", () => stageRestart("audio buffer"));
 $("audio-rate").addEventListener("change", () => stageRestart("audio rate"));
