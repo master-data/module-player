@@ -121,6 +121,7 @@ window.webXmpPlayer = Object.freeze({
   setPanning: (value) => xmpPlayer?.setPanning(value),
   setSilenceTimeout: (seconds) => xmpPlayer?.setSilenceTimeout(seconds),
   setTimeout: (seconds) => xmpPlayer?.setPlaybackTimeout(seconds == null ? -1 : seconds * 1000),
+  getPlaybackPosition: () => xmpPlayer?._backendAdapter?.Module.ccall("emu_get_current_position", "number") ?? 0,
   dispose: async () => {
     xmpPlayer?.pause();
     const audioContext = ScriptNodePlayer.getWebAudioContext();

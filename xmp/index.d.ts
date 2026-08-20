@@ -17,10 +17,23 @@ export interface XmpVisualizationSource {
   readOverallVu(): number;
 }
 
+export interface XmpTrackerEvent { note: number; instrument: number; volume: number; effect: number; parameter: number; }
+export interface XmpTrackerPattern { rows: XmpTrackerEvent[][]; }
+export interface XmpTrackerSource {
+  readonly available: boolean;
+  readonly synchronized: false;
+  readonly format?: "MOD" | "XM";
+  readonly channelCount: number;
+  readonly orders: readonly number[];
+  readonly patterns: readonly XmpTrackerPattern[];
+  getPosition(): { order: number; pattern: number; row: number; startMs: number; endMs: number } | undefined;
+}
+
 export class XmpPlaybackError extends Error { operation: string; filename?: string; cause: unknown; }
 export class XmpPlayer {
   readonly state: XmpPlayerState;
   readonly visualization?: XmpVisualizationSource;
+  readonly tracker: XmpTrackerSource;
   on(event: "state" | "metadata" | "ended" | "error", listener: (payload?: unknown) => void): () => void;
   getDiagnostics(): Record<string, unknown>;
   load(input: File | ArrayBuffer, options?: XmpLoadOptions): Promise<Record<string, unknown>>;

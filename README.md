@@ -55,7 +55,7 @@ npx serve . -l 4173
 
 Open `http://localhost:4173/demo/`. Select **Initialize** from a user gesture, then choose a bundled module or a local file.
 
-The demo lists `di.partyland`, `GSLINGER.MOD`, and `onward.xm` in [demo/music-manifest.json](demo/music-manifest.json). It routes known PC tracker extensions to XMP first and uses UADE for Amiga formats; if UADE cannot load an unrecognised module, it retries with XMP.
+The demo lists `di.partyland`, `GSLINGER.MOD`, and `onward.xm` in [demo/music-manifest.json](demo/music-manifest.json). It routes PC tracker extensions, including standard MOD files, to XMP first and uses UADE for Amiga formats; if UADE cannot load an unrecognised module, it retries with XMP.
 
 ## ESM APIs
 
@@ -212,6 +212,24 @@ const level = source.readVu(0);
 UADE normally exposes tracker-channel waveforms. XMP exposes its stereo output scopes, not independent tracker-channel PCM streams. Use `source.streamCount` at runtime rather than assuming a channel count.
 
 Do not enable UADE visualization merely to hide a canvas. It loads ChannelStreamer and performs additional data copying on the audio path. Consumers own the animation loop and should render only after playback has supplied non-silent data.
+
+### XMP Pattern Data
+
+XMP exposes optional decoded pattern data for MOD and XM modules. It can drive a tracker-style, per-channel pattern view:
+
+```js
+const tracker = player.tracker;
+
+if (tracker.available) {
+  const pattern = tracker.patterns[tracker.orders[0]];
+  console.log(tracker.format, tracker.channelCount, pattern.rows);
+  console.log(tracker.getPosition());
+}
+```
+
+The data is static and read-only. `getPosition()` maps webXMP's live playback time onto decoded pattern timing and returns an estimated order, pattern, and row for MOD/XM playback. `tracker.synchronized` remains `false`: the bundled webXMP runtime does not expose libxmp's active frame, so tracker-specific flow quirks can differ from the estimate. Other XMP formats remain unavailable until they have a format-specific decoder or the native runtime bridge is extended.
+
+The demo Pattern modal renders the actual XMP stereo output as `OUT L` and `OUT R` scopes for every supported pattern format. XMP does not expose independent tracker-channel PCM streams.
 
 ## Diagnostics
 

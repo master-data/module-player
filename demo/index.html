@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Module Player</title>
   <link rel="icon" href="favicon.ico">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <main class="player-shell">
@@ -23,6 +23,7 @@
         <button id="play" class="command" disabled>Start</button>
         <button id="pause" class="command" disabled>Pause</button>
         <button id="stop" class="command danger" disabled>Stop</button>
+        <button id="open-tracker" class="command" disabled>Pattern</button>
         <div id="track-control" class="subsong-control transport-subsong"><label for="track"><span class="range-label">Subsong <output id="track-readout" for="track">--</output></span></label><div class="subsong-actions"><button id="previous-track" class="subsong-step" type="button" aria-label="Previous subsong" disabled>&larr;</button><input id="track" type="range" min="0" max="0" step="1" value="0" disabled aria-describedby="track-readout"><button id="next-track" class="subsong-step" type="button" aria-label="Next subsong" disabled>&rarr;</button></div></div>
       </div>
       <div class="source-control">
@@ -45,12 +46,9 @@
       </section>
 
       <section class="diagnostic-panel panel">
-        <div class="panel-heading"><p class="panel-kicker">Runtime diagnostics</p><button id="open-diagnostics" class="text-command" type="button" disabled>Raw diagnostics</button></div>
-        <div id="diagnostics" class="diagnostics-grid is-empty" aria-live="polite">
-          <p class="empty-state">Runtime not initialized.</p>
-        </div>
+        <div class="panel-heading"><p class="panel-kicker">Runtime diagnostics</p><button id="open-diagnostics" class="text-command" type="button" disabled>Expand</button></div>
+        <div id="diagnostics" class="diagnostics-grid is-empty" aria-live="polite"><p class="empty-state">Runtime not initialized.</p></div>
       </section>
-
     </section>
   </main>
   <button id="settings-toggle" class="settings-tab" type="button" aria-controls="settings-panel" aria-expanded="false">Settings</button>
@@ -78,9 +76,15 @@
     <pre id="metadata-raw">No module loaded.</pre>
   </dialog>
   <dialog id="diagnostics-dialog" class="inspector-dialog" aria-labelledby="diagnostics-dialog-title">
-    <header><div><p class="eyebrow">Inspector</p><h2 id="diagnostics-dialog-title">Raw runtime diagnostics</h2></div><button class="dialog-close" type="button" aria-label="Close diagnostics inspector">Close</button></header>
-    <pre id="diagnostics-raw">Runtime not initialized.</pre>
+    <header><div><p class="eyebrow">Inspector</p><h2 id="diagnostics-dialog-title">Runtime Diagnostics</h2></div><button class="dialog-close" type="button" aria-label="Close diagnostics inspector">Close</button></header>
+    <div id="diagnostics-detail" class="diagnostics-detail is-empty"><p class="empty-state">Runtime not initialized.</p></div>
   </dialog>
-  <script type="module" src="main.js?v=9"></script>
+  <dialog id="tracker-dialog" class="tracker-dialog" aria-labelledby="tracker-dialog-title">
+    <header><div><p class="eyebrow">Pattern</p><h2 id="tracker-dialog-title">Tracker View</h2></div><button class="dialog-close" type="button" aria-label="Close pattern view">Close</button></header>
+    <div class="tracker-toolbar"><label>Order <select id="tracker-order" disabled></select></label><p id="tracker-status" class="panel-note">Load a supported XMP module to inspect its pattern data.</p></div>
+    <section id="tracker-scopes" class="tracker-scopes" hidden aria-label="Stereo output scopes"></section>
+    <div id="tracker-grid" class="tracker-grid"></div>
+  </dialog>
+  <script type="module" src="main.js?v=12"></script>
 </body>
 </html>

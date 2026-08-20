@@ -7,7 +7,7 @@ const controls = ["play", "pause", "stop", "songs", "file"];
 const DEFAULT_SAMPLE = "GSLINGER.MOD";
 const AMIGA_CHANNEL_SIDES = ["L", "R", "R", "L"];
 const METER_FLOOR_DB = -48;
-const XMP_PREFERRED_EXTENSIONS = new Set(["669", "amf", "dsm", "far", "imf", "it", "mtm", "s3m", "stm", "ult", "xm"]);
+const XMP_PREFERRED_EXTENSIONS = new Set(["669", "amf", "dsm", "far", "imf", "it", "mod", "mtm", "s3m", "stm", "ult", "xm"]);
 let player;
 let xmpPlayer;
 let activeEngine = "uade";
@@ -31,6 +31,9 @@ const restartSettings = new Set();
 let queuedSubsongRestart;
 let subsongState;
 let selectedSubsong;
+let selectedTrackerOrder = 0;
+let trackerAnimationFrame;
+let lastTrackerPositionKey;
 
 function showStatus(message) { $("status").textContent = message; }
 function stopScopeLoop() {
@@ -65,8 +68,6 @@ function describeLoadFailure(error) {
   return `Initialize failed: ${error?.message ?? "UADE startup failed."}`;
 }
 function formatNumber(value, digits = 1) { return Number.isFinite(value) ? Number(value).toFixed(digits) : "--"; }
-function formatSeconds(value) { return Number.isFinite(value) ? `${formatNumber(value, 1)} s` : "--"; }
-function formatMilliseconds(value) { return Number.isFinite(value) ? `${formatNumber(value, 1)} ms` : "--"; }
 function formatBytes(value) {
   if (!Number.isFinite(value)) return "--";
   if (value < 1024) return `${value} B`;
@@ -92,42 +93,51 @@ function metadataItem(label, value) {
 }
 function updateRawInspectors() {
   $("metadata-raw").textContent = metadataState ? JSON.stringify({ parsed: metadataState, raw: metadataState.raw, formatScout: formatScoutState ?? null }, null, 2) : "No module loaded.";
-  $("diagnostics-raw").textContent = Object.keys(diagnosticsState).length ? JSON.stringify(diagnosticsState, null, 2) : "Runtime not initialized.";
   $("open-metadata").disabled = !metadataState;
   $("open-diagnostics").disabled = !Object.keys(diagnosticsState).length;
 }
-function renderDiagnostics() {
-  const target = $("diagnostics");
-  target.replaceChildren();
-  const hasDiagnostics = Boolean(Object.keys(diagnosticsState).length);
-  target.classList.toggle("is-empty", !hasDiagnostics);
-  if (!hasDiagnostics) {
-    target.append(textElement("p", "Runtime not initialized.", "empty-state"));
-    updateRawInspectors();
-    return;
-  }
+function diagnosticTone() {
   const budget = diagnosticsState.audioCallbackBudgetMs;
   const average = diagnosticsState.audioGenerationAverageMs;
   const utilization = Number.isFinite(budget) && budget > 0 && Number.isFinite(average) ? average / budget : undefined;
-  const callbackTone = utilization >= 1 ? "danger" : utilization >= 0.7 ? "warning" : "good";
+  return utilization >= 1 ? "danger" : utilization >= 0.7 ? "warning" : "good";
+}
+function diagnosticsItems(compact) {
+  const callbackTone = diagnosticTone();
   const clockRatio = diagnosticsState.audioClockToWallClockRatio;
   const sourceRatio = diagnosticsState.wasmSourceRateToConfiguredRatio;
-  target.append(
+  const summary = [
+    diagnosticItem("Output rate", `${diagnosticsState.audioContextSampleRate ?? "--"} Hz`),
+    diagnosticItem("Late callbacks", String(diagnosticsState.lateAudioCallbackCount ?? "--"), diagnosticsState.lateAudioCallbackCount ? "warning" : "good"),
+    diagnosticItem("Clock ratio", formatNumber(clockRatio, 4), Math.abs((clockRatio ?? 1) - 1) > 0.02 ? "warning" : "good"),
+    diagnosticItem("Audio elapsed", `${formatNumber(diagnosticsState.audioElapsedSeconds)} s`)
+  ];
+  if (compact) return summary;
+  return [
     diagnosticItem("Transport", diagnosticsState.audioContextState || player?.state || "--", diagnosticsState.audioContextState === "running" ? "good" : ""),
     diagnosticItem("Output rate", `${diagnosticsState.audioContextSampleRate ?? "--"} Hz`),
     diagnosticItem("Requested", `${diagnosticsState.requestedAudioContextSampleRate ?? "--"} Hz`),
-    diagnosticItem("Callback budget", formatMilliseconds(budget)),
-    diagnosticItem("Generation avg", formatMilliseconds(average), callbackTone),
-    diagnosticItem("Generation peak", formatMilliseconds(diagnosticsState.audioGenerationMaxMs), callbackTone),
-    diagnosticItem("WASM avg", formatMilliseconds(diagnosticsState.wasmComputeAverageMs)),
-    diagnosticItem("WASM peak", formatMilliseconds(diagnosticsState.wasmComputeMaxMs)),
-    diagnosticItem("Late callbacks", String(diagnosticsState.lateAudioCallbackCount ?? "--"), diagnosticsState.lateAudioCallbackCount ? "warning" : "good"),
-    diagnosticItem("Clock ratio", formatNumber(clockRatio, 4), Math.abs((clockRatio ?? 1) - 1) > 0.02 ? "warning" : "good"),
+    diagnosticItem("Callback budget", `${formatNumber(diagnosticsState.audioCallbackBudgetMs)} ms`),
+    diagnosticItem("Generation avg", `${formatNumber(diagnosticsState.audioGenerationAverageMs)} ms`, callbackTone),
+    diagnosticItem("Generation peak", `${formatNumber(diagnosticsState.audioGenerationMaxMs)} ms`, callbackTone),
+    diagnosticItem("WASM avg", `${formatNumber(diagnosticsState.wasmComputeAverageMs)} ms`),
+    diagnosticItem("WASM peak", `${formatNumber(diagnosticsState.wasmComputeMaxMs)} ms`),
+    summary[1],
+    summary[2],
     diagnosticItem("Source rate", `${formatNumber(diagnosticsState.wasmSourceFramesPerAudioSecond, 0)} Hz`, Math.abs((sourceRatio ?? 1) - 1) > 0.02 ? "warning" : "good"),
-    diagnosticItem("Audio elapsed", formatSeconds(diagnosticsState.audioElapsedSeconds)),
-    diagnosticItem("Wall elapsed", formatSeconds(diagnosticsState.wallElapsedSeconds)),
+    summary[3],
+    diagnosticItem("Wall elapsed", `${formatNumber(diagnosticsState.wallElapsedSeconds)} s`),
     diagnosticItem("Buffer", `${diagnosticsState.processorBufferSize ?? "--"} samples`)
-  );
+  ];
+}
+function renderDiagnostics() {
+  const hasDiagnostics = Boolean(Object.keys(diagnosticsState).length);
+  for (const [target, compact] of [[ $("diagnostics"), true ], [ $("diagnostics-detail"), false ]]) {
+    target.replaceChildren();
+    target.classList.toggle("is-empty", !hasDiagnostics);
+    if (hasDiagnostics) target.append(...diagnosticsItems(compact));
+    else target.append(textElement("p", "Runtime not initialized.", "empty-state"));
+  }
   updateRawInspectors();
 }
 function showDiagnostics() {
@@ -259,6 +269,7 @@ function setMetadata(info) {
   if (Number.isInteger(subsong?.minimum) && Number.isInteger(subsong?.maximum)) subsongState = subsong;
   updateSubsongControl();
   renderMetadata();
+  renderTrackerView();
 }
 function setXmpMetadata(filename, songInfo = {}) {
   metadataState = {
@@ -274,8 +285,146 @@ function setXmpMetadata(filename, songInfo = {}) {
   };
   subsongState = undefined;
   selectedSubsong = undefined;
+  lastTrackerPositionKey = undefined;
+  $("tracker-grid").replaceChildren();
+  delete $("tracker-grid").dataset.order;
+  delete $("tracker-grid").dataset.format;
   updateSubsongControl();
   renderMetadata();
+  renderTrackerView();
+}
+
+function trackerNote(event, format) {
+  if (!event.note) return "---";
+  if (format === "XM" && event.note === 97) return "===";
+  const semitone = format === "MOD"
+    ? Math.round(12 * Math.log2(1712 / event.note))
+    : event.note - 1;
+  if (!Number.isFinite(semitone) || semitone < 0) return "---";
+  return `${["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"][semitone % 12]}${Math.floor(semitone / 12)}`;
+}
+function trackerCell(event, format) {
+  const note = trackerNote(event, format);
+  const instrument = event.instrument ? String(event.instrument).padStart(2, "0") : "..";
+  const volume = event.volume ? event.volume.toString(16).toUpperCase().padStart(2, "0") : "..";
+  const effect = event.effect || event.parameter ? `${event.effect.toString(16).toUpperCase()}${event.parameter.toString(16).toUpperCase().padStart(2, "0")}` : "...";
+  return `${note} ${instrument} ${volume} ${effect}`;
+}
+function drawTrackerScope(canvas, data) {
+  const context = canvas.getContext("2d");
+  const { width, height } = canvas;
+  context.fillStyle = "#102a33";
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = "rgba(229, 234, 219, .2)";
+  context.beginPath();
+  context.moveTo(0, height / 2);
+  context.lineTo(width, height / 2);
+  context.stroke();
+  if (!data.length) return;
+  context.strokeStyle = "#77d5bb";
+  context.lineWidth = 2;
+  context.beginPath();
+  const stride = Math.max(1, Math.floor(data.length / width));
+  for (let index = 0; index < data.length; index += stride) {
+    const x = index / data.length * width;
+    const y = (1 - data[index]) * height / 2;
+    index ? context.lineTo(x, y) : context.moveTo(x, y);
+  }
+  context.stroke();
+}
+function renderTrackerScopes() {
+  const container = $("tracker-scopes");
+  const source = xmpPlayer?.visualization;
+  if (!source || source.streamCount < 2) {
+    container.hidden = true;
+    container.replaceChildren();
+    return;
+  }
+  container.hidden = false;
+  if (container.children.length !== 2) {
+    container.replaceChildren(...["OUT L", "OUT R"].map((label, channel) => {
+      const scope = document.createElement("article");
+      scope.className = "tracker-scope";
+      scope.append(textElement("p", label, "tracker-scope-label"));
+      const canvas = document.createElement("canvas");
+      canvas.width = 320;
+      canvas.height = 82;
+      scope.append(canvas);
+      return scope;
+    }));
+  }
+  for (const channel of [0, 1]) {
+    drawTrackerScope(container.children[channel].querySelector("canvas"), source.readChannel(channel));
+  }
+}
+function renderTrackerView() {
+  const dialog = $("tracker-dialog");
+  const tracker = activeEngine === "xmp" ? xmpPlayer?.tracker : undefined;
+  const order = $("tracker-order");
+  const grid = $("tracker-grid");
+  if (!tracker?.available) {
+    order.disabled = true;
+    order.replaceChildren();
+    $("tracker-status").textContent = activeEngine === "xmp" ? "Pattern decoding is available for MOD and XM modules." : "Pattern view is available for decoded XMP MOD and XM modules.";
+    grid.replaceChildren();
+    renderTrackerScopes();
+    return;
+  }
+  const position = tracker.getPosition();
+  if (position) selectedTrackerOrder = position.order;
+  const ordersChanged = order.options.length !== tracker.orders.length;
+  if (ordersChanged) order.replaceChildren(...tracker.orders.map((pattern, index) => new Option(`${String(index).padStart(2, "0")} : ${String(pattern).padStart(2, "0")}`, String(index))));
+  selectedTrackerOrder = Math.min(selectedTrackerOrder, tracker.orders.length - 1);
+  order.value = String(selectedTrackerOrder);
+  order.disabled = false;
+  const pattern = tracker.patterns[tracker.orders[selectedTrackerOrder]];
+  if (!pattern) {
+    $("tracker-status").textContent = "The selected order does not contain decoded pattern data.";
+    grid.replaceChildren();
+    return;
+  }
+  $("tracker-status").textContent = `${tracker.format} / ${tracker.channelCount} channels`;
+  renderTrackerScopes();
+  if (grid.dataset.order !== String(selectedTrackerOrder) || grid.dataset.format !== tracker.format) {
+    const table = document.createElement("table");
+    table.className = "tracker-table";
+    const header = document.createElement("tr");
+    header.append(textElement("th", "ROW"));
+    for (let channel = 0; channel < tracker.channelCount; channel++) header.append(textElement("th", `CH ${String(channel + 1).padStart(2, "0")}`));
+    const head = document.createElement("thead");
+    head.append(header);
+    const body = document.createElement("tbody");
+    for (const [rowIndex, row] of pattern.rows.entries()) {
+      const rowElement = document.createElement("tr");
+      rowElement.dataset.trackerRow = rowIndex;
+      rowElement.append(textElement("th", String(rowIndex).padStart(2, "0")));
+      for (const event of row) rowElement.append(textElement("td", trackerCell(event, tracker.format)));
+      body.append(rowElement);
+    }
+    table.append(head, body);
+    grid.replaceChildren(table);
+    grid.dataset.order = String(selectedTrackerOrder);
+    grid.dataset.format = tracker.format;
+  }
+  const activeRow = position?.order === selectedTrackerOrder ? position.row : undefined;
+  const positionKey = position ? `${position.order}:${position.row}` : undefined;
+  for (const rowElement of grid.querySelectorAll("tbody tr")) rowElement.classList.toggle("is-current", Number(rowElement.dataset.trackerRow) === activeRow);
+  if (dialog.open && positionKey && positionKey !== lastTrackerPositionKey) grid.querySelector("tbody tr.is-current")?.scrollIntoView({ block: "center" });
+  lastTrackerPositionKey = positionKey;
+}
+function stopTrackerAnimation() {
+  if (trackerAnimationFrame === undefined) return;
+  window.cancelAnimationFrame(trackerAnimationFrame);
+  trackerAnimationFrame = undefined;
+}
+function startTrackerAnimation() {
+  stopTrackerAnimation();
+  const animate = () => {
+    if (!$("tracker-dialog").open) return;
+    renderTrackerView();
+    trackerAnimationFrame = window.requestAnimationFrame(animate);
+  };
+  animate();
 }
 async function loadWithXmp(buffer, filename) {
   activeEngine = "xmp";
@@ -337,6 +486,7 @@ function selectBundledSong(filename) {
   loadFailure = undefined;
   subsongState = undefined;
   selectedSubsong = undefined;
+  selectedTrackerOrder = 0;
   updateSubsongControl();
   lastSelection = { type: "bundled", filename };
   renderSourceControl();
@@ -346,6 +496,7 @@ function selectFile(selection) {
   loadFailure = undefined;
   subsongState = undefined;
   selectedSubsong = undefined;
+  selectedTrackerOrder = 0;
   updateSubsongControl();
   lastSelection = selection;
   renderSourceControl();
@@ -500,6 +651,7 @@ function updateControls(state = player?.state) {
   $("play").disabled = !ready || !["ready", "paused", "stopped", "ended"].includes(currentState);
   $("pause").disabled = !ready || currentState !== "playing";
   $("stop").disabled = !ready || !["playing", "paused", "loading"].includes(currentState);
+  $("open-tracker").disabled = !xmpActive || !xmpPlayer?.tracker?.available;
   $("songs").disabled = initializing || (!xmpActive && currentState === "disposed") || !songs.length;
   $("file").disabled = initializing || (!xmpActive && currentState === "disposed");
 }
@@ -630,6 +782,11 @@ $("visualizer").addEventListener("change", (event) => {
   clearStagedRestart("scopes");
   startScopeLoop();
 });
+$("tracker-order").addEventListener("change", (event) => {
+  selectedTrackerOrder = Number(event.target.value);
+  lastTrackerPositionKey = undefined;
+  renderTrackerView();
+});
 $("buffer").addEventListener("change", () => stageRestart("audio buffer"));
 $("audio-rate").addEventListener("change", () => stageRestart("audio rate"));
 $("track").addEventListener("input", (event) => selectSubsong(Number(event.target.value)));
@@ -673,16 +830,21 @@ function setSettingsPanel(open) {
 }
 $("open-metadata").addEventListener("click", (event) => openDialog("metadata-dialog", event.currentTarget));
 $("open-diagnostics").addEventListener("click", (event) => openDialog("diagnostics-dialog", event.currentTarget));
+$("open-tracker").addEventListener("click", (event) => {
+  openDialog("tracker-dialog", event.currentTarget);
+  startTrackerAnimation();
+});
 $("settings-toggle").addEventListener("click", () => setSettingsPanel(!$("settings-panel").classList.contains("is-open")));
 $("settings-close").addEventListener("click", () => setSettingsPanel(false));
 document.addEventListener("keydown", (event) => { if (event.key === "Escape" && $("settings-panel").classList.contains("is-open")) setSettingsPanel(false); });
 for (const dialog of document.querySelectorAll("dialog")) {
+  dialog.addEventListener("close", () => { if (dialog.id === "tracker-dialog") stopTrackerAnimation(); });
   dialog.addEventListener("click", (event) => { if (event.target === dialog) closeDialog(dialog); });
   dialog.querySelector(".dialog-close").addEventListener("click", () => closeDialog(dialog));
 }
 $("scopes").replaceChildren(...Array.from({ length: 4 }, (_, index) => makeScopeCard(index, false)));
 for (const input of document.querySelectorAll('input[type="range"]')) updateRangeReadout(input);
-renderDiagnostics();
+updateRawInspectors();
 renderMetadata();
 prepareSongs().catch((error) => showStatus(error.message));
 diagnosticsTimer = window.setInterval(showDiagnostics, 1000);
@@ -693,4 +855,4 @@ window.modulePlayerDemo = Object.freeze({
   stop: () => (activeEngine === "xmp" ? xmpPlayer : player)?.stop(),
   dispose: () => (activeEngine === "xmp" ? xmpPlayer : player)?.dispose()
 });
-window.addEventListener("beforeunload", () => { stopScopeLoop(); clearInterval(diagnosticsTimer); player?.dispose(); xmpPlayer?.dispose(); });
+window.addEventListener("beforeunload", () => { stopScopeLoop(); stopTrackerAnimation(); clearInterval(diagnosticsTimer); player?.dispose(); xmpPlayer?.dispose(); });

@@ -1,3 +1,5 @@
+import { parseTrackerData } from "./tracker-data.js";
+
 const PLAYER_OWNER = Symbol.for("webxmp-preview.owner");
 
 export class XmpPlaybackError extends Error {
@@ -48,6 +50,35 @@ class XmpVisualizationSource {
   readOverallVu() { return this.streamCount ? this.readVu(0) : 0; }
 }
 
+class XmpTrackerSource {
+  constructor(player) {
+    this._player = player;
+    this._data = undefined;
+  }
+
+  setModule(buffer, filename) {
+    this._data = parseTrackerData(buffer, filename);
+  }
+
+  clear() {
+    this._data = undefined;
+  }
+
+  get available() { return Boolean(this._data); }
+  get synchronized() { return false; }
+  get format() { return this._data?.format; }
+  get channelCount() { return this._data?.channelCount ?? 0; }
+  get orders() { return this._data?.orders ?? []; }
+  get patterns() { return this._data?.patterns ?? []; }
+  getPosition() {
+    const timeline = this._data?.timeline;
+    const time = this._player._api?.getPlaybackPosition?.();
+    if (!timeline?.length || !Number.isFinite(time)) return undefined;
+    for (const position of timeline) if (time < position.endMs) return position;
+    return timeline.at(-1);
+  }
+}
+
 export class XmpPlayer {
   constructor(options = {}) {
     this._assetBaseUrl = options.assetBaseUrl ?? new URL("./", import.meta.url).href;
@@ -73,6 +104,7 @@ export class XmpPlayer {
 
   get state() { return this._state; }
   get visualization() { return this._visualization; }
+  get tracker() { return this._tracker; }
   getDiagnostics() { return this._api?.getDiagnostics?.() ?? { engine: "webXMP", audioContextState: this._state }; }
 
   on(event, listener) {
@@ -124,6 +156,7 @@ export class XmpPlayer {
     if (!filename || !(buffer instanceof ArrayBuffer)) throw new TypeError("XMP requires an ArrayBuffer and filename.");
     this._setState("loading");
     try {
+      this._tracker.setModule(buffer, filename);
       this._looping = Boolean(options.loop);
       this._lastLoad = { buffer, options: { ...options, filename } };
       const songInfo = await this._api.load(buffer, filename, options);
@@ -133,6 +166,7 @@ export class XmpPlayer {
       this._emit("metadata", metadata);
       return metadata;
     } catch (cause) {
+      this._tracker.clear();
       const error = new XmpPlaybackError("load", filename, cause);
       this._setState("error");
       this._emit("error", error);
@@ -166,5 +200,6 @@ export async function createXmpPlayer(options) {
   const player = new XmpPlayer(options);
   await player._initialize();
   player._visualization = new XmpVisualizationSource(player);
+  player._tracker = new XmpTrackerSource(player);
   return player;
 }
