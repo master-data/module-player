@@ -1,0 +1,21 @@
+/inspiration
+
+# Installed dependencies and package artifacts
+/node_modules/
+*.tgz
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local test output
+/coverage/
+/playwright-report/
+/test-results/
+
+# Local configuration and operating-system files
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

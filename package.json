@@ -1,0 +1,31 @@
+{
+  "name": "module-player",
+  "version": "0.1.0",
+  "description": "Browser ESM player for tracker music using UADE and webXMP runtimes.",
+  "type": "module",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "ACKNOWLEDGMENTS.md",
+    "uade",
+    "xmp"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check uade/uade-player.js && node --check xmp/xmp-player.js && node --check demo/main.js",
+    "pack:check": "npm pack --dry-run"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./uade": {
+      "types": "./uade/index.d.ts",
+      "import": "./uade/index.js"
+    },
+    "./xmp": {
+      "types": "./xmp/index.d.ts",
+      "import": "./xmp/index.js"
+    }
+  }
+}

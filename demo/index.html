@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Module Player</title>
+  <link rel="icon" href="favicon.ico">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="player-shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow"><a href="https://zakalwe.fi/uade/" target="_blank" rel="noopener noreferrer">UADE</a> / <a href="https://bitbucket.org/wothke/uade-2.13/src/master/" target="_blank" rel="noopener noreferrer">webUADE</a> / <a href="https://github.com/libxmp/libxmp" target="_blank" rel="noopener noreferrer">XMP</a> / <a href="https://www.wothke.ch/webXMP/" target="_blank" rel="noopener noreferrer">webXMP</a></p>
+        <h1>MODULE PLAYER</h1>
+      </div>
+      <p id="status" class="status" aria-live="polite">Select Initialize to unlock audio and load a playback runtime.</p>
+    </header>
+
+    <section class="transport panel" aria-label="Playback controls">
+      <div class="transport-actions">
+        <button id="initialize" class="command primary">Initialize</button>
+        <button id="play" class="command" disabled>Start</button>
+        <button id="pause" class="command" disabled>Pause</button>
+        <button id="stop" class="command danger" disabled>Stop</button>
+        <div id="track-control" class="subsong-control transport-subsong"><label for="track"><span class="range-label">Subsong <output id="track-readout" for="track">--</output></span></label><div class="subsong-actions"><button id="previous-track" class="subsong-step" type="button" aria-label="Previous subsong" disabled>&larr;</button><input id="track" type="range" min="0" max="0" step="1" value="0" disabled aria-describedby="track-readout"><button id="next-track" class="subsong-step" type="button" aria-label="Next subsong" disabled>&rarr;</button></div></div>
+      </div>
+      <div class="source-control">
+        <label id="songs-control">Demo module <select id="songs" disabled></select></label>
+        <label class="file">Open local module <input id="file" type="file"></label>
+      </div>
+    </section>
+
+    <section class="dashboard-grid" aria-label="Module player dashboard">
+      <section class="now-playing panel">
+        <div class="panel-heading"><p class="panel-kicker">Selected Module</p><button id="open-metadata" class="text-command" type="button" disabled>Raw metadata</button></div>
+        <div id="metadata" class="metadata-summary" aria-live="polite">
+          <p class="empty-state">No module loaded.</p>
+        </div>
+      </section>
+
+      <section class="scope-panel panel">
+        <div class="panel-heading"><p class="panel-kicker">Channel scopes</p><p id="scope-readout" class="signal-readout">Output --</p></div>
+        <section id="scopes" class="scopes" aria-label="UADE channel visualization"></section>
+      </section>
+
+      <section class="diagnostic-panel panel">
+        <div class="panel-heading"><p class="panel-kicker">Runtime diagnostics</p><button id="open-diagnostics" class="text-command" type="button" disabled>Raw diagnostics</button></div>
+        <div id="diagnostics" class="diagnostics-grid is-empty" aria-live="polite">
+          <p class="empty-state">Runtime not initialized.</p>
+        </div>
+      </section>
+
+    </section>
+  </main>
+  <button id="settings-toggle" class="settings-tab" type="button" aria-controls="settings-panel" aria-expanded="false">Settings</button>
+  <aside id="settings-panel" class="settings-drawer" aria-label="Playback configuration" aria-hidden="true">
+    <div class="settings panel">
+        <div class="panel-heading"><p class="panel-kicker">Playback configuration</p><button id="settings-close" class="text-command" type="button">Close</button></div>
+        <p class="panel-note">Buffer and audio rate changes apply when the player restarts.</p>
+        <div class="settings-grid">
+          <label>Silence <input id="silence" type="number" min="0" value="5"></label>
+          <label>Audio buffer <select id="buffer"><option value="2048">2048 samples</option><option value="4096" selected>4096 samples</option><option value="8192">8192 samples</option></select></label>
+          <label>Audio rate <select id="audio-rate"><option value="44100" selected>44100 Hz</option><option value="48000">48000 Hz</option><option value="88200">88200 Hz</option></select></label>
+          <label><span class="range-label">Scope zoom <output for="zoom">3x</output></span><input id="zoom" type="range" min="1" max="5" step="1" value="3"></label>
+          <label>Scope refresh <select id="scope-hz"><option value="15">15 Hz</option><option value="30">30 Hz</option><option value="60" selected>60 Hz</option><option value="90">90 Hz</option><option value="120">120 Hz</option></select></label>
+          <label><span class="range-label">Volume <output for="volume">80%</output></span><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+          <label><span class="range-label">Rate <output for="rate">1.00x</output></span><input id="rate" type="range" min="0.8" max="1.2" step="0.01" value="1"></label>
+          <label><span class="range-label">UADE panning <output for="pan">0.7</output></span><input id="pan" type="range" min="0" max="2" step="0.1" value="0.7"></label>
+          <label class="toggle">Loop module <input id="loop" type="checkbox" checked></label>
+          <label class="toggle">Enable scopes <input id="visualizer" type="checkbox" checked></label>
+        </div>
+        <button id="restart-uade" class="command primary settings-restart" type="button" disabled>Restart player</button>
+    </div>
+  </aside>
+  <dialog id="metadata-dialog" class="inspector-dialog" aria-labelledby="metadata-dialog-title">
+    <header><div><p class="eyebrow">Inspector</p><h2 id="metadata-dialog-title">Raw module metadata</h2></div><button class="dialog-close" type="button" aria-label="Close metadata inspector">Close</button></header>
+    <pre id="metadata-raw">No module loaded.</pre>
+  </dialog>
+  <dialog id="diagnostics-dialog" class="inspector-dialog" aria-labelledby="diagnostics-dialog-title">
+    <header><div><p class="eyebrow">Inspector</p><h2 id="diagnostics-dialog-title">Raw runtime diagnostics</h2></div><button class="dialog-close" type="button" aria-label="Close diagnostics inspector">Close</button></header>
+    <pre id="diagnostics-raw">Runtime not initialized.</pre>
+  </dialog>
+  <script type="module" src="main.js?v=9"></script>
+</body>
+</html>
