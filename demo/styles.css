@@ -335,6 +335,14 @@ dialog.tracker-dialog[open] {
     font-size: 24px;
 }
 
+.tracker-dialog-source {
+    margin: 5px 0 0;
+    color: #49626a;
+    font-size: 11px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
 .tracker-toolbar {
     display: flex;
     align-items: end;

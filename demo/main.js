@@ -394,6 +394,12 @@ function renderTrackerView() {
   const dialog = $("tracker-dialog");
   const tracker = activeEngine === "xmp" ? xmpPlayer?.tracker : undefined;
   const grid = $("tracker-grid");
+  const title = metadataState?.title || metadataState?.fileName || "Tracker View";
+  $("tracker-dialog-title").textContent = title;
+  $("tracker-dialog-kicker").textContent = "TRACKER LIVE VISUALIZATION";
+  $("tracker-dialog-source").textContent = metadataState?.fileName
+    ? `${metadataState.fileName}  |  ${metadataState.player || "webXMP"}`
+    : "No module loaded.";
   if (!tracker?.available) {
     $("tracker-order-map").replaceChildren();
     delete $("tracker-order-map").dataset.orders;
