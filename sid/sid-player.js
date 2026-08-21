@@ -33,6 +33,34 @@ function causeMessage(cause) {
   return cause === undefined || cause === null ? "" : String(cause);
 }
 
+class SidVisualizationSource {
+  constructor(player) {
+    this._player = player;
+    this._zoom = 3;
+  }
+
+  get streamCount() { return this._player._scopeBuffers[0]?.length ? 2 : 0; }
+  get sampleLength() { return Math.ceil((this._player._scopeBuffers[0]?.length ?? 0) / this._zoom); }
+  getZoom() { return this._zoom; }
+  setZoom(level) {
+    if (!Number.isInteger(level) || level < 1 || level > 5) throw new RangeError("Visualization zoom must be an integer from 1 to 5.");
+    this._zoom = level;
+  }
+  readChannel(channel) {
+    const data = this._player._scopeBuffers[channel];
+    if (!data) throw new RangeError("SID output channel is unavailable.");
+    return data.subarray(Math.max(0, data.length - Math.ceil(data.length / this._zoom)));
+  }
+  readVu(channel) {
+    const data = this.readChannel(channel);
+    if (!data.length) return 0;
+    let squareSum = 0;
+    for (const sample of data) squareSum += sample * sample;
+    return Math.sqrt(squareSum / data.length);
+  }
+  readOverallVu() { return this.streamCount ? Math.sqrt((this.readVu(0) ** 2 + this.readVu(1) ** 2) / 2) : 0; }
+}
+
 export class SidPlaybackError extends Error {
   constructor(operation, filename, cause) {
     const detail = causeMessage(cause);
@@ -240,6 +268,18 @@ export class SidPlayer {
     this._roms = { kernal: copyRom(roms?.kernal, 8192, "KERNAL"), basic: copyRom(roms?.basic, 8192, "BASIC"), chargen: copyRom(roms?.chargen, 4096, "CHARGEN") };
   }
 
+  setEmulationConfig(config) {
+    if (!config || typeof config !== "object") throw new TypeError("SID emulation config must be an object.");
+    this._emulationConfig = { ...this._emulationConfig, ...config };
+    if (!this._source) return;
+    const wasPlaying = this._state === "playing";
+    const metadata = this._loadTrack(this._metadata.currentSong);
+    if (wasPlaying) this._playStartedAt = this._audioContext.currentTime;
+    this._emit("metadata", metadata);
+  }
+
+  getEmulationConfig() { return this._sidContext?.getEmulationConfig?.(); }
+
   getDiagnostics() {
     const callbacks = this._diagnostics.audioCallbackCount;
     const renders = this._diagnostics.wasmRenderCount;
@@ -334,5 +374,6 @@ export class SidPlayer {
 export async function createSidPlayer(options) {
   const player = new SidPlayer(options);
   await player._initialize();
+  player._visualization = new SidVisualizationSource(player);
   return player;
 }

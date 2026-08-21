@@ -201,6 +201,13 @@ The player rejects RSID loads when all three images are not present, rather than
 starting a silent or stalled tune. SID runtime support also requires a browser
 with WebAssembly exception-handling support.
 
+SID metadata reports the tune-declared C64 clock and SID model. The common chip
+revisions are **MOS 6581** and **MOS 8580**; their analogue filters sound
+noticeably different. The demo exposes optional C64 clock and SID-model
+overrides plus 8580 digi boost. Changing one restarts the current subtune so it
+takes effect immediately. SID also exposes the rendered stereo output as two
+PCM scopes (`L` and `R`) for the standard scope and immersive visualizers.
+
 ## Player Lifecycle
 
 Create a player once per active preview session, attach listeners, then call `load()`. Loading starts playback when successful. `stop()` resets the active session; await it before loading another UADE track. `dispose()` releases the player and removes its active runtime ownership.

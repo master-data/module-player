@@ -42,6 +42,16 @@ export interface SidEmulationConfig {
   digiBoost?: boolean;
 }
 
+export interface SidVisualizationSource {
+  readonly streamCount: number;
+  readonly sampleLength: number;
+  getZoom(): number;
+  setZoom(level: 1 | 2 | 3 | 4 | 5): void;
+  readChannel(channel: number): Float32Array;
+  readVu(channel: number): number;
+  readOverallVu(): number;
+}
+
 export interface SidPlayerOptions {
   assetBaseUrl?: string;
   audioContextSampleRate?: number;
@@ -66,7 +76,7 @@ export class SidPlaybackError extends Error {
 
 export class SidPlayer {
   readonly state: SidPlayerState;
-  readonly visualization?: undefined;
+  readonly visualization: SidVisualizationSource;
   on(event: "state" | "metadata" | "ended" | "error", listener: (payload?: unknown) => void): () => void;
   load(input: File | ArrayBuffer, options?: SidLoadOptions): Promise<SidMetadata & { raw: unknown; engine?: string; md5?: string }>;
   selectSong(track: number): Promise<number>;
@@ -78,6 +88,8 @@ export class SidPlayer {
   setLooping(enabled: boolean): void;
   setTimeout(seconds: number | null): void;
   setSystemRoms(roms?: SidSystemRoms): void;
+  setEmulationConfig(config: SidEmulationConfig): void;
+  getEmulationConfig(): Record<string, unknown> | undefined;
   getDiagnostics(): Record<string, unknown>;
   dispose(): Promise<void>;
 }

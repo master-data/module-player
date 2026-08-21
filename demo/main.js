@@ -46,7 +46,7 @@ let immersiveOwnedFullscreen = false;
 let immersiveMode = "visualizer";
 let lastMegaPatternKey;
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
-  getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization,
+  getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization,
   onFrame: renderMegaFrame,
   reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
 });
@@ -60,7 +60,7 @@ function stopScopeLoop() {
 function startScopeLoop() {
   stopScopeLoop();
   draw(performance.now());
-  if (!scopesEnabled || !(activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization)) return;
+  if (!scopesEnabled || !(activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization)) return;
   const refreshInterval = 1000 / Number($("scope-hz").value);
   scopeTimer = window.setInterval(() => draw(performance.now()), refreshInterval);
 }
@@ -319,6 +319,9 @@ function setXmpMetadata(filename, songInfo = {}) {
   updateImmersiveLabels();
 }
 function setSidMetadata(info) {
+  const configured = sidPlayer?.getEmulationConfig?.();
+  const configuredClock = configured?.c64Model && configured.forceC64Model ? `C64 ${configured.c64Model}` : undefined;
+  const configuredModel = configured?.sidModel && configured.forceSidModel ? `Emulating ${configured.sidModel}` : undefined;
   metadataState = {
     title: info.title || info.fileName,
     fileName: info.fileName,
@@ -326,7 +329,7 @@ function setSidMetadata(info) {
     format: info.format,
     player: info.engine || "libsidplayfp",
     subsong: { minimum: 0, maximum: info.songCount - 1, current: info.currentSong },
-    summary: [info.author, info.released, `${info.installedSids} SID chip${info.installedSids === 1 ? "" : "s"}`, info.clock, info.sidModel].filter(Boolean),
+    summary: [info.author, info.released, `${info.installedSids} SID chip${info.installedSids === 1 ? "" : "s"}`, `Tune ${info.clock}`, `Tune ${info.sidModel}`, configuredClock, configuredModel].filter(Boolean),
     raw: info
   };
   subsongState = metadataState.subsong;
@@ -532,7 +535,7 @@ async function loadWithXmp(buffer, filename) {
 }
 async function loadWithSid(buffer, filename) {
   activeEngine = "sid";
-  scopesEnabled = false;
+  scopesEnabled = $("visualizer").checked;
   stopScopeLoop();
   // Construct the AudioContext before any awaited teardown so a click that
   // selects a SID remains a valid Web Audio user gesture.
@@ -540,7 +543,8 @@ async function loadWithSid(buffer, filename) {
     ? createSidPlayer({
       assetBaseUrl: "../sid/assets",
       processorBufferSize: Number($("buffer").value),
-      audioContextSampleRate: Number($("audio-rate").value)
+      audioContextSampleRate: Number($("audio-rate").value),
+      emulationConfig: sidEmulationConfig()
     })
     : undefined;
   await player?.dispose();
@@ -550,6 +554,7 @@ async function loadWithSid(buffer, filename) {
   if (newSidPlayer) {
     sidPlayer = await newSidPlayer;
     sidPlayer.setVolume(Number($("volume").value));
+    sidPlayer.visualization?.setZoom(Number($("zoom").value));
     sidPlayer.on("state", () => updateControls());
     sidPlayer.on("ended", () => showStatus($("loop").checked ? "Looping SID tune." : "SID tune ended."));
     sidPlayer.on("error", (error) => { loadFailure = error.message; showStatus(loadFailure); renderMetadata(); });
@@ -559,6 +564,7 @@ async function loadWithSid(buffer, filename) {
   setSidMetadata(metadata);
   showStatus("Player state: playing");
   showDiagnostics();
+  startScopeLoop();
   updateControls();
 }
 function songUrl(name) { return `assets/music/${name.split("/").map(encodeURIComponent).join("/")}`; }
@@ -663,6 +669,15 @@ function options(filename) {
     loop: $("loop").checked
   };
 }
+function sidEmulationConfig() {
+  const c64Model = $("sid-c64-model").value;
+  const sidModel = $("sid-model").value;
+  return {
+    ...(c64Model ? { c64Model, forceC64Model: true } : { forceC64Model: false }),
+    ...(sidModel ? { sidModel, forceSidModel: true } : { forceSidModel: false }),
+    digiBoost: $("sid-digi-boost").checked
+  };
+}
 function updateRangeReadout(input) {
   if (input.id === "track") return;
   const output = document.querySelector(`output[for="${input.id}"]`);
@@ -708,7 +723,7 @@ function makeScopeCard(index, active) {
   const card = document.createElement("article");
   card.className = `scope-card${active ? "" : " inactive"}`;
   card.dataset.scope = index;
-  const isXmpOutput = activeEngine === "xmp";
+  const isXmpOutput = activeEngine === "xmp" || activeEngine === "sid";
   const side = isXmpOutput ? ["L", "R"][index] ?? "--" : AMIGA_CHANNEL_SIDES[index] ?? "?";
   card.append(textElement("p", isXmpOutput ? `OUT ${side}` : `CH ${String(index + 0).padStart(2, "0")} / ${side}`, "scope-label"));
   if (active) {
@@ -759,7 +774,7 @@ function drawScope(canvas, data, meter) {
   context.stroke();
 }
 function draw(now) {
-  const source = activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization;
+  const source = activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization;
   const container = $("scopes");
   if (!scopesEnabled || !source) {
     stopScopeLoop();
@@ -786,7 +801,7 @@ function draw(now) {
   $("scope-readout").textContent = `Output ${formatNumber(outputMeter.decibels, 0)} dBFS`;
 }
 function activeVisualizationSource() {
-  return activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization;
+  return activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization;
 }
 function updateImmersiveLabels() {
   const title = metadataState?.title || metadataState?.fileName || lastSelection?.filename || "No module loaded";
@@ -809,7 +824,7 @@ function renderMegaChannels(channels) {
     target.replaceChildren(...channels.map((_, index) => {
       const channel = document.createElement("div");
       channel.className = "mega-channel";
-      const label = activeEngine === "xmp" ? ["L", "R"][index] ?? "--" : `CH ${String(index + 1).padStart(2, "0")}`;
+      const label = activeEngine === "xmp" || activeEngine === "sid" ? ["L", "R"][index] ?? "--" : `CH ${String(index + 1).padStart(2, "0")}`;
       channel.append(textElement("span", label), document.createElement("i"));
       return channel;
     }));
@@ -1058,7 +1073,18 @@ $("rate").addEventListener("input", (event) => { updateRangeReadout(event.target
 $("pan").addEventListener("input", (event) => { updateRangeReadout(event.target); if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setUadePanning(Number(event.target.value)); });
 $("loop").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setLooping(event.target.checked));
 $("silence").addEventListener("change", (event) => { if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setSilenceTimeout(Number(event.target.value)); });
-$("zoom").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : player)?.visualization?.setZoom(Number(event.target.value)); });
+$("zoom").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.visualization?.setZoom(Number(event.target.value)); });
+for (const control of [$("sid-c64-model"), $("sid-model"), $("sid-digi-boost")]) {
+  control.addEventListener("change", () => {
+    if (activeEngine !== "sid" || !sidPlayer) return;
+    try {
+      sidPlayer.setEmulationConfig(sidEmulationConfig());
+      showStatus("SID emulation updated; restarted current subtune.");
+    } catch (error) {
+      showStatus(error.message);
+    }
+  });
+}
 $("scope-hz").addEventListener("change", startScopeLoop);
 $("visualizer").addEventListener("change", (event) => {
   scopesEnabled = event.target.checked;
