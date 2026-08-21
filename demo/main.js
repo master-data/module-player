@@ -961,6 +961,15 @@ function hasActivePlayer() {
   const activePlayer = activeEngine === "xmp" ? xmpPlayer : player;
   return Boolean(activePlayer && activePlayer.state !== "disposed");
 }
+async function loadLocalFile(file) {
+  if (!file) return;
+  selectFile({ type: "file", filename: file.name, buffer: await file.arrayBuffer() });
+  if (!hasActivePlayer() || activeEngine === "xmp") await initializePlayer();
+  else await playLastSelection();
+}
+function hasDraggedFiles(event) {
+  return event.dataTransfer?.types.includes("Files");
+}
 
 $("initialize").addEventListener("click", initializePlayer);
 $("play").addEventListener("click", async () => { try { if (activeEngine === "xmp") { if (xmpPlayer?.state === "paused") return xmpPlayer.resume(); await playLastSelection(); return; } if (!player) throw new Error("Initialize UADE before starting playback."); if (player.state === "paused") return player.resume(); await playLastSelection(); } catch (error) { showStatus(error.message); } });
@@ -1013,11 +1022,26 @@ $("songs").addEventListener("change", async (event) => {
 });
 $("file").addEventListener("change", async (event) => {
   try {
-    const file = event.target.files[0];
-    if (!file) return;
-    selectFile({ type: "file", filename: file.name, buffer: await file.arrayBuffer() });
-    if (!hasActivePlayer() || activeEngine === "xmp") await initializePlayer();
-    else await playLastSelection();
+    await loadLocalFile(event.target.files[0]);
+  } catch (error) {
+    showStatus(error.message);
+  }
+});
+document.addEventListener("dragover", (event) => {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  document.body.classList.add("is-dragging-file");
+});
+document.addEventListener("dragleave", (event) => {
+  if (event.relatedTarget) return;
+  document.body.classList.remove("is-dragging-file");
+});
+document.addEventListener("drop", async (event) => {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  document.body.classList.remove("is-dragging-file");
+  try {
+    await loadLocalFile(event.dataTransfer.files[0]);
   } catch (error) {
     showStatus(error.message);
   }

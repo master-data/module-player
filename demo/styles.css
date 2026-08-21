@@ -34,6 +34,23 @@ body:has(.immersive-dialog[open]) {
     overflow: hidden;
 }
 
+body.is-dragging-file::after {
+    position: fixed;
+    z-index: 20;
+    inset: 12px;
+    display: grid;
+    place-items: center;
+    border: 3px dashed #147c74;
+    background: rgba(244, 241, 229, .88);
+    color: #16313a;
+    content: "DROP MODULE TO LOAD";
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: 0;
+    pointer-events: none;
+}
+
 button,
 input,
 select {

@@ -64,6 +64,8 @@ npx serve . -l 4173
 
 Open `http://localhost:4173/demo/`. Select **Initialize** from a user gesture, then choose a bundled module or a local file.
 
+Local modules can also be dragged and dropped anywhere onto the demo.
+
 The initial selection can also be supplied in the URL:
 
 ```text
