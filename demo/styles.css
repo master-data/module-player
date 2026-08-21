@@ -1003,7 +1003,7 @@ dialog.tracker-dialog[open] {
 }
 
 .sid-waveforms span.is-active { border-color: #77d5bb; background: rgba(119, 213, 187, .13); color: #e8fff6; }
-.sid-voice.is-noise .sid-waveforms span.is-active:last-child { border-color: #efb557; color: #fff1cf; }
+.sid-voice.is-noise .sid-waveforms span.is-active:nth-child(4) { border-color: #efb557; color: #fff1cf; }
 
 .sid-envelope {
     display: grid;
@@ -1016,14 +1016,21 @@ dialog.tracker-dialog[open] {
     background: repeating-linear-gradient(0deg, rgba(119, 213, 187, .05) 0 1px, transparent 1px 20px);
 }
 
-.sid-envelope-label { margin: 0; color: #7ca19d; font-size: 9px; overflow-wrap: anywhere; }
+.sid-envelope-header { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 10px; min-width: 0; }
+.sid-envelope-label { margin: 0; color: #7ca19d; font-size: 9px; }
+.sid-envelope-phase { min-width: 58px; margin: 0; color: #efb557; font-size: 9px; font-variant-numeric: tabular-nums; }
+.sid-envelope-settings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; min-width: 0; }
+.sid-envelope-settings span,
+.sid-envelope-settings strong { min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }
+.sid-envelope-settings span { color: #7ca19d; font-size: 8px; }
+.sid-envelope-settings strong { color: #d9f5eb; font-size: 9px; font-variant-numeric: tabular-nums; }
 .sid-envelope-canvas { display: block; width: 100%; height: 70px; }
 
 .sid-voice-values { display: grid; grid-template-columns: repeat(3, 1fr); }
 .sid-voice-values > div { min-width: 0; padding: 15px 14px; border-right: 1px solid rgba(119, 213, 187, .13); }
 .sid-voice-values > div:last-child { border-right: 0; }
 .sid-voice-values span { display: block; color: #7ca19d; font-size: 9px; }
-.sid-voice-values strong { display: block; margin-top: 6px; color: #f0fff9; font-size: 11px; overflow-wrap: anywhere; }
+.sid-voice-values strong { display: block; margin-top: 6px; color: #f0fff9; font-size: 11px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 .sid-register-trace {
     position: relative;

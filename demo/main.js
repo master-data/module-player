@@ -15,6 +15,7 @@ const METER_FLOOR_DB = -48;
 const XMP_PREFERRED_EXTENSIONS = new Set(["669", "amf", "dsm", "far", "imf", "it", "mod", "mtm", "s3m", "stm", "ult", "xm"]);
 const SID_ATTACK_MS = [2, 8, 16, 24, 38, 56, 68, 80, 100, 250, 500, 800, 1000, 3000, 5000, 8000];
 const SID_DECAY_RELEASE_MS = [6, 24, 48, 72, 114, 168, 204, 240, 300, 750, 1500, 2400, 3000, 9000, 15000, 24000];
+const SID_CYCLES_PER_SECOND = 985248;
 const SID_ENVELOPE_HISTORY_LIMIT = 180;
 let player;
 let xmpPlayer;
@@ -447,6 +448,17 @@ function sidWaveforms(control) {
     .map(([, name]) => name);
 }
 function sidHex(value, width = 2) { return `0x${value.toString(16).toUpperCase().padStart(width, "0")}`; }
+function sidClockHz() {
+  const model = sidPlayer?.getEmulationConfig?.()?.c64Model;
+  return { NTSC: 1022727, OLD_NTSC: 1022727, DREAN: 1023440, PAL_M: 1022727 }[model] ?? 985248;
+}
+function sidPitch(frequency) {
+  if (!frequency) return { note: "--", hertz: "--.- Hz", register: sidHex(0, 4) };
+  const hertz = frequency * sidClockHz() / 16777216;
+  const midi = Math.round(69 + 12 * Math.log2(hertz / 440));
+  const note = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][((midi % 12) + 12) % 12];
+  return { note: `${note}${Math.floor(midi / 12) - 1}`, hertz: `${hertz.toFixed(1)} Hz`, register: sidHex(frequency, 4) };
+}
 function advanceSidEnvelope(state, elapsedMs) {
   let remaining = elapsedMs;
   const sustain = state.sustain / 15;
@@ -478,12 +490,32 @@ function advanceSidEnvelope(state, elapsedMs) {
   }
   state.level = Math.min(1, Math.max(0, state.level));
 }
-function updateSidEnvelope(voice, attack, decay, sustain, release, gate) {
+function updateSidEnvelope(voice, attack, decay, sustain, release, gate, writes) {
   const now = performance.now();
   let state = sidEnvelopeStates.get(voice);
   if (!state) {
-    state = { attack, decay, sustain, release, gate, level: gate ? sustain / 15 : 0, phase: gate ? "sustain" : "idle", lastUpdatedAt: now, history: [] };
+    const level = gate ? sustain / 15 : 0;
+    state = { attack, decay, sustain, release, gate, level, phase: gate ? "sustain" : "idle", lastUpdatedAt: now, lastWriteCycle: writes.at(-1)?.cyclePhi1, history: Array(SID_ENVELOPE_HISTORY_LIMIT).fill(level) };
     sidEnvelopeStates.set(voice, state);
+  }
+  const base = voice * 7;
+  const events = writes.filter((write) => write.address >= base + 4 && write.address <= base + 6 && write.cyclePhi1 > (state.lastWriteCycle ?? -Infinity));
+  for (const write of events) {
+    if (state.lastWriteCycle !== undefined) advanceSidEnvelope(state, Math.max(0, write.cyclePhi1 - state.lastWriteCycle) / SID_CYCLES_PER_SECOND * 1000);
+    state.lastWriteCycle = write.cyclePhi1;
+    if (write.address === base + 4) {
+      const nextGate = Boolean(write.value & 1);
+      if (nextGate !== state.gate) {
+        state.gate = nextGate;
+        state.phase = nextGate ? "attack" : "release";
+      }
+    } else if (write.address === base + 5) {
+      state.attack = write.value >> 4;
+      state.decay = write.value & 0x0f;
+    } else {
+      state.sustain = write.value >> 4;
+      state.release = write.value & 0x0f;
+    }
   }
   advanceSidEnvelope(state, Math.max(0, now - state.lastUpdatedAt));
   state.lastUpdatedAt = now;
@@ -491,12 +523,9 @@ function updateSidEnvelope(voice, attack, decay, sustain, release, gate) {
   state.decay = decay;
   state.sustain = sustain;
   state.release = release;
-  if (gate !== state.gate) {
-    state.gate = gate;
-    state.phase = gate ? "attack" : "release";
-  }
+  if (!events.length && gate !== state.gate) { state.gate = gate; state.phase = gate ? "attack" : "release"; }
   state.history.push(state.level);
-  if (state.history.length > SID_ENVELOPE_HISTORY_LIMIT) state.history.splice(0, state.history.length - SID_ENVELOPE_HISTORY_LIMIT);
+  if (state.history.length > SID_ENVELOPE_HISTORY_LIMIT) state.history.shift();
   return state;
 }
 function drawSidEnvelopeReconstruction(canvas, envelope) {
@@ -598,7 +627,14 @@ function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   card.append(heading);
   const envelope = document.createElement("section");
   envelope.className = "sid-envelope";
-  envelope.append(textElement("p", `ENVELOPE RECONSTRUCTION  /  ${envelopeState.phase.toUpperCase()}  /  ATTACK ${attackDecay >> 4}  DECAY ${attackDecay & 0x0f}  SUSTAIN ${sustainRelease >> 4}  RELEASE ${sustainRelease & 0x0f}`, "sid-envelope-label"));
+  const envelopeHeader = document.createElement("div");
+  envelopeHeader.className = "sid-envelope-header";
+  envelopeHeader.append(textElement("p", "ENVELOPE", "sid-envelope-label"), textElement("p", envelopeState.phase.toUpperCase(), "sid-envelope-phase"));
+  const settings = document.createElement("div");
+  settings.className = "sid-envelope-settings";
+  for (const [name, value] of [["ATTACK", attackDecay >> 4], ["DECAY", attackDecay & 0x0f], ["SUSTAIN", sustainRelease >> 4], ["RELEASE", sustainRelease & 0x0f]]) settings.append(textElement("span", name), textElement("strong", String(value)));
+  envelopeHeader.append(settings);
+  envelope.append(envelopeHeader);
   const envelopeCanvas = document.createElement("canvas");
   envelopeCanvas.className = "sid-envelope-canvas";
   envelopeCanvas._sidEnvelope = envelopeState;
@@ -607,9 +643,8 @@ function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   card.append(envelope);
   const values = document.createElement("div");
   values.className = "sid-voice-values";
-  const facts = [
-    ["FREQUENCY", `${frequency} ${sidHex(frequency, 4)}`], ["PULSE WIDTH", String(pulseWidth)], ["FILTER", filterRouting & (1 << voice) ? "ROUTED" : "BYPASS"]
-  ];
+  const pitch = sidPitch(frequency);
+  const facts = [["PITCH", `${pitch.note}  ${pitch.hertz}  ${pitch.register}`], ["PULSE WIDTH", String(pulseWidth)], ["FILTER", filterRouting & (1 << voice) ? "ROUTED" : "BYPASS"]];
   for (const [label, value] of facts) {
     const fact = document.createElement("div");
     fact.append(textElement("span", label), textElement("strong", value));
@@ -646,9 +681,10 @@ function renderSidTrackerView() {
   const cutoff = (status[0x15] & 0x07) | (status[0x16] << 3);
   $("tracker-dialog-kicker").textContent = "SID LIVE REGISTER VISUALIZATION";
   $("tracker-status").textContent = `CHIP 1 / ${sidPlayer.getInstalledSids()}  |  FILTER ${filterMode}  |  CUTOFF ${cutoff}  |  RESONANCE ${status[0x17] >> 4}  |  VOLUME ${status[0x18] & 0x0f}`;
+  const writes = sidPlayer.getSidWriteTrace(0);
   const envelopes = [0, 1, 2].map((voice) => {
     const offset = voice * 7;
-    return updateSidEnvelope(voice, status[offset + 5] >> 4, status[offset + 5] & 0x0f, status[offset + 6] >> 4, status[offset + 6] & 0x0f, Boolean(status[offset + 4] & 1));
+    return updateSidEnvelope(voice, status[offset + 5] >> 4, status[offset + 5] & 0x0f, status[offset + 6] >> 4, status[offset + 6] & 0x0f, Boolean(status[offset + 4] & 1), writes);
   });
   grid.replaceChildren(...[0, 1, 2].map((voice) => sidVoiceMonitor(voice, status, filterRouting, envelopes[voice])));
   for (const canvas of grid.querySelectorAll(".sid-envelope-canvas")) drawSidEnvelopeReconstruction(canvas, canvas._sidEnvelope);
