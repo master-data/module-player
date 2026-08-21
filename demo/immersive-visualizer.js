@@ -63,10 +63,11 @@ function hsla(hue, saturation, lightness, alpha = 1) {
 }
 
 export class ImmersiveVisualizer {
-  constructor(canvas, { getSource, reducedMotion = false } = {}) {
+  constructor(canvas, { getSource, onFrame, reducedMotion = false } = {}) {
     this.canvas = canvas;
     this.context = canvas.getContext("2d", { alpha: false });
     this.getSource = getSource;
+    this.onFrame = onFrame;
     this.reducedMotion = reducedMotion;
     this.scene = SCENES[Math.floor(randomUnit() * SCENES.length)];
     this.previousScene = this.scene;
@@ -80,6 +81,7 @@ export class ImmersiveVisualizer {
     this.canvas.dataset.scene = this.scene;
     this.animationFrame = undefined;
     this.lastTime = 0;
+    this.nextFrameReportAt = 0;
     this.elapsed = 0;
     this.pointer = { x: 0, y: 0, targetX: 0, targetY: 0 };
     this.camera = {
@@ -416,6 +418,19 @@ export class ImmersiveVisualizer {
     this.updateCamera(delta, musicalEvent);
     this.directScene(delta, musicalEvent);
     this.paint(delta);
+    if (this.onFrame && (musicalEvent.beat || time >= this.nextFrameReportAt)) {
+      this.nextFrameReportAt = time + 80;
+      this.onFrame({
+        time,
+        elapsed: this.elapsed,
+        scene: this.scene,
+        sceneTransition: this.sceneTransition,
+        signal: this.signal,
+        music: this.music,
+        channels: this.channels,
+        musicalEvent
+      });
+    }
     this.animationFrame = requestAnimationFrame((nextTime) => this.draw(nextTime));
   }
 

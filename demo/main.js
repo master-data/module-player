@@ -1,7 +1,7 @@
 import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js";
 import { createXmpPlayer } from "../xmp/index.js?v=6";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=20";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=21";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
@@ -38,8 +38,11 @@ let trackerAnimationFrame;
 let lastTrackerPositionKey;
 let immersiveCursorTimer;
 let immersiveOwnedFullscreen = false;
+let immersiveMode = "visualizer";
+let lastMegaPatternKey;
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization,
+  onFrame: renderMegaFrame,
   reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
 });
 
@@ -696,6 +699,121 @@ function updateImmersiveLabels() {
   const title = metadataState?.title || metadataState?.fileName || lastSelection?.filename || "No module loaded";
   $("immersive-title").textContent = title;
 }
+function sampledChannelLevel(data) {
+  if (!data?.length) return 0;
+  const stride = Math.max(1, Math.floor(data.length / 96));
+  let squareSum = 0;
+  let count = 0;
+  for (let index = 0; index < data.length; index += stride) {
+    squareSum += data[index] * data[index];
+    count++;
+  }
+  return Math.min(1, Math.sqrt(squareSum / count) * 3.4);
+}
+function renderMegaChannels(channels) {
+  const target = $("mega-channels");
+  if (target.children.length !== channels.length) {
+    target.replaceChildren(...channels.map((_, index) => {
+      const channel = document.createElement("div");
+      channel.className = "mega-channel";
+      const label = activeEngine === "xmp" ? ["L", "R"][index] ?? "--" : `CH ${String(index + 1).padStart(2, "0")}`;
+      channel.append(textElement("span", label), document.createElement("i"));
+      return channel;
+    }));
+  }
+  channels.forEach((data, index) => target.children[index].style.setProperty("--channel-level", sampledChannelLevel(data).toFixed(3)));
+}
+function renderMegaOrders(tracker, position) {
+  const target = $("mega-orders");
+  const currentOrder = position?.order ?? 0;
+  const start = Math.max(0, Math.min(tracker.orders.length - 13, currentOrder - 6));
+  const orders = tracker.orders.slice(start, start + 13);
+  const key = `${start}:${currentOrder}:${orders.join(",")}`;
+  if (target.dataset.key === key) return;
+  target.replaceChildren(...orders.map((pattern, index) => {
+    const order = start + index;
+    const marker = textElement("span", String(pattern).padStart(2, "0"), order === currentOrder ? "is-current" : "");
+    return marker;
+  }));
+  target.dataset.key = key;
+}
+function renderMegaTracker(frame, tracker) {
+  const position = tracker.getPosition() ?? { order: 0, pattern: tracker.orders[0], row: 0 };
+  const visibleChannels = Math.min(tracker.channelCount, innerWidth < 680 ? 3 : innerWidth < 1100 ? 5 : 8);
+  const bankCount = Math.max(1, Math.ceil(tracker.channelCount / visibleChannels));
+  const bank = Math.floor(frame.music.beatCount / 16) % bankCount;
+  const channelStart = Math.min(bank * visibleChannels, tracker.channelCount - visibleChannels);
+  const pattern = tracker.patterns[position.pattern];
+  const patternKey = `${position.pattern}:${position.row}:${channelStart}:${visibleChannels}`;
+  $("mega-source").textContent = `${tracker.format} PATTERN STREAM`;
+  $("mega-position").textContent = `ORDER ${String(position.order).padStart(2, "0")}  /  PATTERN ${String(position.pattern).padStart(2, "0")}  /  ROW ${String(position.row).padStart(2, "0")}`;
+  renderMegaOrders(tracker, position);
+  if (!pattern || patternKey === lastMegaPatternKey) return;
+  const heading = $("mega-pattern-heading");
+  const grid = $("mega-pattern");
+  heading.style.setProperty("--mega-columns", visibleChannels);
+  grid.style.setProperty("--mega-columns", visibleChannels);
+  heading.replaceChildren(textElement("span", "ROW"), ...Array.from({ length: visibleChannels }, (_, index) => textElement("span", `CHANNEL ${String(channelStart + index + 1).padStart(2, "0")}`)));
+  const rows = [];
+  for (let offset = -4; offset <= 4; offset++) {
+    const rowIndex = position.row + offset;
+    const row = document.createElement("div");
+    row.className = `mega-pattern-row${offset === 0 ? " is-current" : ""}`;
+    row.style.setProperty("--row-distance", Math.abs(offset));
+    row.append(textElement("span", rowIndex >= 0 && rowIndex < pattern.rows.length ? String(rowIndex).padStart(2, "0") : "--", "mega-row-number"));
+    for (let channel = channelStart; channel < channelStart + visibleChannels; channel++) {
+      const event = pattern.rows[rowIndex]?.[channel];
+      row.append(textElement("span", event ? trackerCell(event, tracker.format) : "--- .. .. ...", "mega-event"));
+    }
+    rows.push(row);
+  }
+  grid.replaceChildren(...rows);
+  lastMegaPatternKey = patternKey;
+}
+function signalGlyphs(data, length = 34) {
+  const glyphs = " .:-=+*#%@";
+  if (!data?.length) return " ".repeat(length);
+  return Array.from({ length }, (_, index) => {
+    const sample = Math.abs(data[Math.min(data.length - 1, Math.floor(index / length * data.length))] || 0);
+    return glyphs[Math.min(glyphs.length - 1, Math.floor(Math.sqrt(sample) * glyphs.length))];
+  }).join("");
+}
+function renderMegaSignal(frame) {
+  const channels = frame.channels;
+  $("mega-source").textContent = "UADE CHANNEL SIGNAL MATRIX";
+  $("mega-position").textContent = `${channels.length} LIVE STREAMS  /  BEAT ${String(frame.music.beatCount).padStart(4, "0")}  /  ${frame.scene.toUpperCase()}`;
+  $("mega-pattern-heading").replaceChildren(textElement("span", "LIVE AMPLITUDE TELEMETRY"));
+  $("mega-pattern").replaceChildren(...channels.map((data, index) => {
+    const row = document.createElement("div");
+    row.className = "mega-signal-row";
+    row.append(textElement("span", `CH ${String(index + 1).padStart(2, "0")}`), textElement("span", signalGlyphs(data), "mega-signal-glyphs"));
+    return row;
+  }));
+  const orders = $("mega-orders");
+  const beat = frame.music.beatCount % 16;
+  orders.replaceChildren(...Array.from({ length: 16 }, (_, index) => textElement("span", String(index + 1).padStart(2, "0"), index === beat ? "is-current" : "")));
+  lastMegaPatternKey = undefined;
+}
+function renderMegaFrame(frame) {
+  if (immersiveMode !== "mega" || !$("immersive-dialog").open) return;
+  const stage = $("immersive-stage");
+  stage.style.setProperty("--mega-level", frame.signal.level.toFixed(3));
+  stage.style.setProperty("--mega-low", frame.signal.low.toFixed(3));
+  stage.style.setProperty("--mega-high", frame.signal.high.toFixed(3));
+  stage.classList.toggle("mega-beat", frame.musicalEvent.beat);
+  renderMegaChannels(frame.channels);
+  const tracker = activeEngine === "xmp" ? xmpPlayer?.tracker : undefined;
+  if (tracker?.available) renderMegaTracker(frame, tracker);
+  else renderMegaSignal(frame);
+}
+function setImmersiveMode(mode) {
+  immersiveMode = mode;
+  lastMegaPatternKey = undefined;
+  const mega = mode === "mega";
+  $("immersive-stage").classList.toggle("mega-active", mega);
+  $("mega-layer").setAttribute("aria-hidden", String(!mega));
+  $("immersive-kicker").lastChild.textContent = mega ? " #AFWD Chamber / INIT MEGABOOST engaged" : " #AFWD Chamber / Visualizer activated";
+}
 function updateControls(state = player?.state) {
   const xmpActive = activeEngine === "xmp";
   const currentState = xmpActive ? xmpPlayer?.state : state;
@@ -705,6 +823,7 @@ function updateControls(state = player?.state) {
   $("stop").disabled = !ready || !["playing", "paused", "loading"].includes(currentState);
   $("open-tracker").disabled = !xmpActive || !xmpPlayer?.tracker?.available;
   $("open-visualizer").disabled = !ready || !scopesEnabled || !activeVisualizationSource();
+  $("open-mega").disabled = !ready || !scopesEnabled || !activeVisualizationSource();
   $("songs").disabled = initializing || (!xmpActive && currentState === "disposed") || !songs.length;
   $("file").disabled = initializing || (!xmpActive && currentState === "disposed");
   updateImmersiveLabels();
@@ -901,13 +1020,16 @@ function showImmersiveCursor() {
     immersiveCursorTimer = undefined;
   }, 1800);
 }
-$("open-visualizer").addEventListener("click", (event) => {
+function openImmersive(mode, opener) {
+  setImmersiveMode(mode);
   updateImmersiveLabels();
-  openDialog("immersive-dialog", event.currentTarget);
+  openDialog("immersive-dialog", opener);
   immersiveVisualizer.start();
   showImmersiveCursor();
   if (!document.fullscreenElement) void $("immersive-stage").requestFullscreen().catch(() => {});
-});
+}
+$("open-visualizer").addEventListener("click", (event) => openImmersive("visualizer", event.currentTarget));
+$("open-mega").addEventListener("click", (event) => openImmersive("mega", event.currentTarget));
 $("immersive-stage").addEventListener("pointermove", showImmersiveCursor, { passive: true });
 document.addEventListener("fullscreenchange", () => {
   const fullscreen = document.fullscreenElement === $("immersive-stage");
@@ -915,7 +1037,6 @@ document.addEventListener("fullscreenchange", () => {
   else if (immersiveOwnedFullscreen) {
     immersiveOwnedFullscreen = false;
     if ($("immersive-dialog").open) closeDialog($("immersive-dialog"));
-    window.requestAnimationFrame(() => $("open-visualizer").focus());
   }
 });
 $("settings-toggle").addEventListener("click", () => setSettingsPanel(!$("settings-panel").classList.contains("is-open")));

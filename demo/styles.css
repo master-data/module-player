@@ -233,6 +233,17 @@ input[type="file"] {
     background: #147c74;
 }
 
+.command.mega-launch {
+    border-color: #efb557;
+    background: #a34031;
+    color: #fff8df;
+    box-shadow: inset 0 -3px 0 rgba(255, 225, 139, .32);
+}
+
+.command.mega-launch:hover:not(:disabled) {
+    background: #d45f42;
+}
+
 .text-command {
     border: 0;
     border-bottom: 1px solid currentColor;
@@ -374,6 +385,268 @@ dialog.tracker-dialog[open] {
     content: "";
     background: repeating-linear-gradient(0deg, rgba(205, 255, 241, .025) 0 1px, transparent 1px 4px);
     mix-blend-mode: screen;
+}
+
+.mega-layer {
+    --mega-level: 0;
+    --mega-low: 0;
+    --mega-high: 0;
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    display: none;
+    overflow: hidden;
+    pointer-events: none;
+    color: #dcfff4;
+    font-variant-numeric: tabular-nums;
+}
+
+.mega-active .mega-layer {
+    display: block;
+    animation: mega-arrive 900ms cubic-bezier(.2, .75, .2, 1) both;
+}
+
+.mega-active::before {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    content: "";
+    pointer-events: none;
+    background:
+        linear-gradient(90deg, rgba(1, 7, 10, .7), transparent 30%, transparent 72%, rgba(1, 7, 10, .42)),
+        linear-gradient(180deg, rgba(2, 7, 10, .52), transparent 24%, transparent 75%, rgba(2, 7, 10, .8));
+}
+
+.mega-telemetry {
+    position: absolute;
+    top: clamp(24px, 4vw, 54px);
+    right: clamp(20px, 4vw, 58px);
+    max-width: 48vw;
+    padding-right: 12px;
+    border-right: 2px solid rgba(239, 181, 87, .8);
+    text-align: right;
+}
+
+.mega-source,
+.mega-position {
+    margin: 0;
+    line-height: 1.5;
+    text-transform: uppercase;
+}
+
+.mega-source {
+    color: #efb557;
+    font-size: 10px;
+}
+
+.mega-position {
+    color: rgba(220, 255, 244, .66);
+    font-size: 9px;
+}
+
+.mega-pattern-shell {
+    position: absolute;
+    top: 18%;
+    right: clamp(20px, 4vw, 58px);
+    bottom: 16%;
+    left: clamp(20px, 4vw, 58px);
+    width: auto;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    perspective: 900px;
+    mask-image: linear-gradient(180deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+.mega-pattern-heading,
+.mega-pattern-row {
+    display: grid;
+    grid-template-columns: 42px repeat(var(--mega-columns), minmax(92px, 1fr));
+    min-width: 0;
+}
+
+.mega-pattern-heading {
+    min-height: 24px;
+    color: rgba(239, 181, 87, .72);
+    font-size: 8px;
+    line-height: 24px;
+    text-transform: uppercase;
+}
+
+.mega-pattern-heading span,
+.mega-pattern-row span {
+    min-width: 0;
+    padding: 0 7px;
+    overflow: hidden;
+    border-left: 1px solid rgba(171, 255, 229, .1);
+    white-space: nowrap;
+    text-overflow: clip;
+}
+
+.mega-pattern {
+    position: relative;
+    min-height: 270px;
+}
+
+.mega-pattern::before,
+.mega-pattern::after {
+    position: absolute;
+    z-index: -1;
+    left: 0;
+    right: 0;
+    height: 1px;
+    content: "";
+    background: linear-gradient(90deg, transparent, rgba(119, 213, 187, .55), transparent);
+}
+
+.mega-pattern::before {
+    top: calc(50% - 18px);
+}
+
+.mega-pattern::after {
+    top: calc(50% + 18px);
+}
+
+.mega-pattern-row {
+    height: 30px;
+    color: rgba(204, 255, 238, .8);
+    font-size: 10px;
+    line-height: 30px;
+    opacity: calc(1 - var(--row-distance) * .16);
+    transition: opacity 150ms ease, background 150ms ease;
+}
+
+.mega-pattern-row.is-current {
+    position: relative;
+    z-index: 1;
+    background: linear-gradient(90deg, rgba(239, 181, 87, .08), rgba(119, 213, 187, calc(.18 + var(--mega-level) * .16)), rgba(238, 128, 97, .08));
+    color: #f4fff9;
+    opacity: 1;
+}
+
+.mega-pattern-row.is-current::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    content: "";
+    background: #efb557;
+    box-shadow: 0 0 18px rgba(239, 181, 87, .8);
+}
+
+.mega-row-number {
+    color: #efb557;
+}
+
+.mega-event {
+    text-shadow: 0 0 12px rgba(119, 213, 187, .38);
+}
+
+.mega-signal-row {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    height: 38px;
+    border-bottom: 1px solid rgba(119, 213, 187, .12);
+    color: #efb557;
+    font-size: 9px;
+    line-height: 38px;
+}
+
+.mega-signal-glyphs {
+    overflow: hidden;
+    color: rgba(203, 255, 237, .82);
+    font-size: 13px;
+    white-space: pre;
+    text-shadow: 0 0 14px rgba(119, 213, 187, calc(.25 + var(--mega-high) * .35));
+}
+
+.mega-channels {
+    position: absolute;
+    bottom: clamp(52px, 8vh, 88px);
+    left: clamp(20px, 4vw, 58px);
+    width: min(230px, 24vw);
+    display: grid;
+    gap: 5px;
+}
+
+.mega-channel {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    color: rgba(220, 255, 244, .62);
+    font-size: 8px;
+}
+
+.mega-channel i {
+    height: 2px;
+    background: linear-gradient(90deg, #77d5bb, #efb557 72%, #ee8061);
+    box-shadow: 0 0 10px rgba(119, 213, 187, .5);
+    transform: scaleX(var(--channel-level));
+    transform-origin: left;
+    transition: transform 80ms linear;
+}
+
+.mega-orders {
+    position: absolute;
+    right: clamp(20px, 4vw, 58px);
+    bottom: clamp(20px, 3vw, 42px);
+    left: clamp(20px, 4vw, 58px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(4px, 1vw, 14px);
+}
+
+.mega-orders span {
+    position: relative;
+    width: 30px;
+    color: rgba(220, 255, 244, .32);
+    font-size: 8px;
+    text-align: center;
+}
+
+.mega-orders span::before {
+    display: block;
+    width: 100%;
+    height: 2px;
+    margin-bottom: 5px;
+    content: "";
+    background: currentColor;
+}
+
+.mega-orders span.is-current {
+    color: #efb557;
+    font-size: 10px;
+}
+
+.mega-orders span.is-current::after {
+    position: absolute;
+    top: -3px;
+    left: calc(50% - 4px);
+    width: 8px;
+    height: 8px;
+    content: "";
+    background: #ee8061;
+    border-radius: 50%;
+    box-shadow: 0 0 16px #ee8061;
+}
+
+.mega-active .immersive-chrome {
+    z-index: 3;
+    background: none;
+}
+
+.mega-active .immersive-identity h2 {
+    max-width: min(38vw, 560px);
+    font-size: clamp(20px, 3vw, 40px);
+}
+
+@keyframes mega-arrive {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .immersive-stage:fullscreen {
@@ -1000,10 +1273,61 @@ body.settings-open .settings-tab {
         font-size: 23px;
     }
 
+    .mega-active .immersive-identity h2 {
+        max-width: 58vw;
+        font-size: 18px;
+    }
+
+    .mega-telemetry {
+        top: 86px;
+        right: 16px;
+        max-width: 66vw;
+    }
+
+    .mega-pattern-shell {
+        top: 24%;
+        right: 12px;
+        bottom: 18%;
+        left: 12px;
+        width: auto;
+        transform: none;
+    }
+
+    .mega-pattern-heading,
+    .mega-pattern-row {
+        grid-template-columns: 34px repeat(var(--mega-columns), minmax(82px, 1fr));
+    }
+
+    .mega-pattern-row {
+        font-size: 9px;
+    }
+
+    .mega-channels {
+        bottom: 54px;
+        left: 14px;
+        width: 126px;
+    }
+
+    .mega-orders {
+        right: 12px;
+        bottom: 14px;
+        left: 12px;
+        gap: 3px;
+    }
+
+    .mega-orders span {
+        width: 18px;
+        font-size: 7px;
+    }
+
 }
 
 @media (prefers-reduced-motion: reduce) {
     .immersive-kicker span {
+        animation: none;
+    }
+
+    .mega-active .mega-layer {
         animation: none;
     }
 }

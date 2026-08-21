@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Module Player</title>
   <link rel="icon" href="favicon.ico">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=21">
 </head>
 <body>
   <main class="player-shell">
@@ -25,6 +25,7 @@
         <button id="stop" class="command danger" disabled>Stop</button>
         <button id="open-tracker" class="command" disabled>Tracker view</button>
         <button id="open-visualizer" class="command visualizer-launch" disabled>Visualizer view</button>
+        <button id="open-mega" class="command mega-launch" disabled>INIT MEGABOOST</button>
         <div id="track-control" class="subsong-control transport-subsong"><label for="track"><span class="range-label">Subsong <output id="track-readout" for="track">--</output></span></label><div class="subsong-actions"><button id="previous-track" class="subsong-step" type="button" aria-label="Previous subsong" disabled>&larr;</button><input id="track" type="range" min="0" max="0" step="1" value="0" disabled aria-describedby="track-readout"><button id="next-track" class="subsong-step" type="button" aria-label="Next subsong" disabled>&rarr;</button></div></div>
       </div>
       <div class="source-control">
@@ -90,16 +91,28 @@
   <dialog id="immersive-dialog" class="immersive-dialog" aria-labelledby="immersive-title">
     <div id="immersive-stage" class="immersive-stage">
       <canvas id="immersive-canvas" aria-label="Audio-reactive immersive visualization"></canvas>
+      <section id="mega-layer" class="mega-layer" aria-label="INIT MEGABOOST combined tracker and audio visualization" aria-hidden="true">
+        <div class="mega-telemetry">
+          <p id="mega-source" class="mega-source">SIGNAL MATRIX</p>
+          <p id="mega-position" class="mega-position">AWAITING PLAYBACK</p>
+        </div>
+        <div class="mega-pattern-shell">
+          <div id="mega-pattern-heading" class="mega-pattern-heading"></div>
+          <div id="mega-pattern" class="mega-pattern"></div>
+        </div>
+        <div id="mega-channels" class="mega-channels" aria-label="Live channel energy"></div>
+        <div id="mega-orders" class="mega-orders" aria-label="Pattern order journey"></div>
+      </section>
       <div class="immersive-chrome">
         <header class="immersive-header">
           <div class="immersive-identity">
-            <p class="immersive-kicker"><span aria-hidden="true"></span> #AFWD Chamber / Visualizer activated</p>
+            <p id="immersive-kicker" class="immersive-kicker"><span aria-hidden="true"></span> #AFWD Chamber / Visualizer activated</p>
             <h2 id="immersive-title">No module loaded</h2>
           </div>
         </header>
       </div>
     </div>
   </dialog>
-  <script type="module" src="main.js?v=42"></script>
+  <script type="module" src="main.js?v=44"></script>
 </body>
 </html>
