@@ -15,7 +15,16 @@ The wrapper deliberately does not own application UI, queue policy, file pickers
 
 ## Attribution and Notices
 
-Module Player includes third-party runtimes, data, and demonstration modules. Their licensing and redistribution assessment is complete for this repository. Keep all embedded notices, [uade/LICENSES.md](uade/LICENSES.md), and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) with downstream redistributions.
+Module Player includes third-party runtimes, data, and demonstration modules. Keep all embedded notices, [NOTICE.md](NOTICE.md), [uade/LICENSES.md](uade/LICENSES.md), and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) with downstream redistributions.
+
+## Licence
+
+Original Module Player source and documentation are MIT-licensed; the complete
+grant and scope are in [LICENCE.md](LICENCE.md). Bundled runtime assets, UADE
+data, and demonstration music are separately licensed and are not covered by
+that grant. The repository therefore has no single licence identifier; see
+[NOTICE.md](NOTICE.md) and [uade/LICENSES.md](uade/LICENSES.md) before
+redistributing it, particularly for commercial use.
 
 ## Acknowledgements
 
@@ -29,7 +38,7 @@ This repository is an integration layer built on the work of upstream projects a
 - **Format scout** is an advisory JavaScript port of UADE's `amifilemagic.c` result paths and `eagleplayer.conf` mappings. UADE remains authoritative for replay-player selection; the upstream file-magic source is marked dual GPL/Public Domain.
 - **Demo modules**: `VESURI - Major Release.mod` (`Major Release`) by Vesuri da Jormas; `GSLINGER.MOD` (`Guitar Slinger`) by Jogeir Liljedahl / Noiseless; `di.partyland` by Olof Gustafsson / Digital Illusions; `elw-lock.xm` (`Dead lock`) by Elwood; and `onward.xm` (`Onward`) by Jugi / Complex. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for the complete credit record.
 
-Names and notices above identify upstream work; they do not replace the licences or required attribution. Retain the bundled file headers, [uade/LICENSES.md](uade/LICENSES.md), and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) in redistributions.
+Names and notices above identify upstream work; they do not replace the licences or required attribution. Retain the bundled file headers, [NOTICE.md](NOTICE.md), [uade/LICENSES.md](uade/LICENSES.md), and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) in redistributions.
 
 ## Contents
 
