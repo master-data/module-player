@@ -938,6 +938,20 @@ dialog.tracker-dialog[open] {
 .tracker-subsong-control input { width: 100%; accent-color: #77d5bb; }
 .tracker-subsong-control output { min-width: 36px; color: #efb557; font-variant-numeric: tabular-nums; }
 
+.tracker-sid-chip-control { display: flex; gap: 4px; }
+.tracker-sid-chip-control button {
+    min-width: 42px;
+    height: 28px;
+    padding: 0 7px;
+    border: 1px solid rgba(119, 213, 187, .25);
+    border-radius: 0;
+    background: #0b2027;
+    color: #7ca19d;
+    font-size: 9px;
+}
+.tracker-sid-chip-control button:hover { border-color: #77d5bb; color: #d9f5eb; }
+.tracker-sid-chip-control button.is-selected { border-color: #77d5bb; background: rgba(119, 213, 187, .13); color: #e8fff6; }
+
 .sid-tracker .tracker-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1586,3 +1600,4 @@ body.settings-open .settings-tab {
 .diagnostics-detail {
     margin: 18px;
 }
+.tracker-order-map[hidden] { display: none; }

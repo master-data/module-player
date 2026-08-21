@@ -49,6 +49,7 @@ let immersiveCursorTimer;
 let immersiveOwnedFullscreen = false;
 let immersiveMode = "visualizer";
 let lastMegaPatternKey;
+let selectedSidChip = 0;
 const sidEnvelopeStates = new Map();
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization,
@@ -666,9 +667,26 @@ function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
 }
 function renderSidTrackerView() {
   const grid = $("tracker-grid");
-  const status = sidPlayer?.getSidStatus(0);
-  $("tracker-order-map").replaceChildren();
-  delete $("tracker-order-map").dataset.orders;
+  const installedSids = sidPlayer?.getInstalledSids() ?? 0;
+  selectedSidChip = Math.min(selectedSidChip, Math.max(0, installedSids - 1));
+  const status = sidPlayer?.getSidStatus(selectedSidChip);
+  const orderMap = $("tracker-order-map");
+  orderMap.hidden = true;
+  orderMap.replaceChildren();
+  delete orderMap.dataset.orders;
+  const chipControl = $("tracker-sid-chip-control");
+  chipControl.hidden = activeEngine !== "sid" || installedSids < 2;
+  if (installedSids > 1) {
+    chipControl.replaceChildren(...Array.from({ length: installedSids }, (_, chip) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.sidChip = String(chip);
+      button.className = chip === selectedSidChip ? "is-selected" : "";
+      button.textContent = `SID ${chip + 1}`;
+      button.setAttribute("aria-pressed", String(chip === selectedSidChip));
+      return button;
+    }));
+  }
   updateSubsongControl();
   renderTrackerScopes();
   if (!status) {
@@ -680,8 +698,8 @@ function renderSidTrackerView() {
   const filterMode = [status[0x18] & 0x10 ? "LP" : undefined, status[0x18] & 0x20 ? "BP" : undefined, status[0x18] & 0x40 ? "HP" : undefined].filter(Boolean).join(" + ") || "OFF";
   const cutoff = (status[0x15] & 0x07) | (status[0x16] << 3);
   $("tracker-dialog-kicker").textContent = "SID LIVE REGISTER VISUALIZATION";
-  $("tracker-status").textContent = `CHIP 1 / ${sidPlayer.getInstalledSids()}  |  FILTER ${filterMode}  |  CUTOFF ${cutoff}  |  RESONANCE ${status[0x17] >> 4}  |  VOLUME ${status[0x18] & 0x0f}`;
-  const writes = sidPlayer.getSidWriteTrace(0);
+  $("tracker-status").textContent = `SID ${selectedSidChip + 1} / ${installedSids}  |  FILTER ${filterMode}  |  CUTOFF ${cutoff}  |  RESONANCE ${status[0x17] >> 4}  |  VOLUME ${status[0x18] & 0x0f}`;
+  const writes = sidPlayer.getSidWriteTrace(selectedSidChip);
   const envelopes = [0, 1, 2].map((voice) => {
     const offset = voice * 7;
     return updateSidEnvelope(voice, status[offset + 5] >> 4, status[offset + 5] & 0x0f, status[offset + 6] >> 4, status[offset + 6] & 0x0f, Boolean(status[offset + 4] & 1), writes);
@@ -742,6 +760,7 @@ function renderTrackerView() {
     renderSidTrackerView();
     return;
   }
+  $("tracker-order-map").hidden = false;
   if (!tracker?.available) {
     $("tracker-order-map").replaceChildren();
     delete $("tracker-order-map").dataset.orders;
@@ -833,6 +852,7 @@ async function loadWithXmp(buffer, filename) {
 }
 async function loadWithSid(buffer, filename) {
   activeEngine = "sid";
+  selectedSidChip = 0;
   scopesEnabled = $("visualizer").checked;
   stopScopeLoop();
   // Construct the AudioContext before any awaited teardown so a click that
@@ -840,6 +860,7 @@ async function loadWithSid(buffer, filename) {
   const newSidPlayer = !sidPlayer || sidPlayer.state === "disposed"
     ? createSidPlayer({
       assetBaseUrl: "../sid/assets",
+      engine: "residfp",
       processorBufferSize: Number($("buffer").value),
       audioContextSampleRate: Number($("audio-rate").value),
       emulationConfig: sidEmulationConfig()
@@ -1408,6 +1429,13 @@ $("tracker-order-map").addEventListener("click", (event) => {
   const order = Number(button.dataset.order);
   const playingOrder = xmpPlayer?.tracker.getPosition()?.order;
   setTrackerOrder(order, order === playingOrder);
+});
+$("tracker-sid-chip-control").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-sid-chip]");
+  if (!button) return;
+  selectedSidChip = Number(button.dataset.sidChip);
+  sidEnvelopeStates.clear();
+  renderSidTrackerView();
 });
 $("buffer").addEventListener("change", () => stageRestart("audio buffer"));
 $("audio-rate").addEventListener("change", () => stageRestart("audio rate"));
