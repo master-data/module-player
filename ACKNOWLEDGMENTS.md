@@ -30,7 +30,13 @@ The demo bundles the following separate creative works. Their authors and rights
 | `VESURI - Major Release.mod` | `Major Release` | Vesuri da Jormas | |
 | `di.partyland` | `Partyland` | Olof Gustafsson  | Digital Illusions |
 | `elw-lock.xm` | `Dead lock` | Elwood | |
+| `Last_Ninja.sid` | `The Last Ninja` | Ben Daglish & Anthony Lees | 1987 System 3 |
 | `onward.xm` | `Onward` | Jugi / Complex | (c) 1995 Jugi / Complex |
+| `ghost battle (level 1).hipc` | `Ghost Battle (level 1)` | Jochen Hippel | |
+| `ghost battle (level 2).hipc` | `Ghost Battle (level 2)` | Jochen Hippel | |
+| `ghost battle (level 3).hipc` | `Ghost Battle (level 3)` | Jochen Hippel | |
+| `ghost battle (level 4).hipc` | `Ghost Battle (level 4)` | Jochen Hippel | |
+| `ghost battle (level 5).hipc` | `Ghost Battle (level 5)` | Jochen Hippel | |
 
 Their inclusion and redistribution were reviewed for this repository; retain the works and their associated attribution in downstream redistributions.
 

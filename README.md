@@ -37,7 +37,7 @@ This repository is an integration layer built on the work of upstream projects a
 - **Generic WebAudio Player** and **ChannelStreamer** are by Juergen Wothke. They provide the upstream ScriptProcessor playback path and optional channel waveform support.
 - **libxmp** is by Claudio Matsuoka and its contributors. It supplies the tracker replay functionality behind the webXMP backend.
 - **Format scout** is an advisory JavaScript port of UADE's `amifilemagic.c` result paths and `eagleplayer.conf` mappings. UADE remains authoritative for replay-player selection; the upstream file-magic source is marked dual GPL/Public Domain.
-- **Demo modules**: `VESURI - Major Release.mod` (`Major Release`) by Vesuri da Jormas; `GSLINGER.MOD` (`Guitar Slinger`) by Jogeir Liljedahl / Noiseless; `di.partyland` by Olof Gustafsson / Digital Illusions; `elw-lock.xm` (`Dead lock`) by Elwood; and `onward.xm` (`Onward`) by Jugi / Complex. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for the complete credit record.
+- **Demo modules**: `VESURI - Major Release.mod` (`Major Release`) by Vesuri da Jormas; `GSLINGER.MOD` (`Guitar Slinger`) by Jogeir Liljedahl / Noiseless; `di.partyland` by Olof Gustafsson / Digital Illusions; `elw-lock.xm` (`Dead lock`) by Elwood; `Last_Ninja.sid` (`The Last Ninja`) by Ben Daglish and Anthony Lees; `onward.xm` (`Onward`) by Jugi / Complex; and the five `ghost battle (level N).hipc` modules by Jochen Hippel. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for the complete credit record.
 
 Names and notices above identify upstream work; they do not replace the licences or required attribution. Retain the bundled file headers, [NOTICE.md](NOTICE.md), [uade/LICENSES.md](uade/LICENSES.md), and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) in redistributions.
 
@@ -78,7 +78,7 @@ http://localhost:4173/demo/?moduleUrl=https%3A%2F%2Fexample.com%2Fmusic%2Fsong.m
 
 `selectDemo` is matched case-insensitively against `music-manifest.json`. `moduleUrl` accepts an HTTP(S) URL and fetches the module directly; a different origin must return an appropriate CORS header (for example, `Access-Control-Allow-Origin`). Browsers still require **Initialize** to be clicked before audio can start.
 
-The demo lists `VESURI - Major Release.mod`, `di.partyland`, `elw-lock.xm`, `GSLINGER.MOD`, and `onward.xm` in [demo/music-manifest.json](demo/music-manifest.json). It routes PC tracker extensions to XMP first and uses UADE for Amiga formats; if UADE cannot load an unrecognised module, it retries with XMP. **Use XMP for MOD files** is enabled by default to provide the tracker display. Disable it in Settings to send MOD files to UADE instead; the choice applies when the module is next loaded or the player is reinitialized.
+ The demo lists `VESURI - Major Release.mod`, `di.partyland`, `elw-lock.xm`, `GSLINGER.MOD`, `Last_Ninja.sid`, `onward.xm`, and five `ghost battle (level N).hipc` files in [demo/music-manifest.json](demo/music-manifest.json). It routes PC tracker extensions to XMP first, SID files to the SID player, and uses UADE for Amiga formats including Jochen Hippel CoSo (`.hipc`) files; if UADE cannot load an unrecognised module, it retries with XMP. **Use XMP for MOD files** is enabled by default to provide the tracker display. Disable it in Settings to send MOD files to UADE instead; the choice applies when the module is next loaded or the player is reinitialized.
 
 ## ESM APIs
 
