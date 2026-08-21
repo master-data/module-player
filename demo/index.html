@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Module Player</title>
   <link rel="icon" href="favicon.ico">
-  <link rel="stylesheet" href="styles.css?v=16">
+  <link rel="stylesheet" href="styles.css?v=17">
 </head>
 <body>
   <main class="player-shell">
@@ -24,7 +24,7 @@
         <button id="pause" class="command" disabled>Pause</button>
         <button id="stop" class="command danger" disabled>Stop</button>
         <button id="open-tracker" class="command" disabled>Tracker view</button>
-        <button id="open-visualizer" class="command visualizer-launch" disabled>Enter visualizer</button>
+        <button id="open-visualizer" class="command visualizer-launch" disabled>Visualizer view</button>
         <div id="track-control" class="subsong-control transport-subsong"><label for="track"><span class="range-label">Subsong <output id="track-readout" for="track">--</output></span></label><div class="subsong-actions"><button id="previous-track" class="subsong-step" type="button" aria-label="Previous subsong" disabled>&larr;</button><input id="track" type="range" min="0" max="0" step="1" value="0" disabled aria-describedby="track-readout"><button id="next-track" class="subsong-step" type="button" aria-label="Next subsong" disabled>&rarr;</button></div></div>
       </div>
       <div class="source-control">
@@ -96,11 +96,10 @@
             <p class="immersive-kicker"><span aria-hidden="true"></span> #AFWD Chamber / Visualizer activated</p>
             <h2 id="immersive-title">No module loaded</h2>
           </div>
-          <button id="immersive-exit" class="dialog-close visualizer-icon immersive-exit" type="button" aria-label="Exit visualizer" title="Exit visualizer">&#x00D7;</button>
         </header>
       </div>
     </div>
   </dialog>
-  <script type="module" src="main.js?v=38"></script>
+  <script type="module" src="main.js?v=42"></script>
 </body>
 </html>

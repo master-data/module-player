@@ -446,48 +446,12 @@ dialog.tracker-dialog[open] {
     text-shadow: 0 0 28px rgba(119, 213, 187, .16);
 }
 
-.visualizer-icon {
-    display: grid;
-    width: 44px;
-    height: 44px;
-    place-items: center;
-    border: 1px solid rgba(215, 255, 243, .4);
-    border-radius: 0;
-    padding: 0;
-    background: rgba(2, 12, 16, .48);
-    color: #e9fff8;
-    font-family: "DM Mono", monospace;
-    font-size: 25px;
-    line-height: 1;
-    backdrop-filter: blur(12px);
-}
-
-.visualizer-icon:hover {
-    border-color: #77d5bb;
-    background: rgba(20, 124, 116, .42);
-}
-
 .immersive-stage {
     cursor: none;
 }
 
-.immersive-exit {
-    flex: 0 0 auto;
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(-6px);
-    transition: opacity 260ms ease, transform 260ms ease;
-}
-
-.immersive-stage.controls-visible {
+.immersive-stage.cursor-visible {
     cursor: default;
-}
-
-.immersive-stage.controls-visible .immersive-exit,
-.immersive-exit:focus-visible {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(0);
 }
 
 @keyframes signal-pulse {

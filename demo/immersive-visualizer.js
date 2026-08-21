@@ -1,6 +1,6 @@
 const TAU = Math.PI * 2;
 const SCENES = [
-  "orbit", "horizon", "lattice", "aurora", "cathedral", "vortex", "constellation", "prism",
+  "orbit", "horizon", "lattice", "aurora", "vortex", "constellation", "prism",
   "helix", "monolith", "bloom", "rainfall", "eclipse", "ribbons", "tunnel", "terrain", "pulsefield", "infinity",
   "kaleidoscope", "quasar", "wavegarden", "dreamweb"
 ];
@@ -459,7 +459,7 @@ export class ImmersiveVisualizer {
     } else {
       this.drawScene(context, this.scene, width, height, centerX, centerY, hue);
     }
-    this.drawParticles(context, width, height, centerX, centerY, hue, delta);
+    if (this.scene !== "pulsefield") this.drawParticles(context, width, height, centerX, centerY, hue, delta);
     context.restore();
     this.drawVignette(context, width, height);
   }
@@ -468,7 +468,6 @@ export class ImmersiveVisualizer {
     if (scene === "horizon") this.drawHorizon(context, width, height, centerX, centerY, hue);
     else if (scene === "lattice") this.drawLattice(context, width, height, centerX, centerY, hue);
     else if (scene === "aurora") this.drawAurora(context, width, height, centerX, centerY, hue);
-    else if (scene === "cathedral") this.drawCathedral(context, width, height, centerX, centerY, hue);
     else if (scene === "vortex") this.drawVortex(context, width, height, centerX, centerY, hue);
     else if (scene === "constellation") this.drawConstellation(context, width, height, centerX, centerY, hue);
     else if (scene === "prism") this.drawPrism(context, width, height, centerX, centerY, hue);
@@ -619,42 +618,6 @@ export class ImmersiveVisualizer {
       context.fillStyle = gradient;
       context.fill();
     }
-    context.restore();
-  }
-
-  drawCathedral(context, width, height, centerX, centerY, hue) {
-    const source = this.channels[0];
-    const floor = height * 0.86;
-    const scale = Math.min(width, height);
-    context.save();
-    context.globalCompositeOperation = "lighter";
-    context.lineCap = "round";
-    for (let column = -20; column <= 20; column++) {
-      const position = (column + 20) / 40;
-      const distance = Math.abs(column) / 20;
-      const sample = Math.abs(sampleAt(source, position));
-      const x = centerX + column * width * 0.023;
-      const towerHeight = height * (0.13 + (1 - distance) * 0.43 + sample * 0.22 + this.signal.low * 0.1);
-      context.beginPath();
-      context.moveTo(x, floor);
-      context.lineTo(x, floor - towerHeight);
-      context.strokeStyle = hsla(hue + distance * 125, 94, 68, 0.22 + (1 - distance) * 0.42);
-      context.lineWidth = Math.max(1, scale * (0.0014 + (1 - distance) * 0.002));
-      context.stroke();
-    }
-    for (let arch = 0; arch < 9; arch++) {
-      const depth = arch / 8;
-      context.beginPath();
-      context.ellipse(centerX, floor, scale * (0.09 + depth * 0.48), height * (0.22 + depth * 0.63), 0, Math.PI, TAU);
-      context.strokeStyle = hsla(hue + 35 + arch * 11, 90, 68, 0.08 + (1 - depth) * 0.22);
-      context.lineWidth = Math.max(1, scale * 0.0015);
-      context.stroke();
-    }
-    const floorGlow = context.createLinearGradient(0, floor - scale * 0.05, 0, floor + scale * 0.08);
-    floorGlow.addColorStop(0, hsla(hue + 60, 100, 70, 0.32));
-    floorGlow.addColorStop(1, hsla(hue + 60, 100, 50, 0));
-    context.fillStyle = floorGlow;
-    context.fillRect(0, floor - scale * 0.05, width, scale * 0.13);
     context.restore();
   }
 
@@ -992,23 +955,39 @@ export class ImmersiveVisualizer {
 
   drawPulsefield(context, width, height, centerX, centerY, hue) {
     const source = this.channels[0];
-    const columns = 15;
-    const rows = 9;
+    const starCount = 96;
     context.save();
     context.globalCompositeOperation = "lighter";
-    for (let row = 0; row < rows; row++) {
-      for (let column = 0; column < columns; column++) {
-        const position = (row * columns + column) / (rows * columns - 1);
-        const sample = Math.abs(sampleAt(source, position));
-        const x = (column + 0.5) / columns * width + this.pointer.x * width * 0.012 * (row - rows / 2);
-        const y = (row + 0.5) / rows * height + this.pointer.y * height * 0.012 * (column - columns / 2);
-        const distance = Math.hypot(x - centerX, y - centerY) / Math.hypot(width, height);
-        const pulse = (Math.sin(distance * 32 - this.elapsed * 1.4) + 1) * 0.5;
-        const radius = 1 + sample * 6 + pulse * this.signal.peak * 3.5;
-        context.fillStyle = hsla(hue + distance * 260 + pulse * 35, 96, 72, 0.16 + sample * 0.48);
+    for (let star = 0; star < starCount; star++) {
+      const seed = star + this.sceneSeed * 997;
+      const randomX = Math.abs(Math.sin(seed * 12.9898) * 43758.5453) % 1;
+      const randomY = Math.abs(Math.sin(seed * 78.233 + 1.73) * 23421.631) % 1;
+      const randomSize = Math.abs(Math.sin(seed * 37.719 + 4.91) * 17317.219) % 1;
+      const randomPhase = Math.abs(Math.sin(seed * 5.398 + 8.17) * 9137.173) % 1;
+      const depth = 0.25 + randomSize * 0.75;
+      const x = randomX * width + this.pointer.x * width * 0.012 * depth;
+      const y = randomY * height + this.pointer.y * height * 0.01 * depth;
+      const sample = Math.abs(sampleAt(source, randomX));
+      const slowTwinkle = 0.5 + 0.5 * Math.sin(this.elapsed * (0.7 + randomPhase * 1.4) + randomPhase * TAU);
+      const shimmer = 0.72 + 0.28 * Math.sin(this.elapsed * (2.1 + randomSize * 2.7) + seed);
+      const brightness = clamp(0.12 + slowTwinkle * shimmer * 0.56 + sample * 0.22 + this.signal.high * 0.08);
+      const radius = 0.45 + randomSize ** 3 * 2.5 + brightness * 0.55;
+      const temperature = randomPhase < 0.18 ? 38 : randomPhase > 0.82 ? -42 : 0;
+      context.fillStyle = hsla(hue + temperature, 58, 78 + brightness * 16, brightness);
+      context.beginPath();
+      context.arc(x, y, radius, 0, TAU);
+      context.fill();
+
+      if (randomSize > 0.91 && brightness > 0.55) {
+        const spike = radius * (2.2 + brightness * 2.8);
+        context.strokeStyle = hsla(hue + temperature, 68, 88, brightness * 0.42);
+        context.lineWidth = 0.6;
         context.beginPath();
-        context.arc(x, y, radius, 0, TAU);
-        context.fill();
+        context.moveTo(x - spike, y);
+        context.lineTo(x + spike, y);
+        context.moveTo(x, y - spike);
+        context.lineTo(x, y + spike);
+        context.stroke();
       }
     }
     context.restore();

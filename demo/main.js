@@ -1,7 +1,7 @@
 import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js";
 import { createXmpPlayer } from "../xmp/index.js?v=6";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=17";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=20";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
@@ -36,7 +36,7 @@ let selectedTrackerOrder = 0;
 let trackerFollowingPlayback = true;
 let trackerAnimationFrame;
 let lastTrackerPositionKey;
-let immersiveControlsTimer;
+let immersiveCursorTimer;
 let immersiveOwnedFullscreen = false;
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization,
@@ -893,23 +893,22 @@ $("open-tracker").addEventListener("click", (event) => {
   openDialog("tracker-dialog", event.currentTarget);
   startTrackerAnimation();
 });
-function showImmersiveControls() {
-  clearTimeout(immersiveControlsTimer);
-  $("immersive-stage").classList.add("controls-visible");
-  immersiveControlsTimer = window.setTimeout(() => {
-    $("immersive-stage").classList.remove("controls-visible");
-    immersiveControlsTimer = undefined;
+function showImmersiveCursor() {
+  clearTimeout(immersiveCursorTimer);
+  $("immersive-stage").classList.add("cursor-visible");
+  immersiveCursorTimer = window.setTimeout(() => {
+    $("immersive-stage").classList.remove("cursor-visible");
+    immersiveCursorTimer = undefined;
   }, 1800);
 }
 $("open-visualizer").addEventListener("click", (event) => {
   updateImmersiveLabels();
   openDialog("immersive-dialog", event.currentTarget);
   immersiveVisualizer.start();
-  showImmersiveControls();
+  showImmersiveCursor();
   if (!document.fullscreenElement) void $("immersive-stage").requestFullscreen().catch(() => {});
 });
-$("immersive-stage").addEventListener("pointermove", showImmersiveControls, { passive: true });
-$("immersive-exit").addEventListener("focus", showImmersiveControls);
+$("immersive-stage").addEventListener("pointermove", showImmersiveCursor, { passive: true });
 document.addEventListener("fullscreenchange", () => {
   const fullscreen = document.fullscreenElement === $("immersive-stage");
   if (fullscreen) immersiveOwnedFullscreen = true;
@@ -934,9 +933,9 @@ for (const dialog of document.querySelectorAll("dialog")) {
   dialog.addEventListener("close", () => {
     if (dialog.id === "tracker-dialog") stopTrackerAnimation();
     if (dialog.id === "immersive-dialog") {
-      clearTimeout(immersiveControlsTimer);
-      immersiveControlsTimer = undefined;
-      $("immersive-stage").classList.remove("controls-visible");
+      clearTimeout(immersiveCursorTimer);
+      immersiveCursorTimer = undefined;
+      $("immersive-stage").classList.remove("cursor-visible");
       immersiveVisualizer.stop();
       if (document.fullscreenElement === $("immersive-stage")) void document.exitFullscreen();
     }
