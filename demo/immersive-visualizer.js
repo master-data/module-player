@@ -63,10 +63,11 @@ function hsla(hue, saturation, lightness, alpha = 1) {
 }
 
 export class ImmersiveVisualizer {
-  constructor(canvas, { getSource, onFrame, reducedMotion = false } = {}) {
+  constructor(canvas, { getSource, getSidState, onFrame, reducedMotion = false } = {}) {
     this.canvas = canvas;
     this.context = canvas.getContext("2d", { alpha: false });
     this.getSource = getSource;
+    this.getSidState = getSidState;
     this.onFrame = onFrame;
     this.reducedMotion = reducedMotion;
     this.scene = SCENES[Math.floor(randomUnit() * SCENES.length)];
@@ -130,6 +131,9 @@ export class ImmersiveVisualizer {
     };
     this.canvas.dataset.transitionReason = "opening";
     this.channels = [];
+    this.sidRegisterFeedback = new Map();
+    this.sidFeedbackChip = undefined;
+    this.sidLastWriteCycle = -Infinity;
     this.particles = Array.from({ length: reducedMotion ? 54 : 110 }, (_, index) => this.createParticle(index / 110));
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas);
@@ -414,10 +418,12 @@ export class ImmersiveVisualizer {
     this.pointer.x = mix(this.pointer.x, this.pointer.targetX, 0.035);
     this.pointer.y = mix(this.pointer.y, this.pointer.targetY, 0.035);
     this.readSignal();
+    const sidState = this.getSidState?.();
+    const sidFeedback = sidState ? this.applySidRegisterFeedback(sidState, delta) : undefined;
     const musicalEvent = this.analyzeMusic(delta);
     this.updateCamera(delta, musicalEvent);
     this.directScene(delta, musicalEvent);
-    this.paint(delta);
+    this.paint(delta, sidState, sidFeedback);
     if (this.onFrame && (musicalEvent.beat || time >= this.nextFrameReportAt)) {
       this.nextFrameReportAt = time + 80;
       this.onFrame({
@@ -434,7 +440,7 @@ export class ImmersiveVisualizer {
     this.animationFrame = requestAnimationFrame((nextTime) => this.draw(nextTime));
   }
 
-  paint(delta) {
+  paint(delta, sidState, sidFeedback) {
     const context = this.context;
     const width = this.canvas.width;
     const height = this.canvas.height;
@@ -476,7 +482,82 @@ export class ImmersiveVisualizer {
     }
     if (this.scene !== "pulsefield") this.drawParticles(context, width, height, centerX, centerY, hue, delta);
     context.restore();
+    if (sidState) this.drawSidRegisterOverlay(context, width, height, sidState, sidFeedback);
     this.drawVignette(context, width, height);
+  }
+
+  applySidRegisterFeedback(sidState, delta) {
+    const registerFeedback = this.updateSidRegisterFeedback(sidState, delta);
+    const registerActivity = Math.max(...registerFeedback.voiceActivity, registerFeedback.filterActivity);
+    this.signal.flux = Math.max(this.signal.flux, registerActivity * .14);
+    this.signal.high = clamp(this.signal.high + registerActivity * .035);
+    return registerFeedback;
+  }
+
+  drawSidRegisterOverlay(context, width, height, sidState, registerFeedback) {
+    const laneHeight = height / 3;
+    context.save();
+    context.globalCompositeOperation = "lighter";
+    for (let index = 0; index < sidState.voices.length; index++) {
+      const voice = sidState.voices[index];
+      const activity = registerFeedback.voiceActivity[index];
+      const laneY = laneHeight * (index + .5);
+      const waveformBits = [[0x10, "triangle"], [0x20, "saw"], [0x40, "pulse"], [0x80, "noise"]].filter(([mask]) => voice.control & mask);
+      if (!waveformBits.length || voice.control & 0x08) continue;
+      const cycles = Math.max(1, Math.min(18, voice.frequency / 2048));
+      const phase = this.elapsed / .7;
+      const duty = Math.max(.03, Math.min(.97, voice.pulseWidth / 4095));
+      context.strokeStyle = hsla(164 + index * 42, 86, 68, .05 + activity * .22);
+      context.lineWidth = Math.max(1, width * .0006);
+      context.beginPath();
+      for (let point = 0; point <= 240; point++) {
+        const position = point / 240;
+        const step = (position * cycles + phase) % 1;
+        const values = waveformBits.map(([, waveform]) => {
+          if (waveform === "triangle") return 1 - 4 * Math.abs(step - .5);
+          if (waveform === "saw") return step * 2 - 1;
+          if (waveform === "pulse") return step < duty ? 1 : -1;
+          return (Math.sin((Math.floor((step + phase) * 4096) + voice.frequency * 13) * 12.9898) * 43758.5453 % 1) * 2 - 1;
+        });
+        const sample = values.reduce((sum, value) => sum + value, 0) / values.length;
+        const x = position * width;
+        const y = laneY - sample * laneHeight * (.045 + activity * .07);
+        point ? context.lineTo(x, y) : context.moveTo(x, y);
+      }
+      context.stroke();
+      if (activity) {
+        context.fillStyle = hsla(48, 96, 68, activity * .36);
+        context.fillRect(width * .025, laneY - laneHeight * .12, width * .004, laneHeight * .24);
+      }
+    }
+    context.restore();
+  }
+
+  updateSidRegisterFeedback(sidState, delta) {
+    if (sidState.chip !== this.sidFeedbackChip) {
+      this.sidRegisterFeedback.clear();
+      this.sidFeedbackChip = sidState.chip;
+      this.sidLastWriteCycle = -Infinity;
+    }
+    for (const [address, activity] of this.sidRegisterFeedback) {
+      activity.level *= Math.exp(-delta / .9);
+      if (activity.level < .01) this.sidRegisterFeedback.delete(address);
+    }
+    for (const write of sidState.writes ?? []) {
+      if (write.cyclePhi1 <= this.sidLastWriteCycle) continue;
+      const activity = this.sidRegisterFeedback.get(write.address) ?? { level: 0 };
+      activity.level = Math.min(1, activity.level + .45);
+      this.sidRegisterFeedback.set(write.address, activity);
+      this.sidLastWriteCycle = write.cyclePhi1;
+    }
+    const voiceActivity = [0, 1, 2].map((voice) => {
+      const offset = voice * 7;
+      let level = 0;
+      for (let address = offset; address < offset + 7; address++) level = Math.max(level, this.sidRegisterFeedback.get(address)?.level ?? 0);
+      return level;
+    });
+    const filterActivity = Math.max(...[0x15, 0x16, 0x17, 0x18].map((address) => this.sidRegisterFeedback.get(address)?.level ?? 0));
+    return { voiceActivity, filterActivity };
   }
 
   drawScene(context, scene, width, height, centerX, centerY, hue) {

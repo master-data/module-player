@@ -90,6 +90,7 @@ export class XmpPlayer {
     this._listeners = new Map();
     this._state = "initializing";
     this._volume = 1;
+    this._streamPanning = undefined;
     this._looping = false;
     this._lastLoad = undefined;
     this._frame = document.createElement("iframe");
@@ -165,6 +166,7 @@ export class XmpPlayer {
       const songInfo = await this._api.load(buffer, filename, options);
       const metadata = { ...songInfo, fileName: filename, fileLengthBytes: buffer.byteLength, format: "libxmp" };
       this._api.setVolume(this._volume);
+      if (this._streamPanning !== undefined) this._api.setPanning(this._streamPanning - 1);
       this._setState("playing");
       this._emit("metadata", metadata);
       return metadata;
@@ -187,7 +189,11 @@ export class XmpPlayer {
   setTimeout(seconds) { this._api?.setTimeout(seconds); }
   setSilenceTimeout(seconds) { this._api?.setSilenceTimeout(seconds); }
   setPanning(pan) { this._api?.setPanning(pan); }
-  setUadePanning(panning) { this.setPanning(panning - 1); }
+  setStreamPanning(panning) {
+    if (!Number.isFinite(panning) || panning < 0 || panning > 2) throw new RangeError("Stereo panning must be between 0 and 2.");
+    this._streamPanning = panning;
+    this.setPanning(panning - 1);
+  }
 
   async dispose() {
     if (this._state === "disposed") return;

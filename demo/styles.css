@@ -553,6 +553,7 @@ dialog.tracker-dialog[open] {
     box-shadow: 0 0 18px rgba(239, 181, 87, .8);
 }
 
+
 .mega-row-number {
     color: #efb557;
 }
@@ -1514,6 +1515,7 @@ body.settings-open .settings-tab {
     .mega-pattern-row {
         grid-template-columns: 34px repeat(var(--mega-columns), minmax(82px, 1fr));
     }
+
 
     .mega-pattern-row {
         font-size: 9px;

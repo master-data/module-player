@@ -53,6 +53,23 @@ let selectedSidChip = 0;
 const sidEnvelopeStates = new Map();
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization,
+  getSidState: () => {
+    if (immersiveMode !== "mega" || activeEngine !== "sid") return undefined;
+    const status = sidPlayer?.getSidStatus(selectedSidChip);
+    if (!status) return undefined;
+    return {
+      chip: selectedSidChip,
+      voices: [0, 1, 2].map((voice) => {
+        const offset = voice * 7;
+        return {
+          frequency: status[offset] | (status[offset + 1] << 8),
+          pulseWidth: status[offset + 2] | ((status[offset + 3] & 0x0f) << 8),
+          control: status[offset + 4]
+        };
+      }),
+      writes: sidPlayer.getSidWriteTrace(selectedSidChip)
+    };
+  },
   onFrame: renderMegaFrame,
   reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
 });
@@ -830,6 +847,8 @@ async function loadWithXmp(buffer, filename) {
   draw(performance.now());
   await player?.dispose();
   player = undefined;
+  await sidPlayer?.dispose();
+  sidPlayer = undefined;
   if (!xmpPlayer || xmpPlayer.state === "disposed") {
     xmpPlayer = await createXmpPlayer({
       assetBaseUrl: "../xmp",
@@ -838,6 +857,7 @@ async function loadWithXmp(buffer, filename) {
     });
     xmpPlayer.setVolume(Number($("volume").value));
     xmpPlayer.visualization?.setZoom(Number($("zoom").value));
+    xmpPlayer.setStreamPanning(Number($("pan").value));
     xmpPlayer.on("state", () => updateControls());
     xmpPlayer.on("ended", () => showStatus($("loop").checked ? "Looping module." : "Module ended."));
     xmpPlayer.on("error", (error) => { loadFailure = error.message; showStatus(loadFailure); renderMetadata(); });
@@ -874,6 +894,7 @@ async function loadWithSid(buffer, filename) {
     sidPlayer = await newSidPlayer;
     sidPlayer.setVolume(Number($("volume").value));
     sidPlayer.visualization?.setZoom(Number($("zoom").value));
+    sidPlayer.setStreamPanning(Number($("pan").value));
     sidPlayer.on("state", () => updateControls());
     sidPlayer.on("ended", () => showStatus($("loop").checked ? "Looping SID tune." : "SID tune ended."));
     sidPlayer.on("error", (error) => { loadFailure = error.message; showStatus(loadFailure); renderMetadata(); });
@@ -899,7 +920,7 @@ function prefersXmp(filename) {
   return XMP_PREFERRED_EXTENSIONS.has(extension);
 }
 function renderSourceControl() {
-  $("songs-control").hidden = lastSelection?.type !== "bundled";
+  $("songs-control").hidden = false;
 }
 async function inspectSelection(selection) {
   const token = ++pendingScoutToken;
@@ -947,6 +968,7 @@ function selectRemoteSong(url) {
   void inspectSelection(lastSelection);
 }
 function selectFile(selection) {
+  $("songs").selectedIndex = -1;
   loadFailure = undefined;
   subsongState = undefined;
   selectedSubsong = undefined;
@@ -1207,7 +1229,7 @@ function signalGlyphs(data, length = 34) {
 }
 function renderMegaSignal(frame) {
   const channels = frame.channels;
-  $("mega-source").textContent = "UADE CHANNEL SIGNAL MATRIX";
+  $("mega-source").textContent = activeEngine === "sid" ? "SID FINAL PCM SIGNAL MATRIX" : "UADE CHANNEL SIGNAL MATRIX";
   $("mega-position").textContent = `${channels.length} LIVE STREAMS  /  BEAT ${String(frame.music.beatCount).padStart(4, "0")}  /  ${frame.scene.toUpperCase()}`;
   $("mega-pattern-heading").replaceChildren(textElement("span", "LIVE AMPLITUDE TELEMETRY"));
   $("mega-pattern").replaceChildren(...channels.map((data, index) => {
@@ -1275,6 +1297,10 @@ async function loadBuffer(buffer, filename) {
     return;
   }
   if (!player || player.state === "initializing" || player.state === "disposed") {
+    if (activeEngine === "sid") {
+      await initializePlayer();
+      return;
+    }
     throw new Error("Initialize UADE before loading a file.");
   }
   loadFailure = undefined;
@@ -1337,7 +1363,7 @@ async function initializePlayer() {
     player.on("format-scout", (result) => { formatScoutState = result; renderMetadata(); });
     player.setVolume(Number($("volume").value));
     player.visualization?.setZoom(Number($("zoom").value));
-    player.setUadePanning(Number($("pan").value));
+    player.setStreamPanning(Number($("pan").value));
     await prepareSongs();
     if (!lastSelection) defaultWarning = selectDefaultSample();
     $("initialize").textContent = "Reinitialize";
@@ -1389,7 +1415,7 @@ $("pause").addEventListener("click", () => (activeEngine === "xmp" ? xmpPlayer :
 $("stop").addEventListener("click", () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.stop());
 $("volume").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setVolume(Number(event.target.value)); });
 $("rate").addEventListener("input", (event) => { updateRangeReadout(event.target); if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setPitchCoupledRate(Number(event.target.value)); });
-$("pan").addEventListener("input", (event) => { updateRangeReadout(event.target); if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setUadePanning(Number(event.target.value)); });
+$("pan").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setStreamPanning(Number(event.target.value)); });
 $("loop").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setLooping(event.target.checked));
 $("silence").addEventListener("change", (event) => { if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setSilenceTimeout(Number(event.target.value)); });
 $("zoom").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.visualization?.setZoom(Number(event.target.value)); });

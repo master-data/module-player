@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Module Player</title>
   <link rel="icon" href="favicon.ico">
-  <link rel="stylesheet" href="styles.css?v=29">
+  <link rel="stylesheet" href="styles.css?v=37">
 </head>
 <body>
   <main class="player-shell">
@@ -66,7 +66,7 @@
           <label>Scope refresh <select id="scope-hz"><option value="15">15 Hz</option><option value="30">30 Hz</option><option value="60" selected>60 Hz</option><option value="90">90 Hz</option><option value="120">120 Hz</option></select></label>
           <label><span class="range-label">Volume <output for="volume">80%</output></span><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8"></label>
           <label><span class="range-label">Rate <output for="rate">1.00x</output></span><input id="rate" type="range" min="0.8" max="1.2" step="0.01" value="1"></label>
-          <label><span class="range-label">UADE panning <output for="pan">0.7</output></span><input id="pan" type="range" min="0" max="2" step="0.1" value="0.7"></label>
+          <label><span class="range-label">Stereo panning <output for="pan">0.7</output></span><input id="pan" type="range" min="0" max="2" step="0.1" value="0.7"></label>
           <label>C64 clock <select id="sid-c64-model"><option value="">Tune default</option><option value="PAL">PAL</option><option value="NTSC">NTSC</option><option value="OLD_NTSC">Old NTSC</option><option value="DREAN">Drean</option><option value="PAL_M">PAL-M</option></select></label>
           <label>SID chip <select id="sid-model"><option value="">Tune default</option><option value="MOS6581">MOS 6581</option><option value="MOS8580">MOS 8580</option></select></label>
           <label class="toggle">Loop module <input id="loop" type="checkbox" checked></label>
@@ -91,8 +91,6 @@
     <nav id="tracker-order-map" class="tracker-order-map" aria-label="Module order map"></nav>
     <section id="tracker-scopes" class="tracker-scopes" hidden aria-label="Stereo output scopes"></section>
     <div id="tracker-grid" class="tracker-grid"></div>
-    <link rel="stylesheet" href="styles.css?v=32">
-    <script type="module" src="main.js?v=55"></script>
   </dialog>
   <dialog id="immersive-dialog" class="immersive-dialog" aria-labelledby="immersive-title">
     <div id="immersive-stage" class="immersive-stage">
@@ -119,6 +117,6 @@
       </div>
     </div>
   </dialog>
-  <script type="module" src="main.js?v=52"></script>
+  <script type="module" src="main.js?v=60"></script>
 </body>
 </html>

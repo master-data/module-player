@@ -93,6 +93,7 @@ export class SidPlayer {
     this._listeners = new Map();
     this._state = "initializing";
     this._volume = 1;
+    this._streamPanning = undefined;
     this._looping = false;
     this._timeoutSeconds = undefined;
     this._operation = Promise.resolve();
@@ -167,7 +168,7 @@ export class SidPlayer {
     this._splitter.connect(this._analysers[0], 0);
     this._splitter.connect(this._analysers[1], 1);
     this._analysers[0].connect(this._merger, 0, 0);
-    this._analysers[1].connect(this._merger, 0, 0);
+    this._analysers[1].connect(this._merger, 0, 1);
     this._merger.connect(context.destination);
     try {
       const runtime = await import(moduleUrl(this._assetBaseUrl));
@@ -304,6 +305,10 @@ export class SidPlayer {
   getVolume() { return this._volume; }
   setLooping(enabled) { this._looping = Boolean(enabled); }
   setTimeout(seconds) { this._timeoutSeconds = normalizeTimeout(seconds); }
+  setStreamPanning(panning) {
+    if (!Number.isFinite(panning) || panning < 0 || panning > 2) throw new RangeError("Stereo panning must be between 0 and 2.");
+    this._streamPanning = panning;
+  }
 
   setSystemRoms(roms) {
     this._roms = { kernal: copyRom(roms?.kernal, 8192, "KERNAL"), basic: copyRom(roms?.basic, 8192, "BASIC"), chargen: copyRom(roms?.chargen, 4096, "CHARGEN") };
@@ -369,6 +374,7 @@ export class SidPlayer {
       this._finish();
       return;
     }
+    const crossfeed = this._streamPanning === undefined ? 0 : this._streamPanning / 2;
     let frame = 0;
     while (frame < left.length) {
       if (!this._pendingPcm || this._pendingOffset >= this._pendingPcm.length) {
@@ -390,8 +396,11 @@ export class SidPlayer {
       }
       const frames = Math.min(left.length - frame, Math.floor((this._pendingPcm.length - this._pendingOffset) / 2));
       for (let index = 0; index < frames; index += 1) {
-        left[frame + index] = this._pendingPcm[this._pendingOffset + index * 2] / 32768;
-        right[frame + index] = this._pendingPcm[this._pendingOffset + index * 2 + 1] / 32768;
+        const sourceLeft = this._pendingPcm[this._pendingOffset + index * 2] / 32768;
+        const sourceRight = this._pendingPcm[this._pendingOffset + index * 2 + 1] / 32768;
+        const difference = (sourceRight - sourceLeft) * crossfeed;
+        left[frame + index] = sourceLeft + difference;
+        right[frame + index] = sourceRight - difference;
       }
       frame += frames;
       this._pendingOffset += frames * 2;

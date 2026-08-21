@@ -97,7 +97,7 @@ export class UadePlayer {
   setTimeout(seconds: number | null): void;
   setSilenceTimeout(seconds: number): void;
   setPanning(pan: number | null): void;
-  setUadePanning(panning: number): void;
+  setStreamPanning(panning: number): void;
   dispose(): Promise<void>;
 }
 

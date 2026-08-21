@@ -41,7 +41,7 @@ export class UadePlayer {
     this._listeners = new Map();
     this._state = "initializing";
     this._volume = 1;
-    this._uadePanning = undefined;
+    this._streamPanning = undefined;
     this._looping = false;
     this._lastLoad = undefined;
     this._sequence = 0;
@@ -256,7 +256,7 @@ export class UadePlayer {
     this._monitorAudioCallbacks();
     this._monitorCompanionFileLoads();
     window.ScriptNodePlayer.getInstance().setVolume(this._volume === 0 ? 0.001 : this._volume);
-    if (this._uadePanning !== undefined) this._backend.setPanning(this._uadePanning - 1);
+    if (this._streamPanning !== undefined) this._backend.setPanning(this._streamPanning - 1);
     this._setState("ready");
   }
 
@@ -301,6 +301,7 @@ export class UadePlayer {
         this._lastLoad = { buffer, options: { filename, track, timeoutSeconds: timeout < 0 ? undefined : timeout, loop } };
         await window.ScriptNodePlayer.loadFileData([{ xname: virtualName, fileBuffer: buffer }]);
         await Promise.race([window.ScriptNodePlayer.loadMusicFromURL(virtualName, { track, timeout }), dependencyFailure]);
+        if (this._streamPanning !== undefined) this._backend?.setPanning(this._streamPanning - 1);
         this._beginPlaybackDiagnostics();
         player.play();
         const songInfo = { ...player.getSongInfo(), formatScout };
@@ -377,9 +378,9 @@ export class UadePlayer {
     window.ScriptNodePlayer.getInstance()?.setPanning(pan);
   }
 
-  setUadePanning(panning) {
-    if (!Number.isFinite(panning) || panning < 0 || panning > 2) throw new RangeError("UADE panning must be between 0 and 2.");
-    this._uadePanning = panning;
+  setStreamPanning(panning) {
+    if (!Number.isFinite(panning) || panning < 0 || panning > 2) throw new RangeError("Stereo panning must be between 0 and 2.");
+    this._streamPanning = panning;
     this._backend?.setPanning(panning - 1);
   }
 

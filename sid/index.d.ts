@@ -93,6 +93,7 @@ export class SidPlayer {
   getVolume(): number;
   setLooping(enabled: boolean): void;
   setTimeout(seconds: number | null): void;
+  setStreamPanning(panning: number): void;
   setSystemRoms(roms?: SidSystemRoms): void;
   setEmulationConfig(config: SidEmulationConfig): void;
   getEmulationConfig(): Record<string, unknown> | undefined;
