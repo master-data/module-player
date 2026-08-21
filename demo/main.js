@@ -6,6 +6,9 @@ import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=21";
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
 const DEFAULT_SAMPLE = "VESURI - Major Release.mod";
+const query = new URLSearchParams(window.location.search);
+const requestedDemo = query.get("selectDemo")?.trim();
+const requestedModuleUrl = query.get("moduleUrl")?.trim();
 const AMIGA_CHANNEL_SIDES = ["L", "R", "R", "L"];
 const METER_FLOOR_DB = -48;
 const XMP_PREFERRED_EXTENSIONS = new Set(["669", "amf", "dsm", "far", "imf", "it", "mod", "mtm", "s3m", "stm", "ult", "xm"]);
@@ -502,12 +505,16 @@ async function loadWithXmp(buffer, filename) {
   updateControls();
 }
 function songUrl(name) { return `assets/music/${name.split("/").map(encodeURIComponent).join("/")}`; }
+function selectionUrl(selection) {
+  return selection.type === "remote" ? selection.url : songUrl(selection.filename);
+}
 function prefersXmp(filename) {
   const extension = filename.split(".").pop()?.toLowerCase();
+  if (extension === "mod") return $("prefer-xmp-mod").checked;
   return XMP_PREFERRED_EXTENSIONS.has(extension);
 }
 function renderSourceControl() {
-  $("songs-control").hidden = lastSelection?.type === "file";
+  $("songs-control").hidden = lastSelection?.type !== "bundled";
 }
 async function inspectSelection(selection) {
   const token = ++pendingScoutToken;
@@ -517,7 +524,7 @@ async function inspectSelection(selection) {
   try {
     const buffer = selection.type === "file"
       ? selection.buffer
-      : await fetch(songUrl(selection.filename)).then(async (response) => {
+      : await fetch(selectionUrl(selection)).then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.arrayBuffer();
       });
@@ -540,6 +547,20 @@ function selectBundledSong(filename) {
   renderSourceControl();
   void inspectSelection(lastSelection);
 }
+function selectRemoteSong(url) {
+  const parsedUrl = new URL(url, window.location.href);
+  if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("moduleUrl must use HTTP or HTTPS.");
+  const filename = decodeURIComponent(parsedUrl.pathname.split("/").pop()) || "remote-module";
+  $("songs").selectedIndex = -1;
+  loadFailure = undefined;
+  subsongState = undefined;
+  selectedSubsong = undefined;
+  selectedTrackerOrder = 0;
+  updateSubsongControl();
+  lastSelection = { type: "remote", filename, url: parsedUrl.href };
+  renderSourceControl();
+  void inspectSelection(lastSelection);
+}
 function selectFile(selection) {
   loadFailure = undefined;
   subsongState = undefined;
@@ -557,6 +578,18 @@ async function populateSongs() {
     return response.json();
   });
   $("songs").append(...songs.map((song) => new Option(song, song)));
+  if (requestedModuleUrl) {
+    selectRemoteSong(requestedModuleUrl);
+    return;
+  }
+  if (requestedDemo) {
+    const requestedSong = songs.find((song) => song.toLowerCase() === requestedDemo.toLowerCase());
+    if (requestedSong) {
+      selectBundledSong(requestedSong);
+      return;
+    }
+    showStatus(`Demo module not found: ${requestedDemo}.`);
+  }
   if (!lastSelection) selectDefaultSample();
 }
 function prepareSongs() {
@@ -859,7 +892,7 @@ async function playLastSelection() {
     await loadBuffer(lastSelection.buffer, lastSelection.filename);
     return;
   }
-  const response = await fetch(songUrl(lastSelection.filename));
+  const response = await fetch(selectionUrl(lastSelection));
   if (!response.ok) throw new Error(`Unable to load ${lastSelection.filename}: HTTP ${response.status}.`);
   await loadBuffer(await response.arrayBuffer(), lastSelection.filename);
 }

@@ -64,7 +64,17 @@ npx serve . -l 4173
 
 Open `http://localhost:4173/demo/`. Select **Initialize** from a user gesture, then choose a bundled module or a local file.
 
-The demo lists `VESURI - Major Release.mod`, `di.partyland`, `elw-lock.xm`, `GSLINGER.MOD`, and `onward.xm` in [demo/music-manifest.json](demo/music-manifest.json). It routes PC tracker extensions, including standard MOD files, to XMP first and uses UADE for Amiga formats; if UADE cannot load an unrecognised module, it retries with XMP.
+The initial selection can also be supplied in the URL:
+
+```text
+http://localhost:4173/demo/?selectDemo=di.partyland
+http://localhost:4173/demo/?moduleUrl=https%3A%2F%2Fexample.com%2Fmusic%2Fsong.mod
+
+```
+
+`selectDemo` is matched case-insensitively against `music-manifest.json`. `moduleUrl` accepts an HTTP(S) URL and fetches the module directly; a different origin must return an appropriate CORS header (for example, `Access-Control-Allow-Origin`). Browsers still require **Initialize** to be clicked before audio can start.
+
+The demo lists `VESURI - Major Release.mod`, `di.partyland`, `elw-lock.xm`, `GSLINGER.MOD`, and `onward.xm` in [demo/music-manifest.json](demo/music-manifest.json). It routes PC tracker extensions to XMP first and uses UADE for Amiga formats; if UADE cannot load an unrecognised module, it retries with XMP. **Use XMP for MOD files** is enabled by default to provide the tracker display. Disable it in Settings to send MOD files to UADE instead; the choice applies when the module is next loaded or the player is reinitialized.
 
 ## ESM APIs
 
