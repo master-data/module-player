@@ -4,6 +4,7 @@ Browser and any web-compatible environment for tracker music. This repository co
 
 - **UADE** for Amiga music formats and the bundled UADE player database.
 - **webXMP/libxmp** for PC tracker formats such as XM, IT, S3M, and MOD.
+- **libsidplayfp** for Commodore 64 PSID files and RSID files with caller-supplied C64 ROMs.
 
 It also includes a standalone browser demo at `demo/`. The project is intended for integrating music previews into an application; it does not provide a CLI, build pipeline, or a general-purpose music player UI.
 
@@ -46,6 +47,7 @@ Names and notices above identify upstream work; they do not replace the licences
 index.js / index.d.ts       ESM umbrella entry: UADE and XMP APIs
 uade/                       UADE player, metadata parser, visualization facade, and assets
 xmp/                        XMP player and assets
+sid/                        libsidplayfp SID player, header parser, and vendored runtime
 demo/                       Static validation/demo application
 demo/assets/music/          Bundled demo modules listed by music-manifest.json
 ```
@@ -86,7 +88,8 @@ The root entry exports both engines:
 import {
   createUadePlayer,
   parseUadeSongInfo,
-  createXmpPlayer
+  createXmpPlayer,
+  createSidPlayer
 } from "module-player";
 ```
 
@@ -95,6 +98,7 @@ Use the specific subpaths when an application needs only one engine:
 ```js
 import { createUadePlayer, parseUadeSongInfo } from "module-player/uade";
 import { createXmpPlayer } from "module-player/xmp";
+import { createSidPlayer } from "module-player/sid";
 ```
 
 ### UADE
@@ -156,6 +160,47 @@ Both players provide `load`, `pause`, `resume`, `stop`, `dispose`, volume, panni
 
 XMP's iframe sends messages only to its same-origin parent. It loads `xmp/frame.html`, which in turn loads its upstream backend assets. The iframe boundary prevents the UADE and XMP upstream globals from overwriting each other.
 
+### SID
+
+SID playback uses the bundled `libsidplayfp-wasm` runtime. `assetBaseUrl` must
+resolve to the `sid/assets` directory so the ESM loader can find its
+`libsidplayfp/dist` and `libsidplayfp/dist/sidlite` WebAssembly files. The
+default `sidlite` engine favors real-time playback; use `residfp` when its more
+accurate SID emulation is worth the additional CPU cost.
+
+```js
+const player = await createSidPlayer({
+  assetBaseUrl: "/vendor/module-player/sid/assets",
+  audioContextSampleRate: 44100,
+  processorBufferSize: 4096,
+  engine: "sidlite"
+});
+
+const info = await player.load(file, { track: 0, loop: true });
+console.log(info.title, info.author, info.songCount);
+
+await player.selectSong(1);
+```
+
+`load()` accepts a browser `File` or an `ArrayBuffer`; an ArrayBuffer requires
+`options.filename`. The player exposes `pause`, `resume`, `stop`, volume,
+looping, timeout, subtune selection, events, and diagnostics. SID tunes are C64
+programs, not tracker patterns, so this backend does not expose tracker data,
+tracker-channel scopes, panning, or pitch-coupled rate controls.
+
+RSID and interrupt/BASIC-driven tunes require legal C64 system ROM dumps. They
+are not distributed by this project. Supply exact-size KERNAL (8192 bytes),
+BASIC (8192 bytes), and CHARGEN (4096 bytes) images at construction or before
+loading an RSID:
+
+```js
+player.setSystemRoms({ kernal, basic, chargen });
+```
+
+The player rejects RSID loads when all three images are not present, rather than
+starting a silent or stalled tune. SID runtime support also requires a browser
+with WebAssembly exception-handling support.
+
 ## Player Lifecycle
 
 Create a player once per active preview session, attach listeners, then call `load()`. Loading starts playback when successful. `stop()` resets the active session; await it before loading another UADE track. `dispose()` releases the player and removes its active runtime ownership.
@@ -174,6 +219,10 @@ stopped and disposed can be reached by explicit calls.
 `on(event, listener)` returns an unsubscribe function. UADE supports `state`, `metadata`, `format-scout`, `ended`, and `error`; XMP supports all except `format-scout`. Errors are emitted as `UadePlaybackError` or `XmpPlaybackError`, each with `operation`, optional `filename`, and the original `cause`.
 
 Only one player of a given upstream runtime should be active at a time in one document. Create a new player after disposing the old one when changing UADE's requested sample rate, processor buffer size, or visualization mode.
+
+The SID backend likewise permits one active SID player per document. It uses a
+bounded Web Audio `ScriptProcessorNode` bridge and copies only the current
+libsidplayfp render chunk; it does not pre-render or retain whole tunes.
 
 ## Loading and Controls
 
@@ -296,4 +345,4 @@ npm run pack:check
 git diff --check
 ```
 
-The npm package includes only the ESM entry points and UADE/XMP runtime trees; the static demo and its music assets are excluded. `npm run pack:check` previews the package contents only; it is not a release approval.
+The npm package includes only the ESM entry points and UADE/XMP/SID runtime trees; the static demo and its music assets are excluded. The SID runtime includes GPL-2.0-or-later materials and its complete corresponding-source archive; retain the files recorded in [sid/UPSTREAM.md](sid/UPSTREAM.md) in redistributions. `npm run pack:check` previews the package contents only; it is not a release approval.

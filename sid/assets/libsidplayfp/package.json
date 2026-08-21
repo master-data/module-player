@@ -1,0 +1,79 @@
+{
+  "name": "libsidplayfp-wasm",
+  "version": "1.0.1",
+  "description": "Independent WebAssembly distribution of libsidplayfp, the Commodore 64 SID player, with TypeScript bindings.",
+  "license": "GPL-2.0-or-later",
+  "type": "module",
+  "packageManager": "bun@1.3.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrisgleissner/libsidplayfp-wasm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chrisgleissner/libsidplayfp-wasm/issues"
+  },
+  "homepage": "https://github.com/chrisgleissner/libsidplayfp-wasm#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "commodore-64",
+    "c64",
+    "sid",
+    "music",
+    "libsidplayfp",
+    "webassembly",
+    "wasm"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json",
+    "./fixtures/*": "./fixtures/*"
+  },
+  "files": [
+    "dist",
+    "fixtures",
+    "LICENSE",
+    "README.md",
+    "THIRD-PARTY-NOTICES.md",
+    "MODIFICATIONS.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && bun run build:source",
+    "build:source": "node scripts/complete-source.mjs",
+    "build:wasm": "bash ./scripts/build-all-wasm.sh",
+    "build:wasm:engine": "bash ./scripts/build.sh",
+    "fixtures:ensure": "bun run scripts/hvsc-fixtures.mjs ensure",
+    "roms:ensure": "bun run scripts/system-roms.mjs",
+    "test": "bun test test/*.test.ts --timeout 60000",
+    "test:coverage": "bun test test/*.test.ts --coverage --coverage-reporter=lcov --coverage-dir=coverage --timeout 60000 && bun run check:coverage",
+    "browser:install": "playwright install --with-deps chromium firefox webkit",
+    "test:browser": "playwright test",
+    "test:concurrent": "bun test --timeout 60000 test/concurrent-playback.test.ts",
+    "test:soak": "LIBSIDPLAYFP_WASM_SOAK=1 bun test --timeout 1800000 test/soak.test.ts",
+    "test:edge": "bun run scripts/edge-corpus.mjs",
+    "test:parity": "bun run scripts/native-parity.mjs",
+    "test:parity:edge": "bun run scripts/native-parity.mjs --corpus edge",
+    "check:package": "bun run scripts/check-package.mjs",
+    "check:coverage": "bun run scripts/check-coverage.mjs",
+    "version:verify": "node scripts/upstream.mjs verify",
+    "version:bump": "node scripts/upstream.mjs bump",
+    "version:adopt-mirror": "node scripts/upstream.mjs adopt-mirror",
+    "version:constants": "node scripts/upstream.mjs emit-constants",
+    "api:drift": "node scripts/api-drift.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.1",
+    "@types/node": "^22.15.3",
+    "bun-types": "^1.3.1",
+    "typescript": "^5.9.3"
+  },
+  "sideEffects": false
+}

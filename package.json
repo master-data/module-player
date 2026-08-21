@@ -19,10 +19,11 @@
     "NOTICE.md",
     "ACKNOWLEDGMENTS.md",
     "uade",
-    "xmp"
+    "xmp",
+    "sid"
   ],
   "scripts": {
-    "check": "node --check index.js && node --check uade/uade-player.js && node --check xmp/xmp-player.js && node --check demo/main.js",
+    "check": "node --check index.js && node --check uade/uade-player.js && node --check xmp/xmp-player.js && node --check sid/sid-metadata.js && node --check sid/sid-player.js && node --check demo/main.js",
     "pack:check": "npm pack --dry-run"
   },
   "exports": {
@@ -37,6 +38,10 @@
     "./xmp": {
       "types": "./xmp/index.d.ts",
       "import": "./xmp/index.js"
+    },
+    "./sid": {
+      "types": "./sid/index.d.ts",
+      "import": "./sid/index.js"
     }
   }
 }

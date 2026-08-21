@@ -1,5 +1,13 @@
 # Acknowledgments
 
+## SID Playback
+
+- **libsidplayfp** is by its upstream contributors and supplies the C64 SID
+	emulation behind `sid/`.
+- **libsidplayfp-wasm** is by Christian Gleissner and supplies the vendored
+	WebAssembly distribution and JavaScript bindings. See [sid/UPSTREAM.md](sid/UPSTREAM.md)
+	and [NOTICE.md](NOTICE.md) for the retained licensing material.
+
 Module Player is an integration layer. Its playback capabilities depend on the following projects and the contributors recorded by each upstream project.
 
 | Project or work | Contributors acknowledged | Role in Module Player |

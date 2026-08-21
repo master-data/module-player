@@ -1,5 +1,6 @@
 import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js";
 import { createXmpPlayer } from "../xmp/index.js?v=6";
+import { createSidPlayer, isSidFile, parseSidMetadata } from "../sid/index.js";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
 import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=21";
 
@@ -14,6 +15,7 @@ const METER_FLOOR_DB = -48;
 const XMP_PREFERRED_EXTENSIONS = new Set(["669", "amf", "dsm", "far", "imf", "it", "mod", "mtm", "s3m", "stm", "ult", "xm"]);
 let player;
 let xmpPlayer;
+let sidPlayer;
 let activeEngine = "uade";
 let suppressUadeFailure = false;
 let songs = [];
@@ -157,6 +159,8 @@ function renderDiagnostics() {
 function showDiagnostics() {
   diagnosticsState = activeEngine === "xmp"
     ? xmpPlayer?.getDiagnostics() ?? {}
+    : activeEngine === "sid"
+      ? sidPlayer?.getDiagnostics() ?? {}
     : player?.getDiagnostics() ?? {};
   renderDiagnostics();
 }
@@ -267,6 +271,10 @@ function selectSubsong(track) {
 }
 async function restartWithSubsong(track) {
   const selectedTrack = Number(selectSubsong(track));
+  if (activeEngine === "sid" && sidPlayer?.state !== "disposed") {
+    await sidPlayer.selectSong(selectedTrack);
+    return;
+  }
   if (initializing) {
     queuedSubsongRestart = selectedTrack;
     return;
@@ -305,6 +313,24 @@ function setXmpMetadata(filename, songInfo = {}) {
   $("tracker-grid").replaceChildren();
   delete $("tracker-grid").dataset.order;
   delete $("tracker-grid").dataset.format;
+  updateSubsongControl();
+  renderMetadata();
+  renderTrackerView();
+  updateImmersiveLabels();
+}
+function setSidMetadata(info) {
+  metadataState = {
+    title: info.title || info.fileName,
+    fileName: info.fileName,
+    fileLengthBytes: info.fileLengthBytes,
+    format: info.format,
+    player: info.engine || "libsidplayfp",
+    subsong: { minimum: 0, maximum: info.songCount - 1, current: info.currentSong },
+    summary: [info.author, info.released, `${info.installedSids} SID chip${info.installedSids === 1 ? "" : "s"}`, info.clock, info.sidModel].filter(Boolean),
+    raw: info
+  };
+  subsongState = metadataState.subsong;
+  selectedSubsong = info.currentSong;
   updateSubsongControl();
   renderMetadata();
   renderTrackerView();
@@ -504,9 +530,43 @@ async function loadWithXmp(buffer, filename) {
   startScopeLoop();
   updateControls();
 }
+async function loadWithSid(buffer, filename) {
+  activeEngine = "sid";
+  scopesEnabled = false;
+  stopScopeLoop();
+  // Construct the AudioContext before any awaited teardown so a click that
+  // selects a SID remains a valid Web Audio user gesture.
+  const newSidPlayer = !sidPlayer || sidPlayer.state === "disposed"
+    ? createSidPlayer({
+      assetBaseUrl: "../sid/assets",
+      processorBufferSize: Number($("buffer").value),
+      audioContextSampleRate: Number($("audio-rate").value)
+    })
+    : undefined;
+  await player?.dispose();
+  player = undefined;
+  await xmpPlayer?.dispose();
+  xmpPlayer = undefined;
+  if (newSidPlayer) {
+    sidPlayer = await newSidPlayer;
+    sidPlayer.setVolume(Number($("volume").value));
+    sidPlayer.on("state", () => updateControls());
+    sidPlayer.on("ended", () => showStatus($("loop").checked ? "Looping SID tune." : "SID tune ended."));
+    sidPlayer.on("error", (error) => { loadFailure = error.message; showStatus(loadFailure); renderMetadata(); });
+  }
+  const metadata = await sidPlayer.load(buffer, options(filename));
+  loadFailure = undefined;
+  setSidMetadata(metadata);
+  showStatus("Player state: playing");
+  showDiagnostics();
+  updateControls();
+}
 function songUrl(name) { return `assets/music/${name.split("/").map(encodeURIComponent).join("/")}`; }
 function selectionUrl(selection) {
   return selection.type === "remote" ? selection.url : songUrl(selection.filename);
+}
+function hasSidExtension(filename) {
+  return /\.(?:sid|psid|rsid)$/i.test(String(filename ?? "").split(/[\\/]/).pop() ?? "");
 }
 function prefersXmp(filename) {
   const extension = filename.split(".").pop()?.toLowerCase();
@@ -529,7 +589,7 @@ async function inspectSelection(selection) {
         return response.arrayBuffer();
       });
     if (token !== pendingScoutToken || lastSelection !== selection) return;
-    pendingScoutState = scoutFile(buffer, { filename: selection.filename });
+    pendingScoutState = scoutFile(buffer, { filename: selection.filename, uade: !hasSidExtension(selection.filename) });
   } catch (error) {
     if (token !== pendingScoutToken || lastSelection !== selection) return;
     pendingScoutError = `Format inspection failed: ${error.message}`;
@@ -849,8 +909,9 @@ function setImmersiveMode(mode) {
 }
 function updateControls(state = player?.state) {
   const xmpActive = activeEngine === "xmp";
-  const currentState = xmpActive ? xmpPlayer?.state : state;
-  const ready = !initializing && (xmpActive || (player && !["initializing", "disposed"].includes(currentState)));
+  const sidActive = activeEngine === "sid";
+  const currentState = xmpActive ? xmpPlayer?.state : sidActive ? sidPlayer?.state : state;
+  const ready = !initializing && (xmpActive || sidActive || (player && !["initializing", "disposed"].includes(currentState)));
   $("play").disabled = !ready || !["ready", "paused", "stopped", "ended"].includes(currentState);
   $("pause").disabled = !ready || currentState !== "playing";
   $("stop").disabled = !ready || !["playing", "paused", "loading"].includes(currentState);
@@ -862,11 +923,19 @@ function updateControls(state = player?.state) {
   updateImmersiveLabels();
 }
 async function loadBuffer(buffer, filename) {
+  if (hasSidExtension(filename) || isSidFile(buffer)) {
+    // A PSID/RSID signature is authoritative; malformed containers must not
+    // fall through to UADE's extension-based Amiga SIDMon mapping. A SID
+    // filename is likewise reserved for C64 SID playback in this demo.
+    parseSidMetadata(buffer, { filename });
+    await loadWithSid(buffer, filename);
+    return;
+  }
   if (activeEngine === "xmp") {
     await loadWithXmp(buffer, filename);
     return;
   }
-  formatScoutState = scoutFile(buffer, { filename });
+  formatScoutState = scoutFile(buffer, { filename, uade: !hasSidExtension(filename) });
   if (prefersXmp(filename)) {
     await loadWithXmp(buffer, filename);
     return;
@@ -906,11 +975,20 @@ async function initializePlayer() {
     updateControls();
     updateRestartButton();
     updateSubsongControl();
+    if (lastSelection && hasSidExtension(lastSelection.filename)) {
+      await playLastSelection();
+      $("initialize").textContent = "Reinitialize";
+      restartSettings.clear();
+      updateRestartButton();
+      return;
+    }
     const previousPlayer = player;
     player = undefined;
     activeEngine = "uade";
     await xmpPlayer?.dispose();
     xmpPlayer = undefined;
+    await sidPlayer?.dispose();
+    sidPlayer = undefined;
     await previousPlayer?.dispose();
     player = await createUadePlayer({
       assetBaseUrl: "../uade/assets",
@@ -958,7 +1036,7 @@ async function playModule(input, { filename } = {}) {
 }
 
 function hasActivePlayer() {
-  const activePlayer = activeEngine === "xmp" ? xmpPlayer : player;
+  const activePlayer = activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player;
   return Boolean(activePlayer && activePlayer.state !== "disposed");
 }
 async function loadLocalFile(file) {
@@ -972,14 +1050,14 @@ function hasDraggedFiles(event) {
 }
 
 $("initialize").addEventListener("click", initializePlayer);
-$("play").addEventListener("click", async () => { try { if (activeEngine === "xmp") { if (xmpPlayer?.state === "paused") return xmpPlayer.resume(); await playLastSelection(); return; } if (!player) throw new Error("Initialize UADE before starting playback."); if (player.state === "paused") return player.resume(); await playLastSelection(); } catch (error) { showStatus(error.message); } });
-$("pause").addEventListener("click", () => activeEngine === "xmp" ? xmpPlayer?.pause() : player?.pause());
-$("stop").addEventListener("click", () => activeEngine === "xmp" ? xmpPlayer?.stop() : player?.stop());
-$("volume").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : player)?.setVolume(Number(event.target.value)); });
-$("rate").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : player)?.setPitchCoupledRate(Number(event.target.value)); });
-$("pan").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : player)?.setUadePanning(Number(event.target.value)); });
-$("loop").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : player)?.setLooping(event.target.checked));
-$("silence").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : player)?.setSilenceTimeout(Number(event.target.value)));
+$("play").addEventListener("click", async () => { try { const activePlayer = activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player; if (activePlayer?.state === "paused") return activePlayer.resume(); await playLastSelection(); } catch (error) { showStatus(error.message); } });
+$("pause").addEventListener("click", () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.pause());
+$("stop").addEventListener("click", () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.stop());
+$("volume").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setVolume(Number(event.target.value)); });
+$("rate").addEventListener("input", (event) => { updateRangeReadout(event.target); if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setPitchCoupledRate(Number(event.target.value)); });
+$("pan").addEventListener("input", (event) => { updateRangeReadout(event.target); if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setUadePanning(Number(event.target.value)); });
+$("loop").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setLooping(event.target.checked));
+$("silence").addEventListener("change", (event) => { if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setSilenceTimeout(Number(event.target.value)); });
 $("zoom").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : player)?.visualization?.setZoom(Number(event.target.value)); });
 $("scope-hz").addEventListener("change", startScopeLoop);
 $("visualizer").addEventListener("change", (event) => {
@@ -991,7 +1069,7 @@ $("visualizer").addEventListener("change", (event) => {
     updateControls();
     return;
   }
-  const visualization = activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization;
+  const visualization = activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization;
   if (!visualization) {
     stageRestart("scopes");
     return;
@@ -1131,7 +1209,7 @@ window.modulePlayerDemo = Object.freeze({
   initialize: async () => { await initializePlayer(); return player; },
   load: playModule,
   play: playModule,
-  stop: () => (activeEngine === "xmp" ? xmpPlayer : player)?.stop(),
-  dispose: () => (activeEngine === "xmp" ? xmpPlayer : player)?.dispose()
+  stop: () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.stop(),
+  dispose: () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.dispose()
 });
-window.addEventListener("beforeunload", () => { stopScopeLoop(); stopTrackerAnimation(); immersiveVisualizer.dispose(); clearInterval(diagnosticsTimer); player?.dispose(); xmpPlayer?.dispose(); });
+window.addEventListener("beforeunload", () => { stopScopeLoop(); stopTrackerAnimation(); immersiveVisualizer.dispose(); clearInterval(diagnosticsTimer); player?.dispose(); xmpPlayer?.dispose(); sidPlayer?.dispose(); });

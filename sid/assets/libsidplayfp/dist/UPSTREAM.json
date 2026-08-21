@@ -1,0 +1,15 @@
+{
+  "package": "libsidplayfp-wasm",
+  "version": "1.0.1",
+  "libsidplayfp": {
+    "repository": "https://github.com/libsidplayfp/libsidplayfp",
+    "ref": "v3.0.2",
+    "commit": "d7f7f0e78e09351ad53ff15a4cfb362c4f1c8339"
+  },
+  "libresidfp": {
+    "repository": "https://github.com/libsidplayfp/libresidfp",
+    "ref": "v1.1.2",
+    "commit": "a5cd8f2486d627c40ea8c7c7a25827db73837002"
+  },
+  "note": "Complete corresponding source: see THIRD-PARTY-NOTICES.md."
+}
