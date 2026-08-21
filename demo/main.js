@@ -1,10 +1,11 @@
 import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js";
 import { createXmpPlayer } from "../xmp/index.js?v=6";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=17";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
-const DEFAULT_SAMPLE = "GSLINGER.MOD";
+const DEFAULT_SAMPLE = "VESURI - Major Release.mod";
 const AMIGA_CHANNEL_SIDES = ["L", "R", "R", "L"];
 const METER_FLOOR_DB = -48;
 const XMP_PREFERRED_EXTENSIONS = new Set(["669", "amf", "dsm", "far", "imf", "it", "mod", "mtm", "s3m", "stm", "ult", "xm"]);
@@ -35,6 +36,12 @@ let selectedTrackerOrder = 0;
 let trackerFollowingPlayback = true;
 let trackerAnimationFrame;
 let lastTrackerPositionKey;
+let immersiveControlsTimer;
+let immersiveOwnedFullscreen = false;
+const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
+  getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization,
+  reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+});
 
 function showStatus(message) { $("status").textContent = message; }
 function stopScopeLoop() {
@@ -271,6 +278,7 @@ function setMetadata(info) {
   updateSubsongControl();
   renderMetadata();
   renderTrackerView();
+  updateImmersiveLabels();
 }
 function setXmpMetadata(filename, songInfo = {}) {
   metadataState = {
@@ -294,6 +302,7 @@ function setXmpMetadata(filename, songInfo = {}) {
   updateSubsongControl();
   renderMetadata();
   renderTrackerView();
+  updateImmersiveLabels();
 }
 
 function trackerNote(event, format) {
@@ -680,6 +689,13 @@ function draw(now) {
   const outputMeter = combinedMeter(levels);
   $("scope-readout").textContent = `Output ${formatNumber(outputMeter.decibels, 0)} dBFS`;
 }
+function activeVisualizationSource() {
+  return activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization;
+}
+function updateImmersiveLabels() {
+  const title = metadataState?.title || metadataState?.fileName || lastSelection?.filename || "No module loaded";
+  $("immersive-title").textContent = title;
+}
 function updateControls(state = player?.state) {
   const xmpActive = activeEngine === "xmp";
   const currentState = xmpActive ? xmpPlayer?.state : state;
@@ -688,8 +704,10 @@ function updateControls(state = player?.state) {
   $("pause").disabled = !ready || currentState !== "playing";
   $("stop").disabled = !ready || !["playing", "paused", "loading"].includes(currentState);
   $("open-tracker").disabled = !xmpActive || !xmpPlayer?.tracker?.available;
+  $("open-visualizer").disabled = !ready || !scopesEnabled || !activeVisualizationSource();
   $("songs").disabled = initializing || (!xmpActive && currentState === "disposed") || !songs.length;
   $("file").disabled = initializing || (!xmpActive && currentState === "disposed");
+  updateImmersiveLabels();
 }
 async function loadBuffer(buffer, filename) {
   if (activeEngine === "xmp") {
@@ -807,7 +825,9 @@ $("visualizer").addEventListener("change", (event) => {
   scopesEnabled = event.target.checked;
   if (!scopesEnabled) {
     clearStagedRestart("scopes");
+    if ($("immersive-dialog").open) $("immersive-dialog").close();
     draw(performance.now());
+    updateControls();
     return;
   }
   const visualization = activeEngine === "xmp" ? xmpPlayer?.visualization : player?.visualization;
@@ -817,6 +837,7 @@ $("visualizer").addEventListener("change", (event) => {
   }
   clearStagedRestart("scopes");
   startScopeLoop();
+  updateControls();
 });
 $("tracker-order-map").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-order]");
@@ -872,13 +893,56 @@ $("open-tracker").addEventListener("click", (event) => {
   openDialog("tracker-dialog", event.currentTarget);
   startTrackerAnimation();
 });
+function showImmersiveControls() {
+  clearTimeout(immersiveControlsTimer);
+  $("immersive-stage").classList.add("controls-visible");
+  immersiveControlsTimer = window.setTimeout(() => {
+    $("immersive-stage").classList.remove("controls-visible");
+    immersiveControlsTimer = undefined;
+  }, 1800);
+}
+$("open-visualizer").addEventListener("click", (event) => {
+  updateImmersiveLabels();
+  openDialog("immersive-dialog", event.currentTarget);
+  immersiveVisualizer.start();
+  showImmersiveControls();
+  if (!document.fullscreenElement) void $("immersive-stage").requestFullscreen().catch(() => {});
+});
+$("immersive-stage").addEventListener("pointermove", showImmersiveControls, { passive: true });
+$("immersive-exit").addEventListener("focus", showImmersiveControls);
+document.addEventListener("fullscreenchange", () => {
+  const fullscreen = document.fullscreenElement === $("immersive-stage");
+  if (fullscreen) immersiveOwnedFullscreen = true;
+  else if (immersiveOwnedFullscreen) {
+    immersiveOwnedFullscreen = false;
+    if ($("immersive-dialog").open) closeDialog($("immersive-dialog"));
+    window.requestAnimationFrame(() => $("open-visualizer").focus());
+  }
+});
 $("settings-toggle").addEventListener("click", () => setSettingsPanel(!$("settings-panel").classList.contains("is-open")));
 $("settings-close").addEventListener("click", () => setSettingsPanel(false));
-document.addEventListener("keydown", (event) => { if (event.key === "Escape" && $("settings-panel").classList.contains("is-open")) setSettingsPanel(false); });
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if ($("immersive-dialog").open) {
+    event.preventDefault();
+    closeDialog($("immersive-dialog"));
+  } else if ($("settings-panel").classList.contains("is-open")) {
+    setSettingsPanel(false);
+  }
+});
 for (const dialog of document.querySelectorAll("dialog")) {
-  dialog.addEventListener("close", () => { if (dialog.id === "tracker-dialog") stopTrackerAnimation(); });
+  dialog.addEventListener("close", () => {
+    if (dialog.id === "tracker-dialog") stopTrackerAnimation();
+    if (dialog.id === "immersive-dialog") {
+      clearTimeout(immersiveControlsTimer);
+      immersiveControlsTimer = undefined;
+      $("immersive-stage").classList.remove("controls-visible");
+      immersiveVisualizer.stop();
+      if (document.fullscreenElement === $("immersive-stage")) void document.exitFullscreen();
+    }
+  });
   dialog.addEventListener("click", (event) => { if (event.target === dialog) closeDialog(dialog); });
-  dialog.querySelector(".dialog-close").addEventListener("click", () => closeDialog(dialog));
+  dialog.querySelector(".dialog-close")?.addEventListener("click", () => closeDialog(dialog));
 }
 $("scopes").replaceChildren(...Array.from({ length: 4 }, (_, index) => makeScopeCard(index, false)));
 for (const input of document.querySelectorAll('input[type="range"]')) updateRangeReadout(input);
@@ -893,4 +957,4 @@ window.modulePlayerDemo = Object.freeze({
   stop: () => (activeEngine === "xmp" ? xmpPlayer : player)?.stop(),
   dispose: () => (activeEngine === "xmp" ? xmpPlayer : player)?.dispose()
 });
-window.addEventListener("beforeunload", () => { stopScopeLoop(); stopTrackerAnimation(); clearInterval(diagnosticsTimer); player?.dispose(); xmpPlayer?.dispose(); });
+window.addEventListener("beforeunload", () => { stopScopeLoop(); stopTrackerAnimation(); immersiveVisualizer.dispose(); clearInterval(diagnosticsTimer); player?.dispose(); xmpPlayer?.dispose(); });

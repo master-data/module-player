@@ -30,6 +30,10 @@ body.settings-open {
     padding-right: var(--settings-width);
 }
 
+body:has(.immersive-dialog[open]) {
+    overflow: hidden;
+}
+
 button,
 input,
 select {
@@ -218,6 +222,17 @@ input[type="file"] {
     background: #a34031;
 }
 
+.command.visualizer-launch {
+    border-color: #77d5bb;
+    background: #102a33;
+    color: #d8fff1;
+    box-shadow: inset 0 -3px 0 rgba(119, 213, 187, .28);
+}
+
+.command.visualizer-launch:hover:not(:disabled) {
+    background: #147c74;
+}
+
 .text-command {
     border: 0;
     border-bottom: 1px solid currentColor;
@@ -319,6 +334,165 @@ dialog.tracker-dialog[open] {
 
 .tracker-dialog::backdrop {
     background: rgba(16, 42, 51, .72);
+}
+
+.immersive-dialog {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    overflow: hidden;
+    border: 0;
+    padding: 0;
+    background: #020609;
+    color: #e9fff8;
+}
+
+.immersive-dialog:not([open]) {
+    display: none;
+}
+
+.immersive-dialog::backdrop {
+    background: #020609;
+}
+
+.immersive-stage {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: #020609;
+}
+
+.immersive-stage::after {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    pointer-events: none;
+    content: "";
+    background: repeating-linear-gradient(0deg, rgba(205, 255, 241, .025) 0 1px, transparent 1px 4px);
+    mix-blend-mode: screen;
+}
+
+.immersive-stage:fullscreen {
+    width: 100vw;
+    height: 100vh;
+}
+
+#immersive-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.immersive-chrome {
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    padding: clamp(18px, 3vw, 42px);
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(2, 6, 9, .78) 0, transparent 27%, transparent 70%, rgba(2, 6, 9, .76) 100%);
+}
+
+.immersive-header {
+    grid-row: 1;
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 24px;
+}
+
+.immersive-identity {
+    min-width: 0;
+}
+
+.immersive-kicker {
+    margin: 0;
+    color: rgba(215, 255, 243, .62);
+    font-size: 10px;
+    line-height: 1.4;
+    text-transform: uppercase;
+}
+
+.immersive-kicker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #77d5bb;
+}
+
+.immersive-kicker span {
+    width: 7px;
+    height: 7px;
+    background: #ee8061;
+    border-radius: 50%;
+    box-shadow: 0 0 16px #ee8061;
+    animation: signal-pulse 1.4s ease-in-out infinite;
+}
+
+.immersive-identity h2 {
+    max-width: min(70vw, 820px);
+    margin-top: 8px;
+    color: #f1fff9;
+    font-size: clamp(24px, 4vw, 56px);
+    font-weight: 500;
+    line-height: .98;
+    overflow-wrap: anywhere;
+    text-shadow: 0 0 28px rgba(119, 213, 187, .16);
+}
+
+.visualizer-icon {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border: 1px solid rgba(215, 255, 243, .4);
+    border-radius: 0;
+    padding: 0;
+    background: rgba(2, 12, 16, .48);
+    color: #e9fff8;
+    font-family: "DM Mono", monospace;
+    font-size: 25px;
+    line-height: 1;
+    backdrop-filter: blur(12px);
+}
+
+.visualizer-icon:hover {
+    border-color: #77d5bb;
+    background: rgba(20, 124, 116, .42);
+}
+
+.immersive-stage {
+    cursor: none;
+}
+
+.immersive-exit {
+    flex: 0 0 auto;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-6px);
+    transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.immersive-stage.controls-visible {
+    cursor: default;
+}
+
+.immersive-stage.controls-visible .immersive-exit,
+.immersive-exit:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+@keyframes signal-pulse {
+    0%, 100% { opacity: .45; transform: scale(.75); }
+    50% { opacity: 1; transform: scale(1); }
 }
 
 .tracker-dialog header {
@@ -847,6 +1021,26 @@ body.settings-open .settings-tab {
     .tracker-toolbar label {
         min-width: 0;
         width: 100%;
+    }
+
+    .immersive-chrome {
+        padding: 16px;
+    }
+
+    .immersive-header {
+        gap: 12px;
+    }
+
+    .immersive-identity h2 {
+        max-width: calc(100vw - 132px);
+        font-size: 23px;
+    }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .immersive-kicker span {
+        animation: none;
     }
 }
 

@@ -19,6 +19,7 @@ The demo bundles the following separate creative works. Their authors and rights
 | Bundled file | Title or work | Creator and group | Copyright |
 | --- | --- | --- | --- |
 | `GSLINGER.MOD` | `Guitar Slinger` | Jogeir Liljedahl / Noiseless | (c) 1992/93 Noiseless |
+| `VESURI - Major Release.mod` | `Major Release` | Vesuri da Jormas | |
 | `di.partyland` | `Partyland` | Olof Gustafsson  | Digital Illusions |
 | `elw-lock.xm` | `Dead lock` | Elwood | |
 | `onward.xm` | `Onward` | Jugi / Complex | (c) 1995 Jugi / Complex |
