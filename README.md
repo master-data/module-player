@@ -208,6 +208,12 @@ overrides plus 8580 digi boost. Changing one restarts the current subtune so it
 takes effect immediately. SID also exposes the rendered stereo output as two
 PCM scopes (`L` and `R`) for the standard scope and immersive visualizers.
 
+The demo Tracker view has a SID register monitor: it displays the live state of
+all three voices on the first SID chip, including frequency word, pulse width,
+gate, selected waveform (including noise), ADSR nibbles, and filter routing,
+plus chip-wide filter and volume registers. These are direct emulation register
+snapshots, while the adjacent `L`/`R` scopes remain the actual mixed PCM output.
+
 ## Player Lifecycle
 
 Create a player once per active preview session, attach listeners, then call `load()`. Loading starts playback when successful. `stop()` resets the active session; await it before loading another UADE track. `dispose()` releases the player and removes its active runtime ownership.

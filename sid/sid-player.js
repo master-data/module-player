@@ -39,7 +39,16 @@ class SidVisualizationSource {
     this._zoom = 3;
   }
 
-  get streamCount() { return this._player._scopeBuffers[0]?.length ? 2 : 0; }
+  _refresh() {
+    const analysers = this._player._analysers;
+    if (!analysers) return;
+    for (const [channel, analyser] of analysers.entries()) {
+      const buffer = this._player._scopeBuffers[channel];
+      if (buffer.length !== analyser.fftSize) this._player._scopeBuffers[channel] = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(this._player._scopeBuffers[channel]);
+    }
+  }
+  get streamCount() { this._refresh(); return this._player._scopeBuffers[0]?.length ? 2 : 0; }
   get sampleLength() { return Math.ceil((this._player._scopeBuffers[0]?.length ?? 0) / this._zoom); }
   getZoom() { return this._zoom; }
   setZoom(level) {
@@ -47,6 +56,7 @@ class SidVisualizationSource {
     this._zoom = level;
   }
   readChannel(channel) {
+    this._refresh();
     const data = this._player._scopeBuffers[channel];
     if (!data) throw new RangeError("SID output channel is unavailable.");
     return data.subarray(Math.max(0, data.length - Math.ceil(data.length / this._zoom)));
@@ -142,9 +152,21 @@ export class SidPlayer {
     this._gain = context.createGain();
     this._gain.gain.value = this._volume;
     this._processor = context.createScriptProcessor(this._processorBufferSize, 0, 2);
+    this._splitter = context.createChannelSplitter(2);
+    this._merger = context.createChannelMerger(2);
+    this._analysers = [context.createAnalyser(), context.createAnalyser()];
+    for (const analyser of this._analysers) {
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0;
+    }
     this._processor.onaudioprocess = (event) => this._processAudio(event);
     this._processor.connect(this._gain);
-    this._gain.connect(context.destination);
+    this._gain.connect(this._splitter);
+    this._splitter.connect(this._analysers[0], 0);
+    this._splitter.connect(this._analysers[1], 1);
+    this._analysers[0].connect(this._merger, 0, 0);
+    this._analysers[1].connect(this._merger, 0, 0);
+    this._merger.connect(context.destination);
     try {
       const runtime = await import(moduleUrl(this._assetBaseUrl));
       this._module = await runtime.loadLibsidplayfp({ engine: this._engine });
@@ -153,6 +175,9 @@ export class SidPlayer {
     } catch (cause) {
       this._processor.disconnect();
       this._gain.disconnect();
+      this._splitter.disconnect();
+      this._merger.disconnect();
+      for (const analyser of this._analysers) analyser.disconnect();
       await context.close();
       throw new SidPlaybackError("initialize", undefined, cause);
     }
@@ -280,6 +305,14 @@ export class SidPlayer {
 
   getEmulationConfig() { return this._sidContext?.getEmulationConfig?.(); }
 
+  getSidStatus(sidNumber = 0) {
+    if (!Number.isInteger(sidNumber) || sidNumber < 0) throw new RangeError("SID chip number must be a non-negative integer.");
+    const status = this._sidContext?.getSidStatus?.(sidNumber);
+    return status ? status.slice() : undefined;
+  }
+
+  getInstalledSids() { return this._sidContext?.getInstalledSids?.() ?? 0; }
+
   getDiagnostics() {
     const callbacks = this._diagnostics.audioCallbackCount;
     const renders = this._diagnostics.wasmRenderCount;
@@ -363,6 +396,9 @@ export class SidPlayer {
       this._processor.onaudioprocess = null;
       this._processor.disconnect();
       this._gain.disconnect();
+      this._splitter.disconnect();
+      this._merger.disconnect();
+      for (const analyser of this._analysers) analyser.disconnect();
       this._releaseContext();
       await this._audioContext.close();
       if (globalThis[PLAYER_OWNER] === this) delete globalThis[PLAYER_OWNER];

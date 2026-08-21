@@ -235,7 +235,13 @@ function updateSubsongControl() {
   const readout = $("track-readout");
   const previous = $("previous-track");
   const next = $("next-track");
+  const trackerControl = $("tracker-track");
+  const trackerReadout = $("tracker-track-readout");
+  const trackerPrevious = $("tracker-previous-track");
+  const trackerNext = $("tracker-next-track");
+  const trackerSubsongControl = $("tracker-subsong-control");
   const subsong = subsongState;
+  trackerSubsongControl.hidden = activeEngine !== "sid";
   if (!Number.isInteger(subsong?.minimum) || !Number.isInteger(subsong?.maximum)) {
     control.disabled = true;
     control.min = "0";
@@ -245,6 +251,14 @@ function updateSubsongControl() {
     next.disabled = true;
     readout.value = "--";
     readout.textContent = readout.value;
+    trackerControl.disabled = true;
+    trackerControl.min = "0";
+    trackerControl.max = "0";
+    trackerControl.value = "0";
+    trackerPrevious.disabled = true;
+    trackerNext.disabled = true;
+    trackerReadout.value = "--";
+    trackerReadout.textContent = trackerReadout.value;
     return;
   }
   control.min = String(subsong.minimum);
@@ -260,11 +274,20 @@ function updateSubsongControl() {
   next.disabled = control.disabled || selectedSubsong >= subsong.maximum;
   readout.value = `${position} / ${total}`;
   readout.textContent = readout.value;
+  trackerControl.min = control.min;
+  trackerControl.max = control.max;
+  trackerControl.value = control.value;
+  trackerControl.disabled = control.disabled;
+  trackerPrevious.disabled = previous.disabled;
+  trackerNext.disabled = next.disabled;
+  trackerReadout.value = readout.value;
+  trackerReadout.textContent = trackerReadout.value;
 }
 function selectSubsong(track) {
   const control = $("track");
   selectedSubsong = Math.min(Number(control.max), Math.max(Number(control.min), track));
   control.value = String(selectedSubsong);
+  $("tracker-track").value = control.value;
   stageRestart("subsong");
   updateSubsongControl();
   return selectedSubsong;
@@ -357,6 +380,13 @@ function trackerCell(event, format) {
   return `${note} ${instrument} ${volume} ${effect}`;
 }
 function drawTrackerScope(canvas, data) {
+  const pixelRatio = Math.min(devicePixelRatio || 1, 2);
+  const renderWidth = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
+  const renderHeight = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
+  if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
+    canvas.width = renderWidth;
+    canvas.height = renderHeight;
+  }
   const context = canvas.getContext("2d");
   const { width, height } = canvas;
   context.fillStyle = "#102a33";
@@ -380,7 +410,7 @@ function drawTrackerScope(canvas, data) {
 }
 function renderTrackerScopes() {
   const container = $("tracker-scopes");
-  const source = xmpPlayer?.visualization;
+  const source = activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : undefined;
   if (!source) {
     container.hidden = true;
     container.replaceChildren();
@@ -403,6 +433,120 @@ function renderTrackerScopes() {
     const data = source.streamCount > channel ? source.readChannel(channel) : new Float32Array();
     drawTrackerScope(container.children[channel].querySelector("canvas"), data);
   }
+}
+function sidWaveforms(control) {
+  return [[0x10, "TRI"], [0x20, "SAW"], [0x40, "PULSE"], [0x80, "NOISE"]]
+    .filter(([mask]) => control & mask)
+    .map(([, name]) => name);
+}
+function sidHex(value, width = 2) { return `0x${value.toString(16).toUpperCase().padStart(width, "0")}`; }
+function drawSidRegisterTrace(canvas, frequency, control) {
+  const pixelRatio = Math.min(devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
+  const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#08191e";
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = "rgba(119, 213, 187, .12)";
+  context.lineWidth = 1;
+  for (let y = height / 4; y < height; y += height / 4) {
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(width, y);
+    context.stroke();
+  }
+  const active = control & 1;
+  const cycles = Math.max(1, Math.min(16, frequency / 2048));
+  const phase = performance.now() / 700 * (frequency ? 1 : 0);
+  context.strokeStyle = active ? "#77d5bb" : "#426568";
+  context.lineWidth = Math.max(1, pixelRatio * 1.4);
+  context.beginPath();
+  for (let index = 0; index < width; index += 1) {
+    const position = index / Math.max(1, width - 1);
+    const step = (position * cycles + phase) % 1;
+    const triangle = 1 - 4 * Math.abs(step - .5);
+    const saw = step * 2 - 1;
+    const pulse = step < .5 ? 1 : -1;
+    const noise = Math.sin((index + frequency * 13) * 12.9898) * 43758.5453 % 1 * 2 - 1;
+    const values = [[0x10, triangle], [0x20, saw], [0x40, pulse], [0x80, noise]].filter(([mask]) => control & mask);
+    const sample = values.length ? values.reduce((sum, [, value]) => sum + value, 0) / values.length : 0;
+    const y = height * (.5 - sample * (active ? .34 : .08));
+    index ? context.lineTo(index, y) : context.moveTo(index, y);
+  }
+  context.stroke();
+}
+function sidVoiceMonitor(voice, status, filterRouting) {
+  const offset = voice * 7;
+  const frequency = status[offset] | (status[offset + 1] << 8);
+  const pulseWidth = status[offset + 2] | ((status[offset + 3] & 0x0f) << 8);
+  const control = status[offset + 4];
+  const attackDecay = status[offset + 5];
+  const sustainRelease = status[offset + 6];
+  const waveforms = sidWaveforms(control);
+  const card = document.createElement("article");
+  card.className = `sid-voice${control & 1 ? " is-gated" : ""}${control & 0x80 ? " is-noise" : ""}`;
+  const heading = document.createElement("header");
+  heading.className = "sid-voice-head";
+  heading.append(textElement("p", `V${voice + 1}`, "sid-voice-label"), textElement("p", control & 1 ? "GATE OPEN" : "GATE CLOSED", "sid-gate-state"));
+  const waveform = document.createElement("div");
+  waveform.className = "sid-waveforms";
+  for (const name of ["TRI", "SAW", "PULSE", "NOISE"]) waveform.append(textElement("span", name, waveforms.includes(name) ? "is-active" : ""));
+  heading.append(waveform);
+  card.append(heading);
+  const envelope = document.createElement("div");
+  envelope.className = "sid-envelope";
+  for (const [name, level] of [["A", attackDecay >> 4], ["D", attackDecay & 0x0f], ["S", sustainRelease >> 4], ["R", sustainRelease & 0x0f]]) {
+    const stage = document.createElement("div");
+    stage.style.setProperty("--sid-level", String((level + 1) / 16));
+    stage.append(textElement("span", name), document.createElement("i"), textElement("strong", String(level)));
+    envelope.append(stage);
+  }
+  card.append(envelope);
+  const values = document.createElement("div");
+  values.className = "sid-voice-values";
+  const facts = [
+    ["FREQUENCY", `${frequency} ${sidHex(frequency, 4)}`], ["PULSE WIDTH", String(pulseWidth)], ["FILTER", filterRouting & (1 << voice) ? "ROUTED" : "BYPASS"]
+  ];
+  for (const [label, value] of facts) {
+    const fact = document.createElement("div");
+    fact.append(textElement("span", label), textElement("strong", value));
+    values.append(fact);
+  }
+  card.append(values);
+  const trace = document.createElement("section");
+  trace.className = "sid-register-trace";
+  trace.append(textElement("p", "REGISTER MOTION", "sid-trace-label"));
+  const canvas = document.createElement("canvas");
+  canvas.dataset.frequency = String(frequency);
+  canvas.dataset.control = String(control);
+  canvas.setAttribute("aria-label", `Voice ${voice + 1} register-derived waveform motion`);
+  trace.append(canvas);
+  card.append(trace);
+  return card;
+}
+function renderSidTrackerView() {
+  const grid = $("tracker-grid");
+  const status = sidPlayer?.getSidStatus(0);
+  $("tracker-order-map").replaceChildren();
+  delete $("tracker-order-map").dataset.orders;
+  updateSubsongControl();
+  renderTrackerScopes();
+  if (!status) {
+    $("tracker-status").textContent = "Awaiting live SID register state.";
+    grid.replaceChildren();
+    return;
+  }
+  const filterRouting = status[0x17] & 0x07;
+  const filterMode = [status[0x18] & 0x10 ? "LP" : undefined, status[0x18] & 0x20 ? "BP" : undefined, status[0x18] & 0x40 ? "HP" : undefined].filter(Boolean).join(" + ") || "OFF";
+  const cutoff = (status[0x15] & 0x07) | (status[0x16] << 3);
+  $("tracker-dialog-kicker").textContent = "SID LIVE REGISTER VISUALIZATION";
+  $("tracker-status").textContent = `CHIP 1 / ${sidPlayer.getInstalledSids()}  |  FILTER ${filterMode}  |  CUTOFF ${cutoff}  |  RESONANCE ${status[0x17] >> 4}  |  VOLUME ${status[0x18] & 0x0f}`;
+  grid.replaceChildren(...[0, 1, 2].map((voice) => sidVoiceMonitor(voice, status, filterRouting)));
+  for (const canvas of grid.querySelectorAll(".sid-register-trace canvas")) drawSidRegisterTrace(canvas, Number(canvas.dataset.frequency), Number(canvas.dataset.control));
 }
 function setTrackerOrder(order, followPlayback = false) {
   const tracker = xmpPlayer?.tracker;
@@ -438,12 +582,17 @@ function renderTrackerView() {
   const dialog = $("tracker-dialog");
   const tracker = activeEngine === "xmp" ? xmpPlayer?.tracker : undefined;
   const grid = $("tracker-grid");
+  dialog.classList.toggle("sid-tracker", activeEngine === "sid");
   const title = metadataState?.title || metadataState?.fileName || "Tracker View";
   $("tracker-dialog-title").textContent = title;
   $("tracker-dialog-kicker").textContent = "TRACKER LIVE VISUALIZATION";
   $("tracker-dialog-source").textContent = metadataState?.fileName
     ? `${metadataState.fileName}  |  ${metadataState.player || "webXMP"}`
     : "No module loaded.";
+  if (activeEngine === "sid") {
+    renderSidTrackerView();
+    return;
+  }
   if (!tracker?.available) {
     $("tracker-order-map").replaceChildren();
     delete $("tracker-order-map").dataset.orders;
@@ -930,7 +1079,7 @@ function updateControls(state = player?.state) {
   $("play").disabled = !ready || !["ready", "paused", "stopped", "ended"].includes(currentState);
   $("pause").disabled = !ready || currentState !== "playing";
   $("stop").disabled = !ready || !["playing", "paused", "loading"].includes(currentState);
-  $("open-tracker").disabled = !xmpActive || !xmpPlayer?.tracker?.available;
+  $("open-tracker").disabled = !(sidActive || (xmpActive && xmpPlayer?.tracker?.available));
   $("open-visualizer").disabled = !ready || !scopesEnabled || !activeVisualizationSource();
   $("open-mega").disabled = !ready || !scopesEnabled || !activeVisualizationSource();
   $("songs").disabled = initializing || (!xmpActive && currentState === "disposed") || !songs.length;
@@ -1114,8 +1263,14 @@ $("tracker-order-map").addEventListener("click", (event) => {
 $("buffer").addEventListener("change", () => stageRestart("audio buffer"));
 $("audio-rate").addEventListener("change", () => stageRestart("audio rate"));
 $("track").addEventListener("input", (event) => selectSubsong(Number(event.target.value)));
+$("tracker-track").addEventListener("input", (event) => selectSubsong(Number(event.target.value)));
+$("tracker-track").addEventListener("change", (event) => {
+  if (activeEngine === "sid") void restartWithSubsong(Number(event.target.value));
+});
 $("previous-track").addEventListener("click", () => restartWithSubsong(Number($("track").value) - 1));
 $("next-track").addEventListener("click", () => restartWithSubsong(Number($("track").value) + 1));
+$("tracker-previous-track").addEventListener("click", () => restartWithSubsong(Number($("track").value) - 1));
+$("tracker-next-track").addEventListener("click", () => restartWithSubsong(Number($("track").value) + 1));
 $("restart-uade").addEventListener("click", initializePlayer);
 $("songs").addEventListener("change", async (event) => {
   selectBundledSong(event.target.value);

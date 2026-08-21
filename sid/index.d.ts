@@ -90,6 +90,8 @@ export class SidPlayer {
   setSystemRoms(roms?: SidSystemRoms): void;
   setEmulationConfig(config: SidEmulationConfig): void;
   getEmulationConfig(): Record<string, unknown> | undefined;
+  getSidStatus(sidNumber?: number): Uint8Array | undefined;
+  getInstalledSids(): number;
   getDiagnostics(): Record<string, unknown>;
   dispose(): Promise<void>;
 }

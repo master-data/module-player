@@ -87,7 +87,7 @@
   </dialog>
   <dialog id="tracker-dialog" class="tracker-dialog" aria-labelledby="tracker-dialog-title">
     <header><div><p id="tracker-dialog-kicker" class="eyebrow">TRACKER LIVE VISUALIZATION</p><h2 id="tracker-dialog-title">Tracker View</h2><p id="tracker-dialog-source" class="tracker-dialog-source">No module loaded.</p></div><button class="dialog-close" type="button" aria-label="Close tracker view">Close</button></header>
-    <div class="tracker-toolbar"><p id="tracker-status" class="panel-note">Load a supported XMP module to inspect its pattern data.</p></div>
+    <div class="tracker-toolbar"><p id="tracker-status" class="panel-note">Load a supported XMP module to inspect its pattern data.</p><div id="tracker-subsong-control" class="tracker-subsong-control" hidden aria-label="SID subtune selector"><span>SUBTUNE</span><button id="tracker-previous-track" type="button" aria-label="Previous SID subtune" title="Previous SID subtune">&larr;</button><input id="tracker-track" type="range" min="0" max="0" step="1" value="0" disabled aria-label="SID subtune"><output id="tracker-track-readout" for="tracker-track">--</output><button id="tracker-next-track" type="button" aria-label="Next SID subtune" title="Next SID subtune">&rarr;</button></div></div>
     <nav id="tracker-order-map" class="tracker-order-map" aria-label="Module order map"></nav>
     <section id="tracker-scopes" class="tracker-scopes" hidden aria-label="Stereo output scopes"></section>
     <div id="tracker-grid" class="tracker-grid"></div>
