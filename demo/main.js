@@ -13,6 +13,9 @@ const requestedModuleUrl = query.get("moduleUrl")?.trim();
 const AMIGA_CHANNEL_SIDES = ["L", "R", "R", "L"];
 const METER_FLOOR_DB = -48;
 const XMP_PREFERRED_EXTENSIONS = new Set(["669", "amf", "dsm", "far", "imf", "it", "mod", "mtm", "s3m", "stm", "ult", "xm"]);
+const SID_ATTACK_MS = [2, 8, 16, 24, 38, 56, 68, 80, 100, 250, 500, 800, 1000, 3000, 5000, 8000];
+const SID_DECAY_RELEASE_MS = [6, 24, 48, 72, 114, 168, 204, 240, 300, 750, 1500, 2400, 3000, 9000, 15000, 24000];
+const SID_ENVELOPE_HISTORY_LIMIT = 180;
 let player;
 let xmpPlayer;
 let sidPlayer;
@@ -45,6 +48,7 @@ let immersiveCursorTimer;
 let immersiveOwnedFullscreen = false;
 let immersiveMode = "visualizer";
 let lastMegaPatternKey;
+const sidEnvelopeStates = new Map();
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization,
   onFrame: renderMegaFrame,
@@ -342,6 +346,7 @@ function setXmpMetadata(filename, songInfo = {}) {
   updateImmersiveLabels();
 }
 function setSidMetadata(info) {
+  sidEnvelopeStates.clear();
   const configured = sidPlayer?.getEmulationConfig?.();
   const configuredClock = configured?.c64Model && configured.forceC64Model ? `C64 ${configured.c64Model}` : undefined;
   const configuredModel = configured?.sidModel && configured.forceSidModel ? `Emulating ${configured.sidModel}` : undefined;
@@ -417,8 +422,9 @@ function renderTrackerScopes() {
     return;
   }
   container.hidden = false;
+  const labels = activeEngine === "sid" ? ["FINAL MIX PCM L", "FINAL MIX PCM R"] : ["OUT L", "OUT R"];
   if (container.children.length !== 2) {
-    container.replaceChildren(...["OUT L", "OUT R"].map((label, channel) => {
+    container.replaceChildren(...labels.map((label, channel) => {
       const scope = document.createElement("article");
       scope.className = "tracker-scope";
       scope.append(textElement("p", label, "tracker-scope-label"));
@@ -430,6 +436,7 @@ function renderTrackerScopes() {
     }));
   }
   for (const channel of [0, 1]) {
+    container.children[channel].querySelector(".tracker-scope-label").textContent = labels[channel];
     const data = source.streamCount > channel ? source.readChannel(channel) : new Float32Array();
     drawTrackerScope(container.children[channel].querySelector("canvas"), data);
   }
@@ -440,7 +447,92 @@ function sidWaveforms(control) {
     .map(([, name]) => name);
 }
 function sidHex(value, width = 2) { return `0x${value.toString(16).toUpperCase().padStart(width, "0")}`; }
-function drawSidRegisterTrace(canvas, frequency, control) {
+function advanceSidEnvelope(state, elapsedMs) {
+  let remaining = elapsedMs;
+  const sustain = state.sustain / 15;
+  while (remaining > 0) {
+    if (state.phase === "attack") {
+      const duration = Math.max(1, SID_ATTACK_MS[state.attack] * (1 - state.level));
+      if (remaining < duration) { state.level += remaining / SID_ATTACK_MS[state.attack]; break; }
+      state.level = 1;
+      state.phase = "decay";
+      remaining -= duration;
+      continue;
+    }
+    if (state.phase === "decay") {
+      const distance = Math.max(0, state.level - sustain);
+      const duration = Math.max(1, SID_DECAY_RELEASE_MS[state.decay] * distance);
+      if (remaining < duration) { state.level -= remaining / SID_DECAY_RELEASE_MS[state.decay]; break; }
+      state.level = sustain;
+      state.phase = "sustain";
+      remaining -= duration;
+      continue;
+    }
+    if (state.phase === "release") {
+      const duration = Math.max(1, SID_DECAY_RELEASE_MS[state.release] * state.level);
+      if (remaining < duration) { state.level -= remaining / SID_DECAY_RELEASE_MS[state.release]; break; }
+      state.level = 0;
+      state.phase = "idle";
+    }
+    break;
+  }
+  state.level = Math.min(1, Math.max(0, state.level));
+}
+function updateSidEnvelope(voice, attack, decay, sustain, release, gate) {
+  const now = performance.now();
+  let state = sidEnvelopeStates.get(voice);
+  if (!state) {
+    state = { attack, decay, sustain, release, gate, level: gate ? sustain / 15 : 0, phase: gate ? "sustain" : "idle", lastUpdatedAt: now, history: [] };
+    sidEnvelopeStates.set(voice, state);
+  }
+  advanceSidEnvelope(state, Math.max(0, now - state.lastUpdatedAt));
+  state.lastUpdatedAt = now;
+  state.attack = attack;
+  state.decay = decay;
+  state.sustain = sustain;
+  state.release = release;
+  if (gate !== state.gate) {
+    state.gate = gate;
+    state.phase = gate ? "attack" : "release";
+  }
+  state.history.push(state.level);
+  if (state.history.length > SID_ENVELOPE_HISTORY_LIMIT) state.history.splice(0, state.history.length - SID_ENVELOPE_HISTORY_LIMIT);
+  return state;
+}
+function drawSidEnvelopeReconstruction(canvas, envelope) {
+  const pixelRatio = Math.min(devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
+  const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
+  if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#08191e";
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = "rgba(119, 213, 187, .12)";
+  context.setLineDash([3 * pixelRatio, 3 * pixelRatio]);
+  const sustainY = height * (1 - envelope.sustain / 15);
+  context.beginPath();
+  context.moveTo(0, sustainY);
+  context.lineTo(width, sustainY);
+  context.stroke();
+  context.setLineDash([]);
+  const samples = envelope.history.slice(-SID_ENVELOPE_HISTORY_LIMIT);
+  if (!samples.length) return;
+  context.strokeStyle = "#77d5bb";
+  context.lineWidth = Math.max(1, pixelRatio * 1.5);
+  context.beginPath();
+  for (let index = 0; index < samples.length; index += 1) {
+    const x = index / Math.max(1, samples.length - 1) * width;
+    const y = height * (1 - samples[index]);
+    index ? context.lineTo(x, y) : context.moveTo(x, y);
+  }
+  context.lineTo(width, height);
+  context.lineTo(0, height);
+  context.closePath();
+  context.fillStyle = "rgba(119, 213, 187, .12)";
+  context.fill();
+  context.stroke();
+}
+function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, control, envelopeLevel }) {
   const pixelRatio = Math.min(devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
   const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
@@ -453,33 +545,40 @@ function drawSidRegisterTrace(canvas, frequency, control) {
   context.fillRect(0, 0, width, height);
   context.strokeStyle = "rgba(119, 213, 187, .12)";
   context.lineWidth = 1;
-  for (let y = height / 4; y < height; y += height / 4) {
+  for (const y of [height * .25, height * .5, height * .75]) {
     context.beginPath();
-    context.moveTo(0, y);
+    context.moveTo(0, y + .5);
     context.lineTo(width, y);
     context.stroke();
   }
-  const active = control & 1;
+  const waveformBits = [[0x10, "triangle"], [0x20, "saw"], [0x40, "pulse"], [0x80, "noise"]].filter(([mask]) => control & mask);
+  const gated = control & 1;
+  const test = control & 0x08;
+  const ring = control & 0x04;
+  const sync = control & 0x02;
   const cycles = Math.max(1, Math.min(16, frequency / 2048));
-  const phase = performance.now() / 700 * (frequency ? 1 : 0);
-  context.strokeStyle = active ? "#77d5bb" : "#426568";
-  context.lineWidth = Math.max(1, pixelRatio * 1.4);
+  const phaseOffset = performance.now() / 700 * (frequency ? 1 : 0);
+  const dutyCycle = Math.max(.03, Math.min(.97, pulseWidth / 4095));
+  context.strokeStyle = gated ? "#77d5bb" : "#426568";
+  context.lineWidth = Math.max(1, pixelRatio * 1.5);
   context.beginPath();
   for (let index = 0; index < width; index += 1) {
     const position = index / Math.max(1, width - 1);
-    const step = (position * cycles + phase) % 1;
+    let step = (position * cycles + phaseOffset) % 1;
+    if (sync) step = (step * 2) % 1;
     const triangle = 1 - 4 * Math.abs(step - .5);
     const saw = step * 2 - 1;
-    const pulse = step < .5 ? 1 : -1;
-    const noise = Math.sin((index + frequency * 13) * 12.9898) * 43758.5453 % 1 * 2 - 1;
-    const values = [[0x10, triangle], [0x20, saw], [0x40, pulse], [0x80, noise]].filter(([mask]) => control & mask);
-    const sample = values.length ? values.reduce((sum, [, value]) => sum + value, 0) / values.length : 0;
-    const y = height * (.5 - sample * (active ? .34 : .08));
+    const pulse = step < dutyCycle ? 1 : -1;
+    const noise = (Math.sin((Math.floor((step + phaseOffset) * 4096) + frequency * 13) * 12.9898) * 43758.5453 % 1) * 2 - 1;
+    const values = waveformBits.map(([, waveform]) => ({ triangle, saw, pulse, noise })[waveform]);
+    let sample = test || !values.length ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+    if (ring && waveformBits.some(([, waveform]) => waveform === "triangle")) sample *= Math.sin((position * cycles * 2 + phaseOffset) * Math.PI * 2);
+    const y = height * (.5 - sample * .38 * envelopeLevel);
     index ? context.lineTo(index, y) : context.moveTo(index, y);
   }
   context.stroke();
 }
-function sidVoiceMonitor(voice, status, filterRouting) {
+function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   const offset = voice * 7;
   const frequency = status[offset] | (status[offset + 1] << 8);
   const pulseWidth = status[offset + 2] | ((status[offset + 3] & 0x0f) << 8);
@@ -491,20 +590,20 @@ function sidVoiceMonitor(voice, status, filterRouting) {
   card.className = `sid-voice${control & 1 ? " is-gated" : ""}${control & 0x80 ? " is-noise" : ""}`;
   const heading = document.createElement("header");
   heading.className = "sid-voice-head";
-  heading.append(textElement("p", `V${voice + 1}`, "sid-voice-label"), textElement("p", control & 1 ? "GATE OPEN" : "GATE CLOSED", "sid-gate-state"));
+  heading.append(textElement("p", `V${voice + 1}`, "sid-voice-label"));
   const waveform = document.createElement("div");
   waveform.className = "sid-waveforms";
-  for (const name of ["TRI", "SAW", "PULSE", "NOISE"]) waveform.append(textElement("span", name, waveforms.includes(name) ? "is-active" : ""));
+  for (const name of ["TRI", "SAW", "PULSE", "NOISE", "GATE"]) waveform.append(textElement("span", name, waveforms.includes(name) || name === "GATE" && control & 1 ? "is-active" : ""));
   heading.append(waveform);
   card.append(heading);
-  const envelope = document.createElement("div");
+  const envelope = document.createElement("section");
   envelope.className = "sid-envelope";
-  for (const [name, level] of [["A", attackDecay >> 4], ["D", attackDecay & 0x0f], ["S", sustainRelease >> 4], ["R", sustainRelease & 0x0f]]) {
-    const stage = document.createElement("div");
-    stage.style.setProperty("--sid-level", String((level + 1) / 16));
-    stage.append(textElement("span", name), document.createElement("i"), textElement("strong", String(level)));
-    envelope.append(stage);
-  }
+  envelope.append(textElement("p", `ENVELOPE RECONSTRUCTION  /  ${envelopeState.phase.toUpperCase()}  /  ATTACK ${attackDecay >> 4}  DECAY ${attackDecay & 0x0f}  SUSTAIN ${sustainRelease >> 4}  RELEASE ${sustainRelease & 0x0f}`, "sid-envelope-label"));
+  const envelopeCanvas = document.createElement("canvas");
+  envelopeCanvas.className = "sid-envelope-canvas";
+  envelopeCanvas._sidEnvelope = envelopeState;
+  envelopeCanvas.setAttribute("aria-label", `Voice ${voice + 1} ADSR envelope reconstruction`);
+  envelope.append(envelopeCanvas);
   card.append(envelope);
   const values = document.createElement("div");
   values.className = "sid-voice-values";
@@ -519,11 +618,13 @@ function sidVoiceMonitor(voice, status, filterRouting) {
   card.append(values);
   const trace = document.createElement("section");
   trace.className = "sid-register-trace";
-  trace.append(textElement("p", "REGISTER MOTION", "sid-trace-label"));
+  trace.append(textElement("p", "OSCILLATOR WAVEFORM  /  REGISTER-BASED RECONSTRUCTION", "sid-trace-label"));
   const canvas = document.createElement("canvas");
   canvas.dataset.frequency = String(frequency);
+  canvas.dataset.pulseWidth = String(pulseWidth);
   canvas.dataset.control = String(control);
-  canvas.setAttribute("aria-label", `Voice ${voice + 1} register-derived waveform motion`);
+  canvas.dataset.envelopeLevel = String(envelopeState.level);
+  canvas.setAttribute("aria-label", `Voice ${voice + 1} oscillator waveform reconstruction`);
   trace.append(canvas);
   card.append(trace);
   return card;
@@ -545,8 +646,20 @@ function renderSidTrackerView() {
   const cutoff = (status[0x15] & 0x07) | (status[0x16] << 3);
   $("tracker-dialog-kicker").textContent = "SID LIVE REGISTER VISUALIZATION";
   $("tracker-status").textContent = `CHIP 1 / ${sidPlayer.getInstalledSids()}  |  FILTER ${filterMode}  |  CUTOFF ${cutoff}  |  RESONANCE ${status[0x17] >> 4}  |  VOLUME ${status[0x18] & 0x0f}`;
-  grid.replaceChildren(...[0, 1, 2].map((voice) => sidVoiceMonitor(voice, status, filterRouting)));
-  for (const canvas of grid.querySelectorAll(".sid-register-trace canvas")) drawSidRegisterTrace(canvas, Number(canvas.dataset.frequency), Number(canvas.dataset.control));
+  const envelopes = [0, 1, 2].map((voice) => {
+    const offset = voice * 7;
+    return updateSidEnvelope(voice, status[offset + 5] >> 4, status[offset + 5] & 0x0f, status[offset + 6] >> 4, status[offset + 6] & 0x0f, Boolean(status[offset + 4] & 1));
+  });
+  grid.replaceChildren(...[0, 1, 2].map((voice) => sidVoiceMonitor(voice, status, filterRouting, envelopes[voice])));
+  for (const canvas of grid.querySelectorAll(".sid-envelope-canvas")) drawSidEnvelopeReconstruction(canvas, canvas._sidEnvelope);
+  for (const canvas of grid.querySelectorAll(".sid-register-trace canvas")) {
+    drawSidOscillatorReconstruction(canvas, {
+      frequency: Number(canvas.dataset.frequency),
+      pulseWidth: Number(canvas.dataset.pulseWidth),
+      control: Number(canvas.dataset.control),
+      envelopeLevel: Number(canvas.dataset.envelopeLevel)
+    });
+  }
 }
 function setTrackerOrder(order, followPlayback = false) {
   const tracker = xmpPlayer?.tracker;

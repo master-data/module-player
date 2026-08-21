@@ -984,15 +984,13 @@ dialog.tracker-dialog[open] {
     background: transparent;
 }
 
-.sid-voice-label,
-.sid-gate-state { margin: 0; font-size: 13px; }
+.sid-voice-label { margin: 0; font-size: 13px; }
 .sid-voice-label { color: #efb557; }
-.sid-gate-state { color: #99beb8; text-align: right; }
 
 .sid-waveforms {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 5px;
 }
 
@@ -1009,19 +1007,17 @@ dialog.tracker-dialog[open] {
 
 .sid-envelope {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    align-items: end;
-    gap: 7px;
-    min-height: 112px;
+    grid-template-rows: auto 1fr;
+    gap: 9px;
+    min-height: 100px;
     padding: 13px 18px 18px;
     border-top: 1px solid rgba(119, 213, 187, .16);
     border-bottom: 1px solid rgba(119, 213, 187, .16);
     background: repeating-linear-gradient(0deg, rgba(119, 213, 187, .05) 0 1px, transparent 1px 20px);
 }
 
-.sid-envelope div { display: grid; grid-template-rows: auto 1fr auto; gap: 5px; height: 84px; color: #99beb8; font-size: 9px; text-align: center; }
-.sid-envelope i { align-self: end; height: calc(var(--sid-level) * 100%); min-height: 5px; background: #2f877e; box-shadow: 0 0 12px rgba(119, 213, 187, .3); }
-.sid-envelope strong { color: #e8fff6; font-size: 10px; }
+.sid-envelope-label { margin: 0; color: #7ca19d; font-size: 9px; overflow-wrap: anywhere; }
+.sid-envelope-canvas { display: block; width: 100%; height: 70px; }
 
 .sid-voice-values { display: grid; grid-template-columns: repeat(3, 1fr); }
 .sid-voice-values > div { min-width: 0; padding: 15px 14px; border-right: 1px solid rgba(119, 213, 187, .13); }

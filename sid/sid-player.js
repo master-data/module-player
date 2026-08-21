@@ -3,6 +3,7 @@ import { parseSidMetadata } from "./sid-metadata.js";
 const PLAYER_OWNER = Symbol.for("module-player.sid.owner");
 const CYCLES_PER_RENDER = 20_000;
 const EMPTY_RENDER_LIMIT = 64;
+const SID_WRITE_TRACE_LIMIT = 256;
 
 function asArrayBuffer(input) {
   if (input instanceof ArrayBuffer) return input;
@@ -101,6 +102,7 @@ export class SidPlayer {
     this._pendingOffset = 0;
     this._emptyRenders = 0;
     this._scopeBuffers = [new Float32Array(0), new Float32Array(0)];
+    this._sidWriteTraces = new Map();
     this._diagnostics = { audioCallbackCount: 0, audioGenerationTotalMs: 0, audioGenerationMaxMs: 0, wasmRenderCount: 0, wasmRenderTotalMs: 0, wasmRenderMaxMs: 0, underrunCount: 0 };
     this._roms = {
       kernal: copyRom(options.systemRoms?.kernal, 8192, "KERNAL"),
@@ -203,6 +205,19 @@ export class SidPlayer {
     this._pendingPcm = undefined;
     this._pendingOffset = 0;
     this._emptyRenders = 0;
+    this._sidWriteTraces.clear();
+  }
+
+  _captureSidWriteTraces() {
+    const writes = this._sidContext?.getAndClearSidWriteTracesPacked?.();
+    if (!writes?.length) return;
+    for (let index = 0; index < writes.length; index += 4) {
+      const sidNumber = writes[index];
+      const trace = this._sidWriteTraces.get(sidNumber) ?? [];
+      trace.push({ address: writes[index + 1], value: writes[index + 2], cyclePhi1: writes[index + 3] });
+      if (trace.length > SID_WRITE_TRACE_LIMIT) trace.splice(0, trace.length - SID_WRITE_TRACE_LIMIT);
+      this._sidWriteTraces.set(sidNumber, trace);
+    }
   }
 
   _hasCompleteRoms() {
@@ -224,6 +239,7 @@ export class SidPlayer {
     try {
       if (!context.loadSidBuffer(this._patchTrack(metadata.currentSong))) throw new Error(context.getLastError());
       if (!context.reset()) throw new Error(context.getLastError());
+      context.setSidWriteTraceEnabled?.(true);
       this._releaseContext(previous);
       this._sidContext = context;
       this._metadata = { ...metadata, raw: context.getTuneInfo(), engine: this._module.getSidEngineName?.(), md5: context.getTuneMd5() || undefined };
@@ -311,6 +327,11 @@ export class SidPlayer {
     return status ? status.slice() : undefined;
   }
 
+  getSidWriteTrace(sidNumber = 0) {
+    if (!Number.isInteger(sidNumber) || sidNumber < 0) throw new RangeError("SID chip number must be a non-negative integer.");
+    return (this._sidWriteTraces.get(sidNumber) ?? []).map((write) => ({ ...write }));
+  }
+
   getInstalledSids() { return this._sidContext?.getInstalledSids?.() ?? 0; }
 
   getDiagnostics() {
@@ -353,6 +374,7 @@ export class SidPlayer {
       if (!this._pendingPcm || this._pendingOffset >= this._pendingPcm.length) {
         const renderStartedAt = performance.now();
         const chunk = this._sidContext.render(CYCLES_PER_RENDER);
+        this._captureSidWriteTraces();
         const elapsed = performance.now() - renderStartedAt;
         this._diagnostics.wasmRenderCount += 1;
         this._diagnostics.wasmRenderTotalMs += elapsed;

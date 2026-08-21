@@ -52,6 +52,12 @@ export interface SidVisualizationSource {
   readOverallVu(): number;
 }
 
+export interface SidWriteTrace {
+  address: number;
+  value: number;
+  cyclePhi1: number;
+}
+
 export interface SidPlayerOptions {
   assetBaseUrl?: string;
   audioContextSampleRate?: number;
@@ -91,6 +97,7 @@ export class SidPlayer {
   setEmulationConfig(config: SidEmulationConfig): void;
   getEmulationConfig(): Record<string, unknown> | undefined;
   getSidStatus(sidNumber?: number): Uint8Array | undefined;
+  getSidWriteTrace(sidNumber?: number): SidWriteTrace[];
   getInstalledSids(): number;
   getDiagnostics(): Record<string, unknown>;
   dispose(): Promise<void>;
