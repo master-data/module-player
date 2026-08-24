@@ -21,6 +21,10 @@ const SID_ENVELOPE_HISTORY_LIMIT = 180;
 const TRACKER_SCOPE_MAX_WIDTH = 768;
 const TRACKER_SCOPE_POINTS = 256;
 const SID_SCOPE_PROCESSOR_BUFFER_SIZE = 1024;
+const SID_NOISE_LFSR_MASK = 0x7fffff;
+const SID_NOISE_LFSR_SEED = 0x7ffff8;
+const SID_NOISE_CLOCK_DIVISOR = 0x100000;
+const SID_NOISE_MAX_MODEL_STEPS = 4096;
 let player;
 let xmpPlayer;
 let sidPlayer;
@@ -60,6 +64,7 @@ let immersiveMode = "visualizer";
 let lastMegaPatternKey;
 let selectedSidChip = 0;
 const sidEnvelopeStates = new Map();
+const sidNoiseStates = new Map();
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization,
   getSidState: () => {
@@ -385,6 +390,7 @@ function setXmpMetadata(filename, songInfo = {}) {
 }
 function setSidMetadata(info) {
   sidEnvelopeStates.clear();
+  sidNoiseStates.clear();
   const configured = sidPlayer?.getEmulationConfig?.();
   const configuredClock = configured?.c64Model && configured.forceC64Model ? `C64 ${configured.c64Model}` : undefined;
   const configuredModel = configured?.sidModel && configured.forceSidModel ? `Emulating ${configured.sidModel}` : undefined;
@@ -510,6 +516,36 @@ function sidPitch(frequency) {
   const note = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][((midi % 12) + 12) % 12];
   return { note: `${note}${Math.floor(midi / 12) - 1}`.padEnd(3), hertz: `${hertz.toFixed(1).padStart(8)} Hz`, register: sidHex(frequency, 4) };
 }
+function advanceSidNoiseLfsr(lfsr) {
+  const feedback = ((lfsr >>> 22) ^ (lfsr >>> 17)) & 1;
+  return ((lfsr << 1) & SID_NOISE_LFSR_MASK) | feedback;
+}
+function sidNoiseSample(lfsr) {
+  const output = ((lfsr >>> 22) & 0x80) | ((lfsr >>> 20) & 0x40) | ((lfsr >>> 16) & 0x20) | ((lfsr >>> 13) & 0x10) | ((lfsr >>> 11) & 0x08) | ((lfsr >>> 7) & 0x04) | ((lfsr >>> 4) & 0x02) | ((lfsr >>> 2) & 0x01);
+  return output / 127.5 - 1;
+}
+function updateSidNoiseState(voice, frequency, control) {
+  const now = performance.now();
+  const key = `${selectedSidChip}:${voice}`;
+  let state = sidNoiseStates.get(key);
+  if (!state) {
+    state = { lfsr: SID_NOISE_LFSR_SEED, remainder: 0, lastUpdatedAt: now };
+    sidNoiseStates.set(key, state);
+  }
+  const elapsedSeconds = Math.max(0, now - state.lastUpdatedAt) / 1000;
+  state.lastUpdatedAt = now;
+  if (control & 0x08) {
+    state.lfsr = SID_NOISE_LFSR_SEED;
+    state.remainder = 0;
+    return state.lfsr;
+  }
+  const clocks = elapsedSeconds * frequency * sidClockHz() / SID_NOISE_CLOCK_DIVISOR + state.remainder;
+  const totalSteps = Math.floor(clocks);
+  const steps = Math.min(totalSteps, SID_NOISE_MAX_MODEL_STEPS);
+  state.remainder = totalSteps > SID_NOISE_MAX_MODEL_STEPS ? 0 : clocks - steps;
+  for (let index = 0; index < Math.min(steps, SID_NOISE_LFSR_MASK); index += 1) state.lfsr = advanceSidNoiseLfsr(state.lfsr);
+  return state.lfsr;
+}
 function sidVoiceFacts(frequency, pulseWidth, filterRouting, voice) {
   const pitch = sidPitch(frequency);
   return [`${pitch.note}  ${pitch.hertz}  ${pitch.register}`, String(pulseWidth).padStart(4, "0"), filterRouting & (1 << voice) ? "ROUTED" : "BYPASS"];
@@ -628,7 +664,7 @@ function drawSidEnvelopeReconstruction(canvas, envelope) {
   context.fill();
   context.stroke();
 }
-function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, control, envelopeLevel }) {
+function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, control, envelopeLevel, noiseLfsr }) {
   const pixelRatio = 1;
   const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
   const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
@@ -641,9 +677,10 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
   context.fillRect(0, 0, width, height);
   context.strokeStyle = "rgba(119, 213, 187, .12)";
   context.lineWidth = 1;
-  for (const y of [height * .25, height * .5, height * .75]) {
+  const originY = Math.round(height / 2) + .5;
+  for (const y of [height * .25, originY, height * .75]) {
     context.beginPath();
-    context.moveTo(0, y + .5);
+    context.moveTo(0, y);
     context.lineTo(width, y);
     context.stroke();
   }
@@ -654,10 +691,21 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
   const cycles = Math.max(1, Math.min(16, frequency / 2048));
   const phaseOffset = 0;
   const dutyCycle = Math.max(.03, Math.min(.97, pulseWidth / 4095));
+  const points = Math.min(width, 320);
+  const noiseStep = Math.max(1, Math.round(points / (16 * cycles)));
+  let noiseRegister = noiseLfsr ?? SID_NOISE_LFSR_SEED;
+  let noiseMean = 0;
+  if (control & 0x80) {
+    let previewRegister = noiseRegister;
+    for (let index = 0; index < points; index += 1) {
+      if (index && index % noiseStep === 0) previewRegister = advanceSidNoiseLfsr(previewRegister);
+      noiseMean += sidNoiseSample(previewRegister);
+    }
+    noiseMean /= points;
+  }
   context.strokeStyle = gated ? "#77d5bb" : "#426568";
   context.lineWidth = Math.max(1, pixelRatio * 1.5);
   context.beginPath();
-  const points = Math.min(width, 320);
   for (let index = 0; index < points; index += 1) {
     const position = index / Math.max(1, points - 1);
     let step = (position * cycles + phaseOffset) % 1;
@@ -665,8 +713,8 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
     const triangle = 1 - 4 * Math.abs(step - .5);
     const saw = step * 2 - 1;
     const pulse = step < dutyCycle ? 1 : -1;
-    const noiseSeed = Math.sin((Math.floor((step + phaseOffset) * 4096) + frequency * 13) * 12.9898) * 43758.5453;
-    const noise = (noiseSeed - Math.floor(noiseSeed)) * 2 - 1;
+    if (index && index % noiseStep === 0) noiseRegister = advanceSidNoiseLfsr(noiseRegister);
+    const noise = sidNoiseSample(noiseRegister) - noiseMean;
     let waveformTotal = 0;
     let waveformCount = 0;
     if (control & 0x10) { waveformTotal += triangle; waveformCount++; }
@@ -675,7 +723,7 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
     if (control & 0x80) { waveformTotal += noise; waveformCount++; }
     let sample = test || !waveformCount ? 0 : waveformTotal / waveformCount;
     if (ring && control & 0x10) sample *= Math.sin((position * cycles * 2 + phaseOffset) * Math.PI * 2);
-    const y = height * (.5 - sample * .38 * envelopeLevel);
+    const y = originY - sample * height * .38 * envelopeLevel;
     const x = position * width;
     index ? context.lineTo(x, y) : context.moveTo(x, y);
   }
@@ -727,9 +775,9 @@ function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   card.append(values);
   const trace = document.createElement("section");
   trace.className = "sid-register-trace";
-  trace.append(textElement("p", "OSCILLATOR WAVEFORM  /  REGISTER-BASED RECONSTRUCTION", "sid-trace-label"));
+  trace.append(textElement("p", "OSCILLATOR WAVEFORM  /  SID-STYLE REGISTER MODEL", "sid-trace-label"));
   const canvas = document.createElement("canvas");
-  canvas._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level };
+  canvas._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level, noiseLfsr: updateSidNoiseState(voice, frequency, control) };
   canvas.setAttribute("aria-label", `Voice ${voice + 1} oscillator waveform reconstruction`);
   trace.append(canvas);
   card.append(trace);
@@ -758,7 +806,7 @@ function updateSidVoiceMonitor(card, voice, status, filterRouting, envelopeState
     for (const [index, value] of facts.entries()) card.querySelectorAll(".sid-voice-values strong")[index].textContent = value;
   }
   const oscillator = card.querySelector(".sid-register-trace canvas");
-  oscillator._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level };
+  oscillator._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level, noiseLfsr: updateSidNoiseState(voice, frequency, control) };
 }
 function renderSidTrackerView() {
   const dialog = $("tracker-dialog");
@@ -840,7 +888,7 @@ function renderSidTrackerView() {
   }
   for (const [voice, canvas] of [...grid.querySelectorAll(".sid-register-trace canvas")].entries()) {
     const oscillator = canvas._sidOscillator;
-    const oscillatorKey = `${oscillator.frequency}:${oscillator.pulseWidth}:${oscillator.control}:${Math.round(oscillator.envelopeLevel * 16)}`;
+    const oscillatorKey = `${oscillator.frequency}:${oscillator.pulseWidth}:${oscillator.control}:${Math.round(oscillator.envelopeLevel * 16)}:${oscillator.noiseLfsr}`;
     if (canvas._sidRenderKey !== oscillatorKey) {
       canvas._sidRenderKey = oscillatorKey;
       drawSidOscillatorReconstruction(canvas, oscillator);
