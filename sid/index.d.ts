@@ -103,6 +103,7 @@ export class SidPlayer {
   getSidStatus(sidNumber?: number): Uint8Array | undefined;
   getSidWriteTrace(sidNumber?: number): SidWriteTrace[];
   getSidWriteTraceSnapshot(sidNumber?: number): readonly SidWriteTrace[];
+  getSidEnvelopeWriteHistorySnapshot(sidNumber?: number): readonly SidWriteTrace[];
   getInstalledSids(): number;
   getDiagnostics(): Record<string, unknown>;
   dispose(): Promise<void>;

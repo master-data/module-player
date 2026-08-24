@@ -543,9 +543,9 @@ function advanceSidEnvelope(state, elapsedMs) {
 function updateSidEnvelope(voice, attack, decay, sustain, release, gate, writes) {
   const now = performance.now();
   let state = sidEnvelopeStates.get(voice);
+  const isNewState = !state;
   if (!state) {
-    const level = gate ? sustain / 15 : 0;
-    state = { attack, decay, sustain, release, gate, level, phase: gate ? "sustain" : "idle", lastUpdatedAt: now, lastWriteCycle: writes.at(-1)?.cyclePhi1, history: Array(SID_ENVELOPE_HISTORY_LIMIT).fill(level) };
+    state = { attack, decay, sustain, release, gate: false, level: 0, phase: "idle", lastUpdatedAt: now, lastWriteCycle: undefined, history: [] };
     sidEnvelopeStates.set(voice, state);
   }
   const base = voice * 7;
@@ -568,8 +568,18 @@ function updateSidEnvelope(voice, attack, decay, sustain, release, gate, writes)
       state.sustain = write.value >> 4;
       state.release = write.value & 0x0f;
     }
+    if (isNewState) state.history.push(state.level);
   }
-  advanceSidEnvelope(state, Math.max(0, now - state.lastUpdatedAt));
+  if (isNewState) {
+    state.attack = attack;
+    state.decay = decay;
+    state.sustain = sustain;
+    state.release = release;
+    state.gate = gate;
+    state.level = gate ? sustain / 15 : 0;
+    state.phase = gate ? "sustain" : "idle";
+  } else advanceSidEnvelope(state, Math.max(0, now - state.lastUpdatedAt));
+  if (state.history.length > SID_ENVELOPE_HISTORY_LIMIT) state.history.splice(0, state.history.length - SID_ENVELOPE_HISTORY_LIMIT);
   state.lastUpdatedAt = now;
   state.attack = attack;
   state.decay = decay;
@@ -806,7 +816,7 @@ function renderSidTrackerView() {
   if ($("tracker-dialog-kicker").textContent !== "SID LIVE REGISTER VISUALIZATION") $("tracker-dialog-kicker").textContent = "SID LIVE REGISTER VISUALIZATION";
   if ($("tracker-status").textContent !== trackerStatus) $("tracker-status").textContent = trackerStatus;
   const writesByVoice = [[], [], []];
-  for (const write of sidPlayer.getSidWriteTraceSnapshot(selectedSidChip)) {
+  for (const write of sidPlayer.getSidEnvelopeWriteHistorySnapshot(selectedSidChip)) {
     const voice = Math.floor(write.address / 7);
     if (voice >= 0 && voice < writesByVoice.length && write.address % 7 >= 4) writesByVoice[voice].push(write);
   }

@@ -4,6 +4,7 @@ const PLAYER_OWNER = Symbol.for("module-player.sid.owner");
 const CYCLES_PER_RENDER = 40_000;
 const EMPTY_RENDER_LIMIT = 64;
 const SID_WRITE_TRACE_LIMIT = 256;
+const SID_ENVELOPE_HISTORY_LIMIT = 1024;
 const EMPTY_SID_WRITE_TRACE = Object.freeze([]);
 
 function asArrayBuffer(input) {
@@ -23,6 +24,10 @@ function normalizeTimeout(value) {
   if (value === undefined || value === null) return undefined;
   if (!Number.isFinite(value) || value < 0) throw new RangeError("Timeout must be a non-negative number of seconds.");
   return value;
+}
+
+function isSidEnvelopeRegister(address) {
+  return address >= 0 && address < 21 && address % 7 >= 4;
 }
 
 function moduleUrl(assetBaseUrl) {
@@ -111,7 +116,9 @@ export class SidPlayer {
     this._scopeBuffers = [new Float32Array(0), new Float32Array(0)];
     this._scopeRevision = 0;
     this._sidWriteTraces = new Map();
+    this._sidEnvelopeWriteHistory = new Map();
     this._sidWriteTraceEnabled = false;
+    this._sidEnvelopeHistoryEnabled = true;
     this._diagnostics = { audioCallbackCount: 0, audioGenerationTotalMs: 0, audioGenerationMaxMs: 0, wasmRenderCount: 0, wasmRenderTotalMs: 0, wasmRenderMaxMs: 0, underrunCount: 0 };
     this._roms = {
       kernal: copyRom(options.systemRoms?.kernal, 8192, "KERNAL"),
@@ -215,6 +222,7 @@ export class SidPlayer {
     this._pendingOffset = 0;
     this._emptyRenders = 0;
     this._sidWriteTraces.clear();
+    this._sidEnvelopeWriteHistory.clear();
   }
 
   _captureSidWriteTraces() {
@@ -222,10 +230,19 @@ export class SidPlayer {
     if (!writes?.length) return;
     for (let index = 0; index < writes.length; index += 4) {
       const sidNumber = writes[index];
-      const trace = this._sidWriteTraces.get(sidNumber) ?? [];
-      trace.push({ address: writes[index + 1], value: writes[index + 2], cyclePhi1: writes[index + 3] });
-      if (trace.length > SID_WRITE_TRACE_LIMIT) trace.splice(0, trace.length - SID_WRITE_TRACE_LIMIT);
-      this._sidWriteTraces.set(sidNumber, trace);
+      const write = { address: writes[index + 1], value: writes[index + 2], cyclePhi1: writes[index + 3] };
+      if (this._sidWriteTraceEnabled) {
+        const trace = this._sidWriteTraces.get(sidNumber) ?? [];
+        trace.push(write);
+        if (trace.length > SID_WRITE_TRACE_LIMIT) trace.splice(0, trace.length - SID_WRITE_TRACE_LIMIT);
+        this._sidWriteTraces.set(sidNumber, trace);
+      }
+      if (this._sidEnvelopeHistoryEnabled && isSidEnvelopeRegister(write.address)) {
+        const history = this._sidEnvelopeWriteHistory.get(sidNumber) ?? [];
+        history.push(write);
+        if (history.length > SID_ENVELOPE_HISTORY_LIMIT) history.splice(0, history.length - SID_ENVELOPE_HISTORY_LIMIT);
+        this._sidEnvelopeWriteHistory.set(sidNumber, history);
+      }
     }
   }
 
@@ -248,7 +265,7 @@ export class SidPlayer {
     try {
       if (!context.loadSidBuffer(this._patchTrack(metadata.currentSong))) throw new Error(context.getLastError());
       if (!context.reset()) throw new Error(context.getLastError());
-      context.setSidWriteTraceEnabled?.(this._sidWriteTraceEnabled);
+      context.setSidWriteTraceEnabled?.(this._sidWriteTraceEnabled || this._sidEnvelopeHistoryEnabled);
       this._releaseContext(previous);
       this._sidContext = context;
       this._metadata = { ...metadata, raw: context.getTuneInfo(), engine: this._module.getSidEngineName?.(), md5: context.getTuneMd5() || undefined };
@@ -315,7 +332,7 @@ export class SidPlayer {
   setTimeout(seconds) { this._timeoutSeconds = normalizeTimeout(seconds); }
   setSidWriteTraceEnabled(enabled) {
     this._sidWriteTraceEnabled = Boolean(enabled);
-    this._sidContext?.setSidWriteTraceEnabled?.(this._sidWriteTraceEnabled);
+    this._sidContext?.setSidWriteTraceEnabled?.(this._sidWriteTraceEnabled || this._sidEnvelopeHistoryEnabled);
     if (!this._sidWriteTraceEnabled) this._sidWriteTraces.clear();
   }
   setStreamPanning(panning) {
@@ -352,6 +369,10 @@ export class SidPlayer {
   getSidWriteTraceSnapshot(sidNumber = 0) {
     if (!Number.isInteger(sidNumber) || sidNumber < 0) throw new RangeError("SID chip number must be a non-negative integer.");
     return this._sidWriteTraces.get(sidNumber) ?? EMPTY_SID_WRITE_TRACE;
+  }
+  getSidEnvelopeWriteHistorySnapshot(sidNumber = 0) {
+    if (!Number.isInteger(sidNumber) || sidNumber < 0) throw new RangeError("SID chip number must be a non-negative integer.");
+    return this._sidEnvelopeWriteHistory.get(sidNumber) ?? EMPTY_SID_WRITE_TRACE;
   }
 
   getInstalledSids() { return this._sidContext?.getInstalledSids?.() ?? 0; }
@@ -397,7 +418,7 @@ export class SidPlayer {
       if (!this._pendingPcm || this._pendingOffset >= this._pendingPcm.length) {
         const renderStartedAt = performance.now();
         const chunk = this._sidContext.render(CYCLES_PER_RENDER);
-        if (this._sidWriteTraceEnabled) this._captureSidWriteTraces();
+        if (this._sidWriteTraceEnabled || this._sidEnvelopeHistoryEnabled) this._captureSidWriteTraces();
         const elapsed = performance.now() - renderStartedAt;
         this._diagnostics.wasmRenderCount += 1;
         this._diagnostics.wasmRenderTotalMs += elapsed;
