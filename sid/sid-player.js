@@ -6,6 +6,7 @@ const EMPTY_RENDER_LIMIT = 64;
 const SID_WRITE_TRACE_LIMIT = 256;
 const SID_ENVELOPE_HISTORY_LIMIT = 1024;
 const EMPTY_SID_WRITE_TRACE = Object.freeze([]);
+const SID_SILENCE_THRESHOLD = 1 / 32768;
 
 function asArrayBuffer(input) {
   if (input instanceof ArrayBuffer) return input;
@@ -24,6 +25,11 @@ function normalizeTimeout(value) {
   if (value === undefined || value === null) return undefined;
   if (!Number.isFinite(value) || value < 0) throw new RangeError("Timeout must be a non-negative number of seconds.");
   return value;
+}
+
+function normalizeSilenceTimeout(value) {
+  const seconds = normalizeTimeout(value);
+  return seconds === 0 ? undefined : seconds;
 }
 
 function isSidEnvelopeRegister(address) {
@@ -107,6 +113,8 @@ export class SidPlayer {
     this._streamPanning = undefined;
     this._looping = false;
     this._timeoutSeconds = undefined;
+    this._silenceTimeoutSeconds = undefined;
+    this._silenceStartedAt = undefined;
     this._operation = Promise.resolve();
     this._source = undefined;
     this._metadata = undefined;
@@ -221,6 +229,7 @@ export class SidPlayer {
     this._pendingPcm = undefined;
     this._pendingOffset = 0;
     this._emptyRenders = 0;
+    this._silenceStartedAt = undefined;
     this._sidWriteTraces.clear();
     this._sidEnvelopeWriteHistory.clear();
   }
@@ -290,6 +299,7 @@ export class SidPlayer {
         this._filename = filename;
         this._looping = Boolean(options.loop);
         this._timeoutSeconds = normalizeTimeout(options.timeoutSeconds);
+        this._silenceTimeoutSeconds = normalizeSilenceTimeout(options.silenceTimeoutSeconds);
         const metadata = this._loadTrack(options.track ?? 0);
         await this._audioContext.resume();
         this._playStartedAt = this._audioContext.currentTime;
@@ -330,6 +340,7 @@ export class SidPlayer {
   getVolume() { return this._volume; }
   setLooping(enabled) { this._looping = Boolean(enabled); }
   setTimeout(seconds) { this._timeoutSeconds = normalizeTimeout(seconds); }
+  setSilenceTimeout(seconds) { this._silenceTimeoutSeconds = normalizeSilenceTimeout(seconds); }
   setSidWriteTraceEnabled(enabled) {
     this._sidWriteTraceEnabled = Boolean(enabled);
     this._sidContext?.setSidWriteTraceEnabled?.(this._sidWriteTraceEnabled || this._sidEnvelopeHistoryEnabled);
@@ -444,6 +455,17 @@ export class SidPlayer {
       this._pendingOffset += frames * 2;
     }
     if (frame < left.length && this._state === "playing") this._diagnostics.underrunCount += 1;
+    if (this._silenceTimeoutSeconds !== undefined) {
+      let audible = false;
+      for (let index = 0; index < frame; index += 1) {
+        if (Math.abs(left[index]) > SID_SILENCE_THRESHOLD || Math.abs(right[index]) > SID_SILENCE_THRESHOLD) { audible = true; break; }
+      }
+      if (audible) this._silenceStartedAt = undefined;
+      else {
+        this._silenceStartedAt ??= this._audioContext.currentTime;
+        if (this._audioContext.currentTime - this._silenceStartedAt >= this._silenceTimeoutSeconds) this._finish();
+      }
+    }
     const elapsed = performance.now() - startedAt;
     this._diagnostics.audioCallbackCount += 1;
     this._diagnostics.audioGenerationTotalMs += elapsed;

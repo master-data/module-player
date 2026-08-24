@@ -831,11 +831,7 @@ function renderSidTrackerView() {
   for (const [voice, card] of [...grid.querySelectorAll(".sid-voice")].entries()) updateSidVoiceMonitor(card, voice, status, filterRouting, envelopes[voice]);
   for (const [voice, canvas] of [...grid.querySelectorAll(".sid-envelope-canvas")].entries()) {
     canvas._sidEnvelope = envelopes[voice];
-    const envelopeKey = `${envelopes[voice].phase}:${envelopes[voice].attack}:${envelopes[voice].decay}:${envelopes[voice].sustain}:${envelopes[voice].release}:${Math.round(envelopes[voice].level * 32)}`;
-    if (canvas._sidRenderKey !== envelopeKey) {
-      canvas._sidRenderKey = envelopeKey;
-      drawSidEnvelopeReconstruction(canvas, canvas._sidEnvelope);
-    }
+    drawSidEnvelopeReconstruction(canvas, canvas._sidEnvelope);
   }
   for (const [voice, canvas] of [...grid.querySelectorAll(".sid-register-trace canvas")].entries()) {
     const oscillator = canvas._sidOscillator;
@@ -1033,7 +1029,7 @@ async function loadWithSid(buffer, filename) {
     sidPlayer.on("ended", () => showStatus($("loop").checked ? "Looping SID tune." : "SID tune ended."));
     sidPlayer.on("error", (error) => { loadFailure = error.message; showStatus(loadFailure); renderMetadata(); });
   }
-  const metadata = await sidPlayer.load(buffer, options(filename));
+  const metadata = await sidPlayer.load(buffer, { ...options(filename), silenceTimeoutSeconds: Number($("silence").value) });
   loadFailure = undefined;
   setSidMetadata(metadata);
   showStatus("Player state: playing");
@@ -1560,7 +1556,7 @@ $("tracker-sid-register-detail").addEventListener("change", (event) => {
   updateSidWriteTracing();
   if ($("tracker-dialog").open && activeEngine === "sid") renderSidTrackerView();
 });
-$("silence").addEventListener("change", (event) => { if (activeEngine !== "sid") (activeEngine === "xmp" ? xmpPlayer : player)?.setSilenceTimeout(Number(event.target.value)); });
+$("silence").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setSilenceTimeout(Number(event.target.value)));
 $("zoom").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.visualization?.setZoom(Number(event.target.value)); });
 for (const control of [$("sid-c64-model"), $("sid-model"), $("sid-digi-boost")]) {
   control.addEventListener("change", () => {

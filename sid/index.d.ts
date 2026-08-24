@@ -73,6 +73,7 @@ export interface SidLoadOptions {
   filename?: string;
   track?: number;
   timeoutSeconds?: number;
+  silenceTimeoutSeconds?: number;
   loop?: boolean;
 }
 
@@ -95,6 +96,7 @@ export class SidPlayer {
   getVolume(): number;
   setLooping(enabled: boolean): void;
   setTimeout(seconds: number | null): void;
+  setSilenceTimeout(seconds: number | null): void;
   setSidWriteTraceEnabled(enabled: boolean): void;
   setStreamPanning(panning: number): void;
   setSystemRoms(roms?: SidSystemRoms): void;
