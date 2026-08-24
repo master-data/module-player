@@ -910,7 +910,13 @@ dialog.tracker-dialog[open] {
     background: #07171c;
 }
 
-.sid-tracker .tracker-toolbar p { color: #99beb8; }
+.sid-tracker .tracker-toolbar p {
+    flex: 1 1 46ch;
+    min-width: 46ch;
+    color: #99beb8;
+    font-variant-numeric: tabular-nums;
+    white-space: pre;
+}
 
 .tracker-sid-register-detail-control {
     display: inline-flex;
@@ -1053,11 +1059,11 @@ dialog.tracker-dialog[open] {
 .sid-envelope-settings strong { color: #d9f5eb; font-size: 9px; font-variant-numeric: tabular-nums; }
 .sid-envelope-canvas { display: block; width: 100%; height: 70px; }
 
-.sid-voice-values { display: grid; grid-template-columns: repeat(3, 1fr); }
+.sid-voice-values { display: grid; grid-template-columns: minmax(15ch, 1.6fr) minmax(8ch, .8fr) minmax(7ch, .7fr); }
 .sid-voice-values > div { min-width: 0; padding: 15px 14px; border-right: 1px solid rgba(119, 213, 187, .13); }
 .sid-voice-values > div:last-child { border-right: 0; }
 .sid-voice-values span { display: block; color: #7ca19d; font-size: 9px; }
-.sid-voice-values strong { display: block; margin-top: 6px; color: #f0fff9; font-size: 11px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.sid-voice-values strong { display: block; min-width: max-content; margin-top: 6px; color: #f0fff9; font-size: 11px; font-variant-numeric: tabular-nums; white-space: pre; }
 
 .sid-register-trace {
     position: relative;
@@ -1090,6 +1096,7 @@ dialog.tracker-dialog[open] {
 
 @media (max-width: 620px) {
     .sid-tracker .tracker-toolbar { align-items: flex-start; flex-direction: column; }
+    .sid-tracker .tracker-toolbar p { min-width: 0; width: 100%; white-space: normal; }
     .tracker-subsong-control { width: 100%; grid-template-columns: auto 28px minmax(0, 1fr) auto 28px; }
 }
 

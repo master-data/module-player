@@ -504,11 +504,15 @@ function sidClockHz() {
   return { NTSC: 1022727, OLD_NTSC: 1022727, DREAN: 1023440, PAL_M: 1022727 }[model] ?? 985248;
 }
 function sidPitch(frequency) {
-  if (!frequency) return { note: "--", hertz: "--.- Hz", register: sidHex(0, 4) };
+  if (!frequency) return { note: "-- ", hertz: "    --.- Hz", register: sidHex(0, 4) };
   const hertz = frequency * sidClockHz() / 16777216;
   const midi = Math.round(69 + 12 * Math.log2(hertz / 440));
   const note = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][((midi % 12) + 12) % 12];
-  return { note: `${note}${Math.floor(midi / 12) - 1}`, hertz: `${hertz.toFixed(1)} Hz`, register: sidHex(frequency, 4) };
+  return { note: `${note}${Math.floor(midi / 12) - 1}`.padEnd(3), hertz: `${hertz.toFixed(1).padStart(8)} Hz`, register: sidHex(frequency, 4) };
+}
+function sidVoiceFacts(frequency, pulseWidth, filterRouting, voice) {
+  const pitch = sidPitch(frequency);
+  return [`${pitch.note}  ${pitch.hertz}  ${pitch.register}`, String(pulseWidth).padStart(4, "0"), filterRouting & (1 << voice) ? "ROUTED" : "BYPASS"];
 }
 function advanceSidEnvelope(state, elapsedMs) {
   let remaining = elapsedMs;
@@ -713,8 +717,8 @@ function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   card.append(envelope);
   const values = document.createElement("div");
   values.className = "sid-voice-values";
-  const pitch = sidPitch(frequency);
-  const facts = [["PITCH", `${pitch.note}  ${pitch.hertz}  ${pitch.register}`], ["PULSE WIDTH", String(pulseWidth)], ["FILTER", filterRouting & (1 << voice) ? "ROUTED" : "BYPASS"]];
+  const valuesForVoice = sidVoiceFacts(frequency, pulseWidth, filterRouting, voice);
+  const facts = [["PITCH", valuesForVoice[0]], ["PULSE WIDTH", valuesForVoice[1]], ["FILTER", valuesForVoice[2]]];
   for (const [label, value] of facts) {
     const fact = document.createElement("div");
     fact.append(textElement("span", label), textElement("strong", value));
@@ -750,8 +754,7 @@ function updateSidVoiceMonitor(card, voice, status, filterRouting, envelopeState
     card.querySelector(".sid-envelope-phase").textContent = envelopeState.phase.toUpperCase();
     const settings = [attackDecay >> 4, attackDecay & 0x0f, sustainRelease >> 4, sustainRelease & 0x0f];
     for (const [index, value] of settings.entries()) card.querySelectorAll(".sid-envelope-settings strong")[index].textContent = String(value);
-    const pitch = sidPitch(frequency);
-    const facts = [`${pitch.note}  ${pitch.hertz}  ${pitch.register}`, String(pulseWidth), filterRouting & (1 << voice) ? "ROUTED" : "BYPASS"];
+    const facts = sidVoiceFacts(frequency, pulseWidth, filterRouting, voice);
     for (const [index, value] of facts.entries()) card.querySelectorAll(".sid-voice-values strong")[index].textContent = value;
   }
   const oscillator = card.querySelector(".sid-register-trace canvas");
@@ -814,7 +817,7 @@ function renderSidTrackerView() {
   const structureKey = `${selectedSidChip}:${installedSids}`;
   const filterMode = [status[0x18] & 0x10 ? "LP" : undefined, status[0x18] & 0x20 ? "BP" : undefined, status[0x18] & 0x40 ? "HP" : undefined].filter(Boolean).join(" + ") || "OFF";
   const cutoff = (status[0x15] & 0x07) | (status[0x16] << 3);
-  const trackerStatus = `SID ${selectedSidChip + 1} / ${installedSids}  |  FILTER ${filterMode}  |  CUTOFF ${cutoff}  |  RESONANCE ${status[0x17] >> 4}  |  VOLUME ${status[0x18] & 0x0f}`;
+  const trackerStatus = `SID ${String(selectedSidChip + 1).padStart(2, "0")} / ${String(installedSids).padStart(2, "0")}  |  FILTER ${filterMode.padEnd(12)}  |  CUTOFF ${String(cutoff).padStart(4, "0")}  |  RESONANCE ${String(status[0x17] >> 4).padStart(2, "0")}  |  VOLUME ${String(status[0x18] & 0x0f).padStart(2, "0")}`;
   if ($("tracker-dialog-kicker").textContent !== "SID LIVE REGISTER VISUALIZATION") $("tracker-dialog-kicker").textContent = "SID LIVE REGISTER VISUALIZATION";
   if ($("tracker-status").textContent !== trackerStatus) $("tracker-status").textContent = trackerStatus;
   const writesByVoice = [[], [], []];
