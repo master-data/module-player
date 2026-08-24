@@ -660,7 +660,8 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
     const triangle = 1 - 4 * Math.abs(step - .5);
     const saw = step * 2 - 1;
     const pulse = step < dutyCycle ? 1 : -1;
-    const noise = (Math.sin((Math.floor((step + phaseOffset) * 4096) + frequency * 13) * 12.9898) * 43758.5453 % 1) * 2 - 1;
+    const noiseSeed = Math.sin((Math.floor((step + phaseOffset) * 4096) + frequency * 13) * 12.9898) * 43758.5453;
+    const noise = (noiseSeed - Math.floor(noiseSeed)) * 2 - 1;
     let waveformTotal = 0;
     let waveformCount = 0;
     if (control & 0x10) { waveformTotal += triangle; waveformCount++; }
