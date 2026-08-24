@@ -47,7 +47,9 @@ export interface SidVisualizationSource {
   readonly sampleLength: number;
   getZoom(): number;
   setZoom(level: 1 | 2 | 3 | 4 | 5): void;
+  readonly revision: number;
   readChannel(channel: number): Float32Array;
+  readChannels(): readonly Float32Array[];
   readVu(channel: number): number;
   readOverallVu(): number;
 }
@@ -83,7 +85,7 @@ export class SidPlaybackError extends Error {
 export class SidPlayer {
   readonly state: SidPlayerState;
   readonly visualization: SidVisualizationSource;
-  on(event: "state" | "metadata" | "ended" | "error", listener: (payload?: unknown) => void): () => void;
+  on(event: "state" | "metadata" | "ended" | "error" | "audio", listener: (payload?: unknown) => void): () => void; // Added audio event
   load(input: File | ArrayBuffer, options?: SidLoadOptions): Promise<SidMetadata & { raw: unknown; engine?: string; md5?: string }>;
   selectSong(track: number): Promise<number>;
   pause(): void;
@@ -93,12 +95,14 @@ export class SidPlayer {
   getVolume(): number;
   setLooping(enabled: boolean): void;
   setTimeout(seconds: number | null): void;
+  setSidWriteTraceEnabled(enabled: boolean): void;
   setStreamPanning(panning: number): void;
   setSystemRoms(roms?: SidSystemRoms): void;
   setEmulationConfig(config: SidEmulationConfig): void;
   getEmulationConfig(): Record<string, unknown> | undefined;
   getSidStatus(sidNumber?: number): Uint8Array | undefined;
   getSidWriteTrace(sidNumber?: number): SidWriteTrace[];
+  getSidWriteTraceSnapshot(sidNumber?: number): readonly SidWriteTrace[];
   getInstalledSids(): number;
   getDiagnostics(): Record<string, unknown>;
   dispose(): Promise<void>;

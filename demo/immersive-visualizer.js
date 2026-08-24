@@ -195,7 +195,11 @@ export class ImmersiveVisualizer {
     const channels = [];
     if (source) {
       try {
-        for (let index = 0; index < Math.min(8, source.streamCount); index++) channels.push(source.readChannel(index));
+        if (typeof source.readChannels === "function") {
+          const availableChannels = source.readChannels();
+          for (let index = 0; index < Math.min(8, availableChannels.length); index++) channels.push(availableChannels[index]);
+        }
+        else for (let index = 0; index < Math.min(8, source.streamCount); index++) channels.push(source.readChannel(index));
       } catch {
         channels.length = 0;
       }

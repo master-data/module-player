@@ -1,9 +1,10 @@
 import { parseSidMetadata } from "./sid-metadata.js";
 
 const PLAYER_OWNER = Symbol.for("module-player.sid.owner");
-const CYCLES_PER_RENDER = 20_000;
+const CYCLES_PER_RENDER = 40_000;
 const EMPTY_RENDER_LIMIT = 64;
 const SID_WRITE_TRACE_LIMIT = 256;
+const EMPTY_SID_WRITE_TRACE = Object.freeze([]);
 
 function asArrayBuffer(input) {
   if (input instanceof ArrayBuffer) return input;
@@ -62,6 +63,11 @@ class SidVisualizationSource {
     if (!data) throw new RangeError("SID output channel is unavailable.");
     return data.subarray(Math.max(0, data.length - Math.ceil(data.length / this._zoom)));
   }
+  readChannels() {
+    this._refresh();
+    return this._player._scopeBuffers;
+  }
+  get revision() { return this._player._scopeRevision; }
   readVu(channel) {
     const data = this.readChannel(channel);
     if (!data.length) return 0;
@@ -103,7 +109,9 @@ export class SidPlayer {
     this._pendingOffset = 0;
     this._emptyRenders = 0;
     this._scopeBuffers = [new Float32Array(0), new Float32Array(0)];
+    this._scopeRevision = 0;
     this._sidWriteTraces = new Map();
+    this._sidWriteTraceEnabled = false;
     this._diagnostics = { audioCallbackCount: 0, audioGenerationTotalMs: 0, audioGenerationMaxMs: 0, wasmRenderCount: 0, wasmRenderTotalMs: 0, wasmRenderMaxMs: 0, underrunCount: 0 };
     this._roms = {
       kernal: copyRom(options.systemRoms?.kernal, 8192, "KERNAL"),
@@ -240,7 +248,7 @@ export class SidPlayer {
     try {
       if (!context.loadSidBuffer(this._patchTrack(metadata.currentSong))) throw new Error(context.getLastError());
       if (!context.reset()) throw new Error(context.getLastError());
-      context.setSidWriteTraceEnabled?.(true);
+      context.setSidWriteTraceEnabled?.(this._sidWriteTraceEnabled);
       this._releaseContext(previous);
       this._sidContext = context;
       this._metadata = { ...metadata, raw: context.getTuneInfo(), engine: this._module.getSidEngineName?.(), md5: context.getTuneMd5() || undefined };
@@ -305,6 +313,11 @@ export class SidPlayer {
   getVolume() { return this._volume; }
   setLooping(enabled) { this._looping = Boolean(enabled); }
   setTimeout(seconds) { this._timeoutSeconds = normalizeTimeout(seconds); }
+  setSidWriteTraceEnabled(enabled) {
+    this._sidWriteTraceEnabled = Boolean(enabled);
+    this._sidContext?.setSidWriteTraceEnabled?.(this._sidWriteTraceEnabled);
+    if (!this._sidWriteTraceEnabled) this._sidWriteTraces.clear();
+  }
   setStreamPanning(panning) {
     if (!Number.isFinite(panning) || panning < 0 || panning > 2) throw new RangeError("Stereo panning must be between 0 and 2.");
     this._streamPanning = panning;
@@ -335,6 +348,10 @@ export class SidPlayer {
   getSidWriteTrace(sidNumber = 0) {
     if (!Number.isInteger(sidNumber) || sidNumber < 0) throw new RangeError("SID chip number must be a non-negative integer.");
     return (this._sidWriteTraces.get(sidNumber) ?? []).map((write) => ({ ...write }));
+  }
+  getSidWriteTraceSnapshot(sidNumber = 0) {
+    if (!Number.isInteger(sidNumber) || sidNumber < 0) throw new RangeError("SID chip number must be a non-negative integer.");
+    return this._sidWriteTraces.get(sidNumber) ?? EMPTY_SID_WRITE_TRACE;
   }
 
   getInstalledSids() { return this._sidContext?.getInstalledSids?.() ?? 0; }
@@ -380,7 +397,7 @@ export class SidPlayer {
       if (!this._pendingPcm || this._pendingOffset >= this._pendingPcm.length) {
         const renderStartedAt = performance.now();
         const chunk = this._sidContext.render(CYCLES_PER_RENDER);
-        this._captureSidWriteTraces();
+        if (this._sidWriteTraceEnabled) this._captureSidWriteTraces();
         const elapsed = performance.now() - renderStartedAt;
         this._diagnostics.wasmRenderCount += 1;
         this._diagnostics.wasmRenderTotalMs += elapsed;
@@ -410,7 +427,8 @@ export class SidPlayer {
     this._diagnostics.audioCallbackCount += 1;
     this._diagnostics.audioGenerationTotalMs += elapsed;
     this._diagnostics.audioGenerationMaxMs = Math.max(this._diagnostics.audioGenerationMaxMs, elapsed);
-    this._scopeBuffers = [left.slice(), right.slice()];
+    this._scopeRevision++;
+    this._emit("audio");
   }
 
   _finish() {

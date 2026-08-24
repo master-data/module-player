@@ -912,6 +912,18 @@ dialog.tracker-dialog[open] {
 
 .sid-tracker .tracker-toolbar p { color: #99beb8; }
 
+.tracker-sid-register-detail-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #99beb8;
+    font-size: 9px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.tracker-sid-register-detail-control input { margin: 0; accent-color: #77d5bb; }
+
 .tracker-subsong-control {
     display: grid;
     grid-template-columns: auto 28px minmax(96px, 160px) auto 28px;
