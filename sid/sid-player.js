@@ -6,7 +6,7 @@ const EMPTY_RENDER_LIMIT = 64;
 const SID_WRITE_TRACE_LIMIT = 256;
 const SID_ENVELOPE_HISTORY_LIMIT = 1024;
 const EMPTY_SID_WRITE_TRACE = Object.freeze([]);
-const SID_SILENCE_THRESHOLD = 1 / 32768;
+const SID_SILENCE_VARIATION_THRESHOLD = 1 / 512;
 
 function asArrayBuffer(input) {
   if (input instanceof ArrayBuffer) return input;
@@ -255,6 +255,19 @@ export class SidPlayer {
     }
   }
 
+  _sidRegistersSilent() {
+    const installedSids = this._sidContext?.getInstalledSids?.();
+    if (!installedSids) return false;
+    for (let sidNumber = 0; sidNumber < installedSids; sidNumber += 1) {
+      const status = this._sidContext.getSidStatus?.(sidNumber);
+      if (!status) return false;
+      for (let voice = 0; voice < 3; voice += 1) {
+        if (status[voice * 7 + 4] & 1) return false;
+      }
+    }
+    return true;
+  }
+
   _hasCompleteRoms() {
     return Boolean(this._roms.kernal && this._roms.basic && this._roms.chargen);
   }
@@ -425,6 +438,10 @@ export class SidPlayer {
     }
     const crossfeed = this._streamPanning === undefined ? 0 : this._streamPanning / 2;
     let frame = 0;
+    let minimumLeft = Infinity;
+    let maximumLeft = -Infinity;
+    let minimumRight = Infinity;
+    let maximumRight = -Infinity;
     while (frame < left.length) {
       if (!this._pendingPcm || this._pendingOffset >= this._pendingPcm.length) {
         const renderStartedAt = performance.now();
@@ -448,18 +465,22 @@ export class SidPlayer {
         const sourceLeft = this._pendingPcm[this._pendingOffset + index * 2] / 32768;
         const sourceRight = this._pendingPcm[this._pendingOffset + index * 2 + 1] / 32768;
         const difference = (sourceRight - sourceLeft) * crossfeed;
-        left[frame + index] = sourceLeft + difference;
-        right[frame + index] = sourceRight - difference;
+        const outputLeft = sourceLeft + difference;
+        const outputRight = sourceRight - difference;
+        left[frame + index] = outputLeft;
+        right[frame + index] = outputRight;
+        if (outputLeft < minimumLeft) minimumLeft = outputLeft;
+        if (outputLeft > maximumLeft) maximumLeft = outputLeft;
+        if (outputRight < minimumRight) minimumRight = outputRight;
+        if (outputRight > maximumRight) maximumRight = outputRight;
       }
       frame += frames;
       this._pendingOffset += frames * 2;
     }
     if (frame < left.length && this._state === "playing") this._diagnostics.underrunCount += 1;
-    if (this._silenceTimeoutSeconds !== undefined) {
-      let audible = false;
-      for (let index = 0; index < frame; index += 1) {
-        if (Math.abs(left[index]) > SID_SILENCE_THRESHOLD || Math.abs(right[index]) > SID_SILENCE_THRESHOLD) { audible = true; break; }
-      }
+    if (this._silenceTimeoutSeconds !== undefined && frame) {
+      const pcmActive = maximumLeft - minimumLeft > SID_SILENCE_VARIATION_THRESHOLD || maximumRight - minimumRight > SID_SILENCE_VARIATION_THRESHOLD;
+      const audible = pcmActive && !this._sidRegistersSilent();
       if (audible) this._silenceStartedAt = undefined;
       else {
         this._silenceStartedAt ??= this._audioContext.currentTime;

@@ -59,7 +59,7 @@
         <div class="panel-heading"><p class="panel-kicker">Playback configuration</p><button id="settings-close" class="text-command" type="button">Close</button></div>
         <p class="panel-note">Buffer and audio rate changes apply when the player restarts.</p>
         <div class="settings-grid">
-          <label>Silence <input id="silence" type="number" min="0" value="5"></label>
+          <label>Silence duration <input id="silence" type="number" min="0" step="0.1" value="5"></label>
           <label>Audio buffer <select id="buffer"><option value="2048">2048 samples</option><option value="4096" selected>4096 samples</option><option value="8192">8192 samples</option></select></label>
           <label>Audio rate <select id="audio-rate"><option value="44100" selected>44100 Hz</option><option value="48000">48000 Hz</option><option value="88200">88200 Hz</option></select></label>
           <label><span class="range-label">Scope zoom <output for="zoom">3x</output></span><input id="zoom" type="range" min="1" max="5" step="1" value="3"></label>
@@ -117,6 +117,6 @@
       </div>
     </div>
   </dialog>
-  <script type="module" src="main.js?v=68"></script>
+  <script type="module" src="main.js?v=72"></script>
 </body>
 </html>

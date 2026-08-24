@@ -1,6 +1,7 @@
 import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js";
 import { createXmpPlayer } from "../xmp/index.js?v=6";
-import { createSidPlayer, isSidFile, parseSidMetadata } from "../sid/index.js";
+import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
+import { createSidPlayer } from "../sid/sid-player.js?v=2";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
 import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=22";
 
@@ -987,6 +988,7 @@ async function loadWithXmp(buffer, filename) {
     xmpPlayer.setVolume(Number($("volume").value));
     xmpPlayer.visualization?.setZoom(Number($("zoom").value));
     xmpPlayer.setStreamPanning(Number($("pan").value));
+    xmpPlayer.setSilenceTimeout(Number($("silence").value));
     xmpPlayer.on("state", () => updateControls());
     xmpPlayer.on("ended", () => showStatus($("loop").checked ? "Looping module." : "Module ended."));
     xmpPlayer.on("error", (error) => { loadFailure = error.message; showStatus(loadFailure); renderMetadata(); });
@@ -1498,6 +1500,7 @@ async function initializePlayer() {
     player.setVolume(Number($("volume").value));
     player.visualization?.setZoom(Number($("zoom").value));
     player.setStreamPanning(Number($("pan").value));
+    player.setSilenceTimeout(Number($("silence").value));
     await prepareSongs();
     if (!lastSelection) defaultWarning = selectDefaultSample();
     $("initialize").textContent = "Reinitialize";
