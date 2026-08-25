@@ -25,6 +25,9 @@ const SID_NOISE_LFSR_MASK = 0x7fffff;
 const SID_NOISE_LFSR_SEED = 0x7ffff8;
 const SID_NOISE_CLOCK_DIVISOR = 0x100000;
 const SID_NOISE_MAX_MODEL_STEPS = 4096;
+const SID_PHOSPHOR_DECAY_MS = 1000;
+const SID_PHOSPHOR_DECAY_INTERVAL_MS = 100;
+const SID_PHOSPHOR_STORAGE_KEY = "module-player.sid-phosphor-persistence";
 let player;
 let xmpPlayer;
 let sidPlayer;
@@ -52,10 +55,12 @@ let selectedSubsong;
 let selectedTrackerOrder = 0;
 let trackerFollowingPlayback = true;
 let trackerAnimationFrame;
+let sidPhosphorDecayTimer;
 let lastTrackerPositionKey;
 let sidTrackerRenderQueued = false;
 let lastSidScopeRevision = -1;
 let sidRegisterDetailEnabled = true;
+let sidPhosphorEnabled = readStoredBoolean(SID_PHOSPHOR_STORAGE_KEY, false);
 let lastMegaSidState;
 let lastMegaSidStateRevision = -1;
 let immersiveCursorTimer;
@@ -92,6 +97,15 @@ const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
 });
 
+function readStoredBoolean(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value === "true";
+  } catch { return fallback; }
+}
+function storeBoolean(key, value) {
+  try { localStorage.setItem(key, String(value)); } catch { /* Storage can be unavailable in private contexts. */ }
+}
 function showStatus(message) { $("status").textContent = message; }
 function updateSidWriteTracing() {
   const trackerDetailActive = $("tracker-dialog").open && activeEngine === "sid" && sidRegisterDetailEnabled;
@@ -664,17 +678,7 @@ function drawSidEnvelopeReconstruction(canvas, envelope) {
   context.fill();
   context.stroke();
 }
-function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, control, envelopeLevel, noiseLfsr }) {
-  const pixelRatio = 1;
-  const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
-  const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-  const context = canvas.getContext("2d");
-  context.fillStyle = "#08191e";
-  context.fillRect(0, 0, width, height);
+function drawSidOscillatorGrid(context, width, height) {
   context.strokeStyle = "rgba(119, 213, 187, .12)";
   context.lineWidth = 1;
   const originY = Math.round(height / 2) + .5;
@@ -684,6 +688,54 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
     context.lineTo(width, y);
     context.stroke();
   }
+}
+function decaySidPhosphor() {
+  if (!sidPhosphorEnabled) {
+    sidPhosphorDecayTimer = undefined;
+    return;
+  }
+  const now = performance.now();
+  let active = false;
+  for (const canvas of document.querySelectorAll(".sid-register-trace canvas")) {
+    if (!canvas._sidPhosphorUntil || now >= canvas._sidPhosphorUntil) {
+      canvas._sidPhosphorUntil = undefined;
+      continue;
+    }
+    const elapsed = Math.max(0, now - (canvas._sidPhosphorUpdatedAt ?? now));
+    canvas._sidPhosphorUpdatedAt = now;
+    const context = canvas.getContext("2d");
+    context.globalAlpha = 1;
+    context.fillStyle = `rgba(8, 25, 30, ${1 - Math.pow(.01, elapsed / SID_PHOSPHOR_DECAY_MS)})`;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    drawSidOscillatorGrid(context, canvas.width, canvas.height);
+    active = true;
+  }
+  if (active) sidPhosphorDecayTimer = window.setTimeout(decaySidPhosphor, SID_PHOSPHOR_DECAY_INTERVAL_MS);
+  else sidPhosphorDecayTimer = undefined;
+}
+function startSidPhosphorDecay(canvas) {
+  if (!sidPhosphorEnabled) return;
+  const now = performance.now();
+  canvas._sidPhosphorUpdatedAt = now;
+  canvas._sidPhosphorUntil = now + SID_PHOSPHOR_DECAY_MS;
+  if (sidPhosphorDecayTimer === undefined) sidPhosphorDecayTimer = window.setTimeout(decaySidPhosphor, SID_PHOSPHOR_DECAY_INTERVAL_MS);
+}
+function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, control, envelopeLevel, noiseLfsr }) {
+  const pixelRatio = 1;
+  const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
+  const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
+  const resized = canvas.width !== width || canvas.height !== height;
+  if (resized) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const context = canvas.getContext("2d");
+  context.globalAlpha = 1;
+  context.fillStyle = !sidPhosphorEnabled || resized || !canvas._sidPhosphorPainted ? "#08191e" : "rgba(8, 25, 30, .5)";
+  context.fillRect(0, 0, width, height);
+  canvas._sidPhosphorPainted = sidPhosphorEnabled;
+  drawSidOscillatorGrid(context, width, height);
+  const originY = Math.round(height / 2) + .5;
   const gated = control & 1;
   const test = control & 0x08;
   const ring = control & 0x04;
@@ -728,6 +780,7 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
     index ? context.lineTo(x, y) : context.moveTo(x, y);
   }
   context.stroke();
+  startSidPhosphorDecay(canvas);
 }
 function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   const offset = voice * 7;
@@ -819,8 +872,11 @@ function renderSidTrackerView() {
   if ($("tracker-dialog-source").textContent !== source) $("tracker-dialog-source").textContent = source;
   const grid = $("tracker-grid");
   const registerDetailControl = $("tracker-sid-register-detail-control");
+  const phosphorControl = $("tracker-sid-phosphor-control");
   registerDetailControl.hidden = activeEngine !== "sid";
+  phosphorControl.hidden = activeEngine !== "sid";
   if ($("tracker-sid-register-detail").checked !== sidRegisterDetailEnabled) $("tracker-sid-register-detail").checked = sidRegisterDetailEnabled;
+  if ($("tracker-sid-phosphor").checked !== sidPhosphorEnabled) $("tracker-sid-phosphor").checked = sidPhosphorEnabled;
   if (!sidRegisterDetailEnabled) {
     $("tracker-dialog-kicker").textContent = "SID FINAL MIX WAVEFORMS";
     $("tracker-status").textContent = "FINAL MIX PCM WAVEFORMS";
@@ -990,9 +1046,14 @@ function renderTrackerView() {
   lastTrackerPositionKey = positionKey;
 }
 function stopTrackerAnimation() {
-  if (trackerAnimationFrame === undefined) return;
-  window.cancelAnimationFrame(trackerAnimationFrame);
-  trackerAnimationFrame = undefined;
+  if (trackerAnimationFrame !== undefined) {
+    window.cancelAnimationFrame(trackerAnimationFrame);
+    trackerAnimationFrame = undefined;
+  }
+  if (sidPhosphorDecayTimer !== undefined) {
+    clearTimeout(sidPhosphorDecayTimer);
+    sidPhosphorDecayTimer = undefined;
+  }
 }
 function scheduleSidTrackerRender() {
   if (sidTrackerRenderQueued || activeEngine !== "sid" || !$("tracker-dialog").open) return;
@@ -1609,6 +1670,20 @@ $("tracker-sid-register-detail").addEventListener("change", (event) => {
   sidRegisterDetailEnabled = event.target.checked;
   if (!sidRegisterDetailEnabled) sidEnvelopeStates.clear();
   updateSidWriteTracing();
+  if ($("tracker-dialog").open && activeEngine === "sid") renderSidTrackerView();
+});
+$("tracker-sid-phosphor").addEventListener("change", (event) => {
+  sidPhosphorEnabled = event.target.checked;
+  storeBoolean(SID_PHOSPHOR_STORAGE_KEY, sidPhosphorEnabled);
+  if (sidPhosphorDecayTimer !== undefined) {
+    clearTimeout(sidPhosphorDecayTimer);
+    sidPhosphorDecayTimer = undefined;
+  }
+  for (const canvas of document.querySelectorAll(".sid-register-trace canvas")) {
+    canvas._sidPhosphorPainted = false;
+    canvas._sidPhosphorUntil = undefined;
+    delete canvas._sidRenderKey;
+  }
   if ($("tracker-dialog").open && activeEngine === "sid") renderSidTrackerView();
 });
 $("silence").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setSilenceTimeout(Number(event.target.value)));
