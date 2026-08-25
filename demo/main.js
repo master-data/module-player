@@ -25,6 +25,7 @@ const SID_NOISE_LFSR_MASK = 0x7fffff;
 const SID_NOISE_LFSR_SEED = 0x7ffff8;
 const SID_NOISE_CLOCK_DIVISOR = 0x100000;
 const SID_NOISE_MAX_MODEL_STEPS = 4096;
+const SID_OSCILLATOR_PHASE_PITCH_DIVISOR = 4096;
 const SID_PHOSPHOR_DECAY_MS = 1000;
 const SID_PHOSPHOR_DECAY_INTERVAL_MS = 100;
 const SID_PHOSPHOR_STORAGE_KEY = "module-player.sid-phosphor-persistence";
@@ -70,6 +71,7 @@ let lastMegaPatternKey;
 let selectedSidChip = 0;
 const sidEnvelopeStates = new Map();
 const sidNoiseStates = new Map();
+const sidOscillatorPhases = new Map();
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization,
   getSidState: () => {
@@ -405,6 +407,7 @@ function setXmpMetadata(filename, songInfo = {}) {
 function setSidMetadata(info) {
   sidEnvelopeStates.clear();
   sidNoiseStates.clear();
+  sidOscillatorPhases.clear();
   const configured = sidPlayer?.getEmulationConfig?.();
   const configuredClock = configured?.c64Model && configured.forceC64Model ? `C64 ${configured.c64Model}` : undefined;
   const configuredModel = configured?.sidModel && configured.forceSidModel ? `Emulating ${configured.sidModel}` : undefined;
@@ -559,6 +562,18 @@ function updateSidNoiseState(voice, frequency, control) {
   state.remainder = totalSteps > SID_NOISE_MAX_MODEL_STEPS ? 0 : clocks - steps;
   for (let index = 0; index < Math.min(steps, SID_NOISE_LFSR_MASK); index += 1) state.lfsr = advanceSidNoiseLfsr(state.lfsr);
   return state.lfsr;
+}
+function updateSidOscillatorPhase(voice, frequency, control) {
+  const key = `${selectedSidChip}:${voice}`;
+  let state = sidOscillatorPhases.get(key);
+  if (!state) {
+    state = { phase: 0, frequency };
+    sidOscillatorPhases.set(key, state);
+  }
+  if (control & 0x08) state.phase = 0;
+  else state.phase = (state.phase + (frequency - state.frequency) / SID_OSCILLATOR_PHASE_PITCH_DIVISOR + 1) % 1;
+  state.frequency = frequency;
+  return state.phase;
 }
 function sidVoiceFacts(frequency, pulseWidth, filterRouting, voice) {
   const pitch = sidPitch(frequency);
@@ -720,7 +735,7 @@ function startSidPhosphorDecay(canvas) {
   canvas._sidPhosphorUntil = now + SID_PHOSPHOR_DECAY_MS;
   if (sidPhosphorDecayTimer === undefined) sidPhosphorDecayTimer = window.setTimeout(decaySidPhosphor, SID_PHOSPHOR_DECAY_INTERVAL_MS);
 }
-function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, control, envelopeLevel, noiseLfsr }) {
+function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, control, envelopeLevel, noiseLfsr, phase }) {
   const pixelRatio = 1;
   const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
   const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
@@ -741,7 +756,7 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
   const ring = control & 0x04;
   const sync = control & 0x02;
   const cycles = Math.max(1, Math.min(16, frequency / 2048));
-  const phaseOffset = 0;
+  const phaseOffset = phase ?? 0;
   const dutyCycle = Math.max(.03, Math.min(.97, pulseWidth / 4095));
   const points = Math.min(width, 320);
   const noiseStep = Math.max(1, Math.round(points / (16 * cycles)));
@@ -830,7 +845,7 @@ function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   trace.className = "sid-register-trace";
   trace.append(textElement("p", "OSCILLATOR WAVEFORM  /  SID-STYLE REGISTER MODEL", "sid-trace-label"));
   const canvas = document.createElement("canvas");
-  canvas._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level, noiseLfsr: updateSidNoiseState(voice, frequency, control) };
+  canvas._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level, noiseLfsr: updateSidNoiseState(voice, frequency, control), phase: updateSidOscillatorPhase(voice, frequency, control) };
   canvas.setAttribute("aria-label", `Voice ${voice + 1} oscillator waveform reconstruction`);
   trace.append(canvas);
   card.append(trace);
@@ -859,7 +874,7 @@ function updateSidVoiceMonitor(card, voice, status, filterRouting, envelopeState
     for (const [index, value] of facts.entries()) card.querySelectorAll(".sid-voice-values strong")[index].textContent = value;
   }
   const oscillator = card.querySelector(".sid-register-trace canvas");
-  oscillator._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level, noiseLfsr: updateSidNoiseState(voice, frequency, control) };
+  oscillator._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level, noiseLfsr: updateSidNoiseState(voice, frequency, control), phase: updateSidOscillatorPhase(voice, frequency, control) };
 }
 function renderSidTrackerView() {
   const dialog = $("tracker-dialog");
@@ -944,7 +959,7 @@ function renderSidTrackerView() {
   }
   for (const [voice, canvas] of [...grid.querySelectorAll(".sid-register-trace canvas")].entries()) {
     const oscillator = canvas._sidOscillator;
-    const oscillatorKey = `${oscillator.frequency}:${oscillator.pulseWidth}:${oscillator.control}:${Math.round(oscillator.envelopeLevel * 16)}:${oscillator.noiseLfsr}`;
+    const oscillatorKey = `${oscillator.frequency}:${oscillator.pulseWidth}:${oscillator.control}:${Math.round(oscillator.envelopeLevel * 16)}:${oscillator.noiseLfsr}:${Math.floor(oscillator.phase * 256)}`;
     if (canvas._sidRenderKey !== oscillatorKey) {
       canvas._sidRenderKey = oscillatorKey;
       drawSidOscillatorReconstruction(canvas, oscillator);
