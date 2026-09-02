@@ -20,7 +20,6 @@ const SID_CYCLES_PER_SECOND = 985248;
 const SID_ENVELOPE_HISTORY_LIMIT = 180;
 const TRACKER_SCOPE_MAX_WIDTH = 768;
 const TRACKER_SCOPE_POINTS = 256;
-const SID_SCOPE_PROCESSOR_BUFFER_SIZE = 1024;
 const SID_NOISE_LFSR_MASK = 0x7fffff;
 const SID_NOISE_LFSR_SEED = 0x7ffff8;
 const SID_NOISE_CLOCK_DIVISOR = 0x100000;
@@ -1133,13 +1132,14 @@ async function loadWithSid(buffer, filename) {
   selectedSidChip = 0;
   scopesEnabled = $("visualizer").checked;
   stopScopeLoop();
+  const processorBufferSize = Number($("buffer").value);
   // Construct the AudioContext before any awaited teardown so a click that
   // selects a SID remains a valid Web Audio user gesture.
-  const newSidPlayer = !sidPlayer || sidPlayer.state === "disposed" || sidPlayer.getDiagnostics().processorBufferSize !== SID_SCOPE_PROCESSOR_BUFFER_SIZE
+  const newSidPlayer = !sidPlayer || sidPlayer.state === "disposed" || sidPlayer.getDiagnostics().processorBufferSize !== processorBufferSize
     ? createSidPlayer({
       assetBaseUrl: "../sid/assets",
       engine: "residfp",
-      processorBufferSize: SID_SCOPE_PROCESSOR_BUFFER_SIZE,
+      processorBufferSize,
       audioContextSampleRate: Number($("audio-rate").value),
       emulationConfig: sidEmulationConfig()
     })
