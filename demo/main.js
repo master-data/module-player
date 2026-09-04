@@ -32,6 +32,8 @@ const SID_PHOSPHOR_STORAGE_KEY = "module-player.sid-phosphor-persistence";
 let player;
 let xmpPlayer;
 let sidPlayer;
+let pendingXmpPlayer;
+let pendingSidPlayer;
 let activeEngine = "uade";
 let suppressUadeFailure = false;
 let songs = [];
@@ -1066,6 +1068,14 @@ function stopTrackerAnimation() {
     sidPhosphorDecayTimer = undefined;
   }
 }
+function scheduleSidTrackerRender() {
+  if (activeEngine !== "sid" || !$("tracker-dialog").open || trackerAnimationFrame !== undefined) return;
+  trackerAnimationFrame = window.requestAnimationFrame(() => {
+    trackerAnimationFrame = undefined;
+    renderSidTrackerView();
+    renderTrackerScopes();
+  });
+}
 function startTrackerAnimation() {
   stopTrackerAnimation();
   if (activeEngine === "sid") {
@@ -1090,16 +1100,16 @@ async function loadWithXmp(buffer, filename) {
   scopesEnabled = $("visualizer").checked;
   stopScopeLoop();
   draw(performance.now());
+  const newXmpPlayer = !xmpPlayer || xmpPlayer.state === "disposed"
+    ? pendingXmpPlayer ?? createConfiguredXmpPlayer()
+    : undefined;
+  pendingXmpPlayer = undefined;
   await player?.dispose();
   player = undefined;
   await sidPlayer?.dispose();
   sidPlayer = undefined;
-  if (!xmpPlayer || xmpPlayer.state === "disposed") {
-    xmpPlayer = await createXmpPlayer({
-      assetBaseUrl: "../xmp",
-      processorBufferSize: Number($("buffer").value),
-      audioContextSampleRate: Number($("audio-rate").value)
-    });
+  if (newXmpPlayer) {
+    xmpPlayer = await newXmpPlayer;
     xmpPlayer.setVolume(Number($("volume").value));
     xmpPlayer.visualization?.setZoom(Number($("zoom").value));
     xmpPlayer.setStreamPanning(Number($("pan").value));
@@ -1116,23 +1126,44 @@ async function loadWithXmp(buffer, filename) {
   startScopeLoop();
   updateControls();
 }
+function createConfiguredXmpPlayer() {
+  return createXmpPlayer({
+    assetBaseUrl: "../xmp",
+    processorBufferSize: Number($("buffer").value),
+    audioContextSampleRate: Number($("audio-rate").value)
+  });
+}
+function prepareXmpPlayer() {
+  if (xmpPlayer && xmpPlayer.state !== "disposed") return;
+  pendingXmpPlayer ??= createConfiguredXmpPlayer();
+  pendingXmpPlayer.catch(() => {});
+}
+function createConfiguredSidPlayer() {
+  return createSidPlayer({
+    assetBaseUrl: "../sid/assets",
+    engine: "residfp",
+    processorBufferSize: Number($("buffer").value),
+    audioContextSampleRate: Number($("audio-rate").value),
+    emulationConfig: sidEmulationConfig()
+  });
+}
+function prepareSidPlayer() {
+  if (sidPlayer && sidPlayer.state !== "disposed") return;
+  pendingSidPlayer ??= createConfiguredSidPlayer();
+  pendingSidPlayer.catch(() => {});
+}
 async function loadWithSid(buffer, filename) {
   activeEngine = "sid";
   selectedSidChip = 0;
   scopesEnabled = $("visualizer").checked;
   stopScopeLoop();
   const processorBufferSize = Number($("buffer").value);
-  // Construct the AudioContext before any awaited teardown so a click that
-  // selects a SID remains a valid Web Audio user gesture.
+  // Use the player created during selection, before fetching module bytes
+  // deferred this work beyond the browser's user-activation window.
   const newSidPlayer = !sidPlayer || sidPlayer.state === "disposed" || sidPlayer.getDiagnostics().processorBufferSize !== processorBufferSize
-    ? createSidPlayer({
-      assetBaseUrl: "../sid/assets",
-      engine: "residfp",
-      processorBufferSize,
-      audioContextSampleRate: Number($("audio-rate").value),
-      emulationConfig: sidEmulationConfig()
-    })
+    ? pendingSidPlayer ?? createConfiguredSidPlayer()
     : undefined;
+  pendingSidPlayer = undefined;
   await player?.dispose();
   player = undefined;
   await xmpPlayer?.dispose();
@@ -1147,6 +1178,7 @@ async function loadWithSid(buffer, filename) {
     sidPlayer.on("audio", scheduleSidTrackerRender);
     sidPlayer.on("ended", () => showStatus($("loop").checked ? "Looping SID tune." : "SID tune ended."));
     sidPlayer.on("error", (error) => { loadFailure = error.message; showStatus(loadFailure); renderMetadata(); });
+    updateSidWriteTracing();
   }
   const metadata = await sidPlayer.load(buffer, { ...options(filename), silenceTimeoutSeconds: Number($("silence").value) });
   loadFailure = undefined;
@@ -1173,6 +1205,10 @@ function prefersXmp(filename, formatScout) {
   const extension = filename.split(".").pop()?.toLowerCase();
   if (extension === "mod") return $("prefer-xmp-mod").checked;
   return XMP_PREFERRED_EXTENSIONS.has(extension);
+}
+function prepareSelectedPlayer(filename) {
+  if (hasSidExtension(filename)) prepareSidPlayer();
+  else if (prefersXmp(filename)) prepareXmpPlayer();
 }
 function renderSourceControl() {
   $("songs-control").hidden = false;
@@ -1552,21 +1588,14 @@ async function loadBuffer(buffer, filename) {
     await loadWithSid(buffer, filename);
     return;
   }
-  if (activeEngine === "xmp") {
-    await loadWithXmp(buffer, filename);
-    return;
-  }
   formatScoutState = scoutFile(buffer, { filename, uade: !hasSidExtension(filename) });
   if (prefersXmp(filename, formatScoutState)) {
     await loadWithXmp(buffer, filename);
     return;
   }
   if (!player || player.state === "initializing" || player.state === "disposed") {
-    if (activeEngine === "sid") {
-      await initializePlayer();
-      return;
-    }
-    throw new Error("Initialize UADE before loading a file.");
+    await initializePlayer();
+    return;
   }
   loadFailure = undefined;
   suppressUadeFailure = true;
@@ -1656,7 +1685,7 @@ async function initializePlayer() {
 
 async function playModule(input, { filename } = {}) {
   selectFile(await createFileSelection(input, filename));
-  if (!player || player.state === "disposed") await initializePlayer();
+  if (!hasActivePlayer()) await initializePlayer();
   else await playLastSelection();
   return player;
 }
@@ -1668,7 +1697,7 @@ function hasActivePlayer() {
 async function loadLocalFile(file) {
   if (!file) return;
   selectFile({ type: "file", filename: file.name, buffer: await file.arrayBuffer() });
-  if (!hasActivePlayer() || activeEngine === "xmp") await initializePlayer();
+  if (!hasActivePlayer()) await initializePlayer();
   else await playLastSelection();
 }
 function hasDraggedFiles(event) {
@@ -1764,12 +1793,14 @@ $("restart-uade").addEventListener("click", initializePlayer);
 $("songs").addEventListener("change", async (event) => {
   selectBundledSong(event.target.value);
   try {
-    if (!hasActivePlayer() || activeEngine === "xmp") await initializePlayer();
+    prepareSelectedPlayer(lastSelection.filename);
+    if (!hasActivePlayer()) await initializePlayer();
     else await playLastSelection();
   } catch (error) { showStatus(error.message); }
 });
 $("file").addEventListener("change", async (event) => {
   try {
+    prepareSelectedPlayer(event.target.files[0]?.name);
     await loadLocalFile(event.target.files[0]);
   } catch (error) {
     showStatus(error.message);

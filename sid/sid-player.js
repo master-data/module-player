@@ -175,6 +175,8 @@ export class SidPlayer {
       throw new Error("This browser does not support the SID audio bridge.");
     }
     this._audioContext = context;
+    // This runs synchronously while the selection gesture is still active.
+    context.resume().catch(() => {});
     this._gain = context.createGain();
     this._gain.gain.value = this._volume;
     this._processor = context.createScriptProcessor(this._processorBufferSize, 0, 2);

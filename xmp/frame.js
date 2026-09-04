@@ -12,6 +12,7 @@ function configureAudioContext() {
   if (!AudioContextConstructor) throw new Error("Web Audio API is not supported in this browser.");
   const audioContext = new AudioContextConstructor({ sampleRate: requestedAudioContextSampleRate });
   window._gPlayerAudioCtx = audioContext;
+  audioContext.resume().catch(() => {});
   if (audioContext.sampleRate !== requestedAudioContextSampleRate) {
     audioContext.close();
     throw new Error(`The browser selected ${audioContext.sampleRate} Hz instead of the requested ${requestedAudioContextSampleRate} Hz AudioContext.`);
