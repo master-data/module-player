@@ -119,6 +119,7 @@ function readStoredNumber(key, fallback) {
   } catch { return fallback; }
 }
 function phosphorDecayMs() { return SID_PHOSPHOR_BASE_DECAY_MS * sidPhosphorStay; }
+function phosphorDecayIntervalMs() { return Math.min(SID_PHOSPHOR_DECAY_INTERVAL_MS, phosphorDecayMs() / 4); }
 function showStatus(message) { $("status").textContent = message; }
 function updateSidWriteTracing() {
   const trackerDetailActive = $("tracker-dialog").open && activeEngine === "sid" && sidRegisterDetailEnabled;
@@ -723,10 +724,7 @@ function decaySidPhosphor() {
   const now = performance.now();
   let active = false;
   for (const canvas of document.querySelectorAll(".sid-register-trace canvas")) {
-    if (!canvas._sidPhosphorUntil || now >= canvas._sidPhosphorUntil) {
-      canvas._sidPhosphorUntil = undefined;
-      continue;
-    }
+    if (!canvas._sidPhosphorUntil) continue;
     const elapsed = Math.max(0, now - (canvas._sidPhosphorUpdatedAt ?? now));
     canvas._sidPhosphorUpdatedAt = now;
     const context = canvas.getContext("2d");
@@ -734,9 +732,10 @@ function decaySidPhosphor() {
     context.fillStyle = `rgba(8, 25, 30, ${1 - Math.pow(.01, elapsed / phosphorDecayMs())})`;
     context.fillRect(0, 0, canvas.width, canvas.height);
     drawSidOscillatorGrid(context, canvas.width, canvas.height);
-    active = true;
+    if (now < canvas._sidPhosphorUntil) active = true;
+    else canvas._sidPhosphorUntil = undefined;
   }
-  if (active) sidPhosphorDecayTimer = window.setTimeout(decaySidPhosphor, SID_PHOSPHOR_DECAY_INTERVAL_MS);
+  if (active) sidPhosphorDecayTimer = window.setTimeout(decaySidPhosphor, phosphorDecayIntervalMs());
   else sidPhosphorDecayTimer = undefined;
 }
 function startSidPhosphorDecay(canvas) {
@@ -744,7 +743,7 @@ function startSidPhosphorDecay(canvas) {
   const now = performance.now();
   canvas._sidPhosphorUpdatedAt = now;
   canvas._sidPhosphorUntil = now + phosphorDecayMs();
-  if (sidPhosphorDecayTimer === undefined) sidPhosphorDecayTimer = window.setTimeout(decaySidPhosphor, SID_PHOSPHOR_DECAY_INTERVAL_MS);
+  if (sidPhosphorDecayTimer === undefined) sidPhosphorDecayTimer = window.setTimeout(decaySidPhosphor, phosphorDecayIntervalMs());
 }
 function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, control, envelopeLevel, noiseLfsr, phase }) {
   const pixelRatio = 1;
@@ -769,6 +768,7 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
   const test = control & 0x08;
   const ring = control & 0x04;
   const sync = control & 0x02;
+  const hasAudibleWaveform = Boolean(control & 0xf0) && !test;
   const cycles = Math.max(1, Math.min(16, frequency / 2048));
   const phaseOffset = phase ?? 0;
   const dutyCycle = Math.max(.03, Math.min(.97, pulseWidth / 4095));
@@ -784,32 +784,34 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
     }
     noiseMean /= points;
   }
-  context.strokeStyle = gated ? "#77d5bb" : "#426568";
-  context.lineWidth = Math.max(1, pixelRatio * 1.5);
-  context.beginPath();
-  for (let index = 0; index < points; index += 1) {
-    const position = index / Math.max(1, points - 1);
-    let step = (position * cycles + phaseOffset) % 1;
-    if (sync) step = (step * 2) % 1;
-    const triangle = 1 - 4 * Math.abs(step - .5);
-    const saw = step * 2 - 1;
-    const pulse = step < dutyCycle ? 1 : -1;
-    if (index && index % noiseStep === 0) noiseRegister = advanceSidNoiseLfsr(noiseRegister);
-    const noise = sidNoiseSample(noiseRegister) - noiseMean;
-    let waveformTotal = 0;
-    let waveformCount = 0;
-    if (control & 0x10) { waveformTotal += triangle; waveformCount++; }
-    if (control & 0x20) { waveformTotal += saw; waveformCount++; }
-    if (control & 0x40) { waveformTotal += pulse; waveformCount++; }
-    if (control & 0x80) { waveformTotal += noise; waveformCount++; }
-    let sample = test || !waveformCount ? 0 : waveformTotal / waveformCount;
-    if (ring && control & 0x10) sample *= Math.sin((position * cycles * 2 + phaseOffset) * Math.PI * 2);
-    const y = originY - sample * height * .38 * envelopeLevel;
-    const x = position * width;
-    index ? context.lineTo(x, y) : context.moveTo(x, y);
+  if (hasAudibleWaveform) {
+    context.strokeStyle = gated ? "#77d5bb" : "#426568";
+    context.lineWidth = Math.max(1, pixelRatio * 1.5);
+    context.beginPath();
+    for (let index = 0; index < points; index += 1) {
+      const position = index / Math.max(1, points - 1);
+      let step = (position * cycles + phaseOffset) % 1;
+      if (sync) step = (step * 2) % 1;
+      const triangle = 1 - 4 * Math.abs(step - .5);
+      const saw = step * 2 - 1;
+      const pulse = step < dutyCycle ? 1 : -1;
+      if (index && index % noiseStep === 0) noiseRegister = advanceSidNoiseLfsr(noiseRegister);
+      const noise = sidNoiseSample(noiseRegister) - noiseMean;
+      let waveformTotal = 0;
+      let waveformCount = 0;
+      if (control & 0x10) { waveformTotal += triangle; waveformCount++; }
+      if (control & 0x20) { waveformTotal += saw; waveformCount++; }
+      if (control & 0x40) { waveformTotal += pulse; waveformCount++; }
+      if (control & 0x80) { waveformTotal += noise; waveformCount++; }
+      let sample = waveformTotal / waveformCount;
+      if (ring && control & 0x10) sample *= Math.sin((position * cycles * 2 + phaseOffset) * Math.PI * 2);
+      const y = originY - sample * height * .38 * envelopeLevel;
+      const x = position * width;
+      index ? context.lineTo(x, y) : context.moveTo(x, y);
+    }
+    context.stroke();
+    startSidPhosphorDecay(canvas);
   }
-  context.stroke();
-  startSidPhosphorDecay(canvas);
 }
 function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   const offset = voice * 7;
