@@ -140,8 +140,7 @@ function buildTimeline(data) {
   return timeline;
 }
 
-export function parseTrackerData(buffer, filename = "") {
-  const extension = filename.split(".").pop()?.toLowerCase();
-  const data = extension === "xm" ? parseXm(buffer) : extension === "mod" ? parseMod(buffer) : undefined;
+export function parseTrackerData(buffer) {
+  const data = parseXm(buffer) ?? parseMod(buffer);
   return data && { ...data, timeline: buildTimeline(data) };
 }
