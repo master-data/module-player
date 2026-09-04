@@ -1,6 +1,6 @@
 # Module Player
 
-Browser and any web-compatible environment for tracker music. This repository combines two WebAssembly-backed playback engines behind small ESM APIs:
+Browser and any web-compatible environment for tracker music. This repository combines three WebAssembly-backed playback engines behind small ESM APIs:
 
 - **UADE** for Amiga music formats and the bundled UADE player database.
 - **webXMP/libxmp** for PC tracker formats such as XM, IT, S3M, and MOD.
@@ -10,7 +10,7 @@ It also includes a standalone browser demo at `demo/`. The project is intended f
 
 ## Background and Design
 
-Tracker music is not one interoperable format. UADE selects replay players from a large Amiga-oriented player database at runtime, while webXMP/libxmp handles many PC tracker families. Both upstream browser ports rely on global runtime state and Web Audio `ScriptProcessorNode`; this wrapper provides an ESM-facing lifecycle, a small common control surface, and browser-friendly metadata/diagnostics.
+Tracker music is not one interoperable format. UADE selects replay players from a large Amiga-oriented player database at runtime, while webXMP/libxmp handles many PC tracker families and libsidplayfp emulates Commodore 64 SID playback. The UADE and webXMP upstream browser ports rely on global runtime state and Web Audio `ScriptProcessorNode`; this wrapper provides an ESM-facing lifecycle, a small common control surface, and browser-friendly metadata/diagnostics.
 
 The wrapper deliberately does not own application UI, queue policy, file pickers, a seek bar, or canvas rendering. Consumers choose which engine to create, host its assets at a stable same-origin URL, initiate audio from a user gesture, and render any metadata or waveform data they need.
 
@@ -44,7 +44,7 @@ Names and notices above identify upstream work; they do not replace the licences
 ## Contents
 
 ```
-index.js / index.d.ts       ESM umbrella entry: UADE and XMP APIs
+index.js / index.d.ts       ESM umbrella entry: UADE, XMP, and SID APIs
 uade/                       UADE player, metadata parser, visualization facade, and assets
 xmp/                        XMP player and assets
 sid/                        libsidplayfp SID player, header parser, and vendored runtime
@@ -82,7 +82,7 @@ http://localhost:4173/demo/?moduleUrl=https%3A%2F%2Fexample.com%2Fmusic%2Fsong.m
 
 ## ESM APIs
 
-The root entry exports both engines:
+The root entry exports all three backends:
 
 ```js
 import {
@@ -156,7 +156,7 @@ const player = await createXmpPlayer({
 await player.load(file, { loop: true });
 ```
 
-Both players provide `load`, `pause`, `resume`, `stop`, `dispose`, volume, panning, timeout, and pitch-coupled-rate controls. Subscribe with `on("state" | "metadata" | "ended" | "error", listener)` and inspect performance with `getDiagnostics()`.
+UADE and XMP provide `load`, `pause`, `resume`, `stop`, `dispose`, volume, panning, timeout, and pitch-coupled-rate controls. SID provides `load`, `pause`, `resume`, `stop`, `dispose`, volume, looping, timeout, subtune selection, events, and diagnostics. Subscribe with `on("state" | "metadata" | "ended" | "error", listener)` and inspect performance with `getDiagnostics()`.
 
 XMP's iframe sends messages only to its same-origin parent. It loads `xmp/frame.html`, which in turn loads its upstream backend assets. The iframe boundary prevents the UADE and XMP upstream globals from overwriting each other.
 
@@ -218,7 +218,7 @@ snapshots, while the adjacent `L`/`R` scopes remain the actual mixed PCM output.
 
 Create a player once per active preview session, attach listeners, then call `load()`. Loading starts playback when successful. `stop()` resets the active session; await it before loading another UADE track. `dispose()` releases the player and removes its active runtime ownership.
 
-Both player types expose these states:
+All three player types expose these states:
 
 ```
 initializing -> ready -> loading -> playing <-> paused

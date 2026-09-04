@@ -1,7 +1,8 @@
 # Third-Party Notice
 
-Module Player bundles third-party runtime assets, UADE player data, and
-demonstration music. They are excluded from the MIT licence in LICENCE.md.
+Module Player bundles third-party UADE, webXMP/libxmp, and libsidplayfp
+runtime assets, UADE player data, and demonstration music. They are excluded
+from the MIT licence in LICENCE.md.
 Their embedded notices and the following terms remain in effect.
 
 | Component | Location | Licence or rights information |

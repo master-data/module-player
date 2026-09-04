@@ -8,7 +8,7 @@
 	WebAssembly distribution and JavaScript bindings. See [sid/UPSTREAM.md](sid/UPSTREAM.md)
 	and [NOTICE.md](NOTICE.md) for the retained licensing material.
 
-Module Player is an integration layer. Its playback capabilities depend on the following projects and the contributors recorded by each upstream project.
+Module Player is an integration layer with UADE, webXMP/libxmp, and libsidplayfp WebAssembly backends. Its playback capabilities depend on the following projects and the contributors recorded by each upstream project.
 
 | Project or work | Contributors acknowledged | Role in Module Player |
 | --- | --- | --- |

@@ -23,14 +23,16 @@ SOFTWARE.
 ## Scope
 
 This licence applies only to original Module Player source and documentation.
-It does not grant rights to third-party runtime assets, UADE data, or
-demonstration music bundled with this repository. Those files retain their
-own copyright notices and licence terms; see NOTICE.md,
+It does not grant rights to the third-party UADE, webXMP/libxmp, or
+libsidplayfp runtime assets, UADE data, or demonstration music bundled with
+this repository. Those files retain their own copyright notices and licence
+terms; see NOTICE.md,
 uade/LICENSES.md, and ACKNOWLEDGMENTS.md.
 
 This repository is a collection of separately licensed works. It has no single
-repository-wide SPDX licence identifier. In particular, the bundled UADE and
-webXMP runtime assets include GPL-2.0-or-later components, while
+repository-wide SPDX licence identifier. In particular, the bundled UADE,
+webXMP, and libsidplayfp runtime assets include GPL-2.0-or-later components,
+while
 uade/assets/js/scriptprocessor_player.min.js and
 uade/assets/js/channelstreamer.min.js are CC BY-NC-SA 4.0. The Creative Commons
 terms prohibit commercial use of those files. Downstream distributors must

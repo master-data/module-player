@@ -1,7 +1,7 @@
 {
   "name": "module-player",
   "version": "0.1.0",
-  "description": "Browser ESM player for tracker music using UADE and webXMP runtimes.",
+  "description": "Browser ESM player for tracker music using UADE, webXMP/libxmp, and libsidplayfp WebAssembly runtimes.",
   "license": "SEE LICENSE IN LICENCE.md",
   "repository": {
     "type": "git",
