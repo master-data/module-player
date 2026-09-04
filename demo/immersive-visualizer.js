@@ -82,7 +82,6 @@ export class ImmersiveVisualizer {
     this.canvas.dataset.scene = this.scene;
     this.animationFrame = undefined;
     this.lastTime = 0;
-    this.nextFrameReportAt = 0;
     this.elapsed = 0;
     this.pointer = { x: 0, y: 0, targetX: 0, targetY: 0 };
     this.camera = {
@@ -428,8 +427,7 @@ export class ImmersiveVisualizer {
     this.updateCamera(delta, musicalEvent);
     this.directScene(delta, musicalEvent);
     this.paint(delta, sidState, sidFeedback);
-    if (this.onFrame && (musicalEvent.beat || time >= this.nextFrameReportAt)) {
-      this.nextFrameReportAt = time + 80;
+    if (this.onFrame) {
       this.onFrame({
         time,
         elapsed: this.elapsed,

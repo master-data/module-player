@@ -14,6 +14,7 @@ const requestedModuleUrl = query.get("moduleUrl")?.trim();
 const AMIGA_CHANNEL_SIDES = ["L", "R", "R", "L"];
 const METER_FLOOR_DB = -48;
 const XMP_PREFERRED_EXTENSIONS = new Set(["669", "amf", "dsm", "far", "imf", "it", "mod", "mtm", "s3m", "stm", "ult", "xm"]);
+const XMP_MAGIC_CANDIDATES = new Set(["uade/mtm", "uade/s3m", "uade/xm"]);
 const SID_ATTACK_MS = [2, 8, 16, 24, 38, 56, 68, 80, 100, 250, 500, 800, 1000, 3000, 5000, 8000];
 const SID_DECAY_RELEASE_MS = [6, 24, 48, 72, 114, 168, 204, 240, 300, 750, 1500, 2400, 3000, 9000, 15000, 24000];
 const SID_CYCLES_PER_SECOND = 985248;
@@ -57,8 +58,6 @@ let trackerFollowingPlayback = true;
 let trackerAnimationFrame;
 let sidPhosphorDecayTimer;
 let lastTrackerPositionKey;
-let sidTrackerRenderQueued = false;
-let lastSidScopeRevision = -1;
 let sidRegisterDetailEnabled = true;
 let sidPhosphorEnabled = readStoredBoolean(SID_PHOSPHOR_STORAGE_KEY, false);
 let lastMegaSidState;
@@ -491,8 +490,6 @@ function renderTrackerScopes() {
     container.replaceChildren();
     return;
   }
-  if (activeEngine === "sid" && source.revision === lastSidScopeRevision) return;
-  if (activeEngine === "sid") lastSidScopeRevision = source.revision;
   container.hidden = false;
   const channels = readVisualizationChannels(source);
   const labels = activeEngine === "sid" ? ["FINAL MIX PCM L", "FINAL MIX PCM R"] : ["OUT L", "OUT R"];
@@ -1069,25 +1066,17 @@ function stopTrackerAnimation() {
     sidPhosphorDecayTimer = undefined;
   }
 }
-function scheduleSidTrackerRender() {
-  if (sidTrackerRenderQueued || activeEngine !== "sid" || !$("tracker-dialog").open) return;
-  sidTrackerRenderQueued = true;
-  window.requestAnimationFrame(() => {
-    sidTrackerRenderQueued = false;
-    renderSidTrackerView();
-  });
-}
 function startTrackerAnimation() {
   stopTrackerAnimation();
   if (activeEngine === "sid") {
     renderSidTrackerView();
-    const paintScopes = () => {
+    const animateSidTracker = () => {
       if (!$("tracker-dialog").open || activeEngine !== "sid") return;
+      renderSidTrackerView();
       renderTrackerScopes();
-      trackerAnimationFrame = window.requestAnimationFrame(paintScopes);
+      trackerAnimationFrame = window.requestAnimationFrame(animateSidTracker);
     };
-    paintScopes();
-    return;
+    animateSidTracker();
   }
   const animate = () => {
     if (!$("tracker-dialog").open) return;
@@ -1174,7 +1163,13 @@ function selectionUrl(selection) {
 function hasSidExtension(filename) {
   return /\.(?:sid|psid|rsid)$/i.test(String(filename ?? "").split(/[\\/]/).pop() ?? "");
 }
-function prefersXmp(filename) {
+function hasXmpMagic(formatScout) {
+  return [formatScout?.primary, ...(formatScout?.alternatives ?? [])].some((candidate) =>
+    candidate && (XMP_MAGIC_CANDIDATES.has(candidate.id) || candidate.id.startsWith("tracker/"))
+  );
+}
+function prefersXmp(filename, formatScout) {
+  if (hasXmpMagic(formatScout)) return true;
   const extension = filename.split(".").pop()?.toLowerCase();
   if (extension === "mod") return $("prefer-xmp-mod").checked;
   return XMP_PREFERRED_EXTENSIONS.has(extension);
@@ -1493,16 +1488,23 @@ function renderMegaSignal(frame) {
   const channels = frame.channels;
   $("mega-source").textContent = activeEngine === "sid" ? "SID FINAL PCM SIGNAL MATRIX" : "UADE CHANNEL SIGNAL MATRIX";
   $("mega-position").textContent = `${channels.length} LIVE STREAMS  /  BEAT ${String(frame.music.beatCount).padStart(4, "0")}  /  ${frame.scene.toUpperCase()}`;
-  $("mega-pattern-heading").replaceChildren(textElement("span", "LIVE AMPLITUDE TELEMETRY"));
-  $("mega-pattern").replaceChildren(...channels.map((data, index) => {
-    const row = document.createElement("div");
-    row.className = "mega-signal-row";
-    row.append(textElement("span", `CH ${String(index + 1).padStart(2, "0")}`), textElement("span", signalGlyphs(data), "mega-signal-glyphs"));
-    return row;
-  }));
+  const pattern = $("mega-pattern");
+  if (pattern.children.length !== channels.length) {
+    $("mega-pattern-heading").replaceChildren(textElement("span", "LIVE AMPLITUDE TELEMETRY"));
+    pattern.replaceChildren(...channels.map((_, index) => {
+      const row = document.createElement("div");
+      row.className = "mega-signal-row";
+      row.append(textElement("span", `CH ${String(index + 1).padStart(2, "0")}`), textElement("span", "", "mega-signal-glyphs"));
+      return row;
+    }));
+  }
+  channels.forEach((data, index) => {
+    pattern.children[index].lastElementChild.textContent = signalGlyphs(data);
+  });
   const orders = $("mega-orders");
   const beat = frame.music.beatCount % 16;
-  orders.replaceChildren(...Array.from({ length: 16 }, (_, index) => textElement("span", String(index + 1).padStart(2, "0"), index === beat ? "is-current" : "")));
+  if (orders.children.length !== 16) orders.replaceChildren(...Array.from({ length: 16 }, (_, index) => textElement("span", String(index + 1).padStart(2, "0"))));
+  for (let index = 0; index < orders.children.length; index++) orders.children[index].classList.toggle("is-current", index === beat);
   lastMegaPatternKey = undefined;
 }
 function renderMegaFrame(frame) {
@@ -1555,7 +1557,7 @@ async function loadBuffer(buffer, filename) {
     return;
   }
   formatScoutState = scoutFile(buffer, { filename, uade: !hasSidExtension(filename) });
-  if (prefersXmp(filename)) {
+  if (prefersXmp(filename, formatScoutState)) {
     await loadWithXmp(buffer, filename);
     return;
   }
@@ -1861,7 +1863,6 @@ for (const dialog of document.querySelectorAll("dialog")) {
     if (dialog.id === "tracker-dialog") {
       stopTrackerAnimation();
       updateSidWriteTracing();
-      lastSidScopeRevision = -1;
       startScopeLoop();
     }
     if (dialog.id === "immersive-dialog") {
