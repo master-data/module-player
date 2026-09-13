@@ -124,12 +124,15 @@ export function scoutFile(input, options = {}) {
   const uadeExtension = !uade && !uadeEaglePlayer && options.uade !== false && extension
     ? uadeExtensionCandidate(extension)
     : undefined;
-  const assessedCandidates = dedupe([
-    ...(uade ? [uadeCandidate(uade)] : []),
-    ...(uadeEaglePlayer ? [uadeEaglePlayer] : []),
-    ...(uadeExtension ? [uadeExtension] : []),
-    ...catalogCandidates
-  ]);
+    const compatibleCatalogCandidates = uade
+      ? catalogCandidates.filter((candidate) => candidate.id !== "amiga/hunk")
+      : catalogCandidates;
+    const assessedCandidates = dedupe([
+      ...(uade ? [uadeCandidate(uade)] : []),
+      ...(uadeEaglePlayer ? [uadeEaglePlayer] : []),
+      ...(uadeExtension ? [uadeExtension] : []),
+      ...compatibleCatalogCandidates
+    ]);
   const candidates = assessedCandidates.length ? assessedCandidates : dedupe(prefixCandidates(prefix));
 
   if (candidates.length > 1) {

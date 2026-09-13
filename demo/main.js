@@ -1603,7 +1603,7 @@ function updateControls(state = player?.state) {
   $("file").disabled = initializing || (!xmpActive && currentState === "disposed");
   updateImmersiveLabels();
 }
-async function loadBuffer(buffer, filename) {
+async function loadBuffer(buffer, filename, forceUade = false) {
   if (hasSidExtension(filename) || isSidFile(buffer)) {
     // A PSID/RSID signature is authoritative; malformed containers must not
     // fall through to UADE's extension-based Amiga SIDMon mapping. A SID
@@ -1613,8 +1613,13 @@ async function loadBuffer(buffer, filename) {
     return;
   }
   formatScoutState = scoutFile(buffer, { filename, uade: !hasSidExtension(filename) });
-  if (prefersXmp(filename, formatScoutState)) {
-    await loadWithXmp(buffer, filename);
+  if (!forceUade && prefersXmp(filename, formatScoutState)) {
+    try {
+      await loadWithXmp(buffer, filename);
+    } catch (xmpError) {
+      await initializePlayer(true);
+      if (activeEngine !== "uade" || player?.state !== "playing") throw xmpError;
+    }
     return;
   }
   if (!player || player.state === "initializing" || player.state === "disposed") {
@@ -1633,18 +1638,18 @@ async function loadBuffer(buffer, filename) {
   }
 }
 
-async function playLastSelection() {
+async function playLastSelection(forceUade = false) {
   if (!lastSelection) throw new Error("Select a bundled sample or open a local file first.");
   if (lastSelection.type === "file") {
-    await loadBuffer(lastSelection.buffer, lastSelection.filename);
+    await loadBuffer(lastSelection.buffer, lastSelection.filename, forceUade);
     return;
   }
   const response = await fetch(selectionUrl(lastSelection));
   if (!response.ok) throw new Error(`Unable to load ${lastSelection.filename}: HTTP ${response.status}.`);
-  await loadBuffer(await response.arrayBuffer(), lastSelection.filename);
+  await loadBuffer(await response.arrayBuffer(), lastSelection.filename, forceUade);
 }
 
-async function initializePlayer() {
+async function initializePlayer(forceUade = false) {
   if (initializing) return;
   try {
     let defaultWarning;
@@ -1691,7 +1696,7 @@ async function initializePlayer() {
     showStatus(`${defaultWarning ? `${defaultWarning} ` : ""}Ready. Visualizer ${visualizationState}; buffer: ${$("buffer").value} samples.`);
     showDiagnostics();
     startScopeLoop();
-    await playLastSelection();
+    await playLastSelection(forceUade);
     restartSettings.clear();
     updateRestartButton();
   } catch (error) {

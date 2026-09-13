@@ -28,6 +28,7 @@ The demo bundles the following separate creative works. Their authors and rights
 | --- | --- | --- | --- |
 | `GSLINGER.MOD` | `Guitar Slinger` | Jogeir Liljedahl / Noiseless | (c) 1992/93 Noiseless |
 | `VESURI - Major Release.mod` | `Major Release` | Vesuri da Jormas | |
+| `cust.hybris-title` | `Hybris title` | Paul van der Valk / Cope-Com | 1988 Discovery Software |
 | `di.partyland` | `Partyland` | Olof Gustafsson  | Digital Illusions |
 | `elw-lock.xm` | `Dead lock` | Elwood | |
 | `Last_Ninja.sid` | `The Last Ninja` | Ben Daglish & Anthony Lees | 1987 System 3 |
