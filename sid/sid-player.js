@@ -1,10 +1,12 @@
 import { parseSidMetadata } from "./sid-metadata.js";
 
 const PLAYER_OWNER = Symbol.for("module-player.sid.owner");
-const CYCLES_PER_RENDER = 40_000;
+const CYCLES_PER_RENDER = 8_000;
+const SID_DIGI_WINDOW_CYCLES = 40_000;
 const EMPTY_RENDER_LIMIT = 64;
 const SID_WRITE_TRACE_LIMIT = 256;
 const SID_ENVELOPE_HISTORY_LIMIT = 1024;
+const SID_DIGI_HISTORY_LIMIT = 8192;
 const EMPTY_SID_WRITE_TRACE = Object.freeze([]);
 const SID_SILENCE_VARIATION_THRESHOLD = 1 / 512;
 
@@ -125,6 +127,8 @@ export class SidPlayer {
     this._scopeRevision = 0;
     this._sidWriteTraces = new Map();
     this._sidEnvelopeWriteHistory = new Map();
+    this._sidDigiWriteHistory = new Map();
+    this._sidTraceCycle = 0;
     this._sidWriteTraceEnabled = false;
     this._sidEnvelopeHistoryEnabled = true;
     this._diagnostics = { audioCallbackCount: 0, audioGenerationTotalMs: 0, audioGenerationMaxMs: 0, wasmRenderCount: 0, wasmRenderTotalMs: 0, wasmRenderMaxMs: 0, underrunCount: 0 };
@@ -234,14 +238,22 @@ export class SidPlayer {
     this._silenceStartedAt = undefined;
     this._sidWriteTraces.clear();
     this._sidEnvelopeWriteHistory.clear();
+    this._sidDigiWriteHistory.clear();
+    this._sidTraceCycle = 0;
   }
 
   _captureSidWriteTraces() {
     const writes = this._sidContext?.getAndClearSidWriteTracesPacked?.();
+    this._sidTraceCycle = writes?.length ? writes[writes.length - 1] : this._sidTraceCycle + CYCLES_PER_RENDER;
     if (!writes?.length) return;
     for (let index = 0; index < writes.length; index += 4) {
       const sidNumber = writes[index];
       const write = { address: writes[index + 1], value: writes[index + 2], cyclePhi1: writes[index + 3] };
+      if (write.address === 0x18) {
+        const history = this._sidDigiWriteHistory.get(sidNumber) ?? [];
+        history.push(write);
+        this._sidDigiWriteHistory.set(sidNumber, history);
+      }
       if (this._sidWriteTraceEnabled) {
         const trace = this._sidWriteTraces.get(sidNumber) ?? [];
         trace.push(write);
@@ -254,6 +266,9 @@ export class SidPlayer {
         if (history.length > SID_ENVELOPE_HISTORY_LIMIT) history.splice(0, history.length - SID_ENVELOPE_HISTORY_LIMIT);
         this._sidEnvelopeWriteHistory.set(sidNumber, history);
       }
+    }
+    for (const history of this._sidDigiWriteHistory.values()) {
+      if (history.length > SID_DIGI_HISTORY_LIMIT) history.splice(0, history.length - SID_DIGI_HISTORY_LIMIT);
     }
   }
 
@@ -402,6 +417,28 @@ export class SidPlayer {
   }
 
   getInstalledSids() { return this._sidContext?.getInstalledSids?.() ?? 0; }
+
+  readSidDigiTrace(sidNumber = 0) {
+    if (!Number.isInteger(sidNumber) || sidNumber < 0) throw new RangeError("SID chip number must be a non-negative integer.");
+    const samples = new Float32Array(512);
+    const history = this._sidDigiWriteHistory.get(sidNumber);
+    if (!history?.length) return samples;
+    const startCycle = this._sidTraceCycle - SID_DIGI_WINDOW_CYCLES;
+    let writeIndex = 0;
+    let volume = history[0].value & 0x0f;
+    let sum = 0;
+    for (let index = 0; index < samples.length; index++) {
+      const cycle = startCycle + index * SID_DIGI_WINDOW_CYCLES / (samples.length - 1);
+      while (writeIndex < history.length && history[writeIndex].cyclePhi1 <= cycle) {
+        volume = history[writeIndex++].value & 0x0f;
+      }
+      samples[index] = volume / 15;
+      sum += samples[index];
+    }
+    const mean = sum / samples.length;
+    for (let index = 0; index < samples.length; index++) samples[index] -= mean;
+    return samples;
+  }
 
   getDiagnostics() {
     const callbacks = this._diagnostics.audioCallbackCount;

@@ -294,6 +294,10 @@ const level = source.readVu(0);
 
 UADE normally exposes tracker-channel waveforms. XMP exposes its stereo output scopes, not independent tracker-channel PCM streams. Use `source.streamCount` at runtime rather than assuming a channel count.
 
+SID also exposes stereo final-mix PCM through `visualization`. Separately, `sidPlayer.readSidDigiTrace(sidNumber = 0)` returns 512 DC-centered samples reconstructed from the low four bits of cycle-timed `$D418` writes over a recent 40,000-cycle window. This visualizes classic volume-DAC sample playback, commonly called the SID's "fourth channel", without treating it as a fourth oscillator or isolated PCM. Constant volume is flat; filter-mode bits are excluded. Other digi techniques are not decoded by this trace, and ordinary volume changes can also appear. The bounded history follows emulation rendering, so it can lead audible playback by the audio buffer. The demo shows it in the fourth dashboard slot and below the three voices in the SID monitor, using the selected SID chip.
+
+The demo's Auto audio buffer uses 512 samples for SID and 4096 for UADE/XMP. SID renders in 8,000-cycle batches so the voice monitors and digi trace receive fresh register data more frequently; the trace window remains 40,000 cycles. At 44.1 kHz, the SID audio callbacks run about 86 times per second. Select a larger manual buffer if playback stutters on a slower device, then restart the player. Manual buffer selections apply to every engine.
+
 Do not enable UADE visualization merely to hide a canvas. It loads ChannelStreamer and performs additional data copying on the audio path. Consumers own the animation loop and should render only after playback has supplied non-silent data.
 
 ### XMP Pattern Data

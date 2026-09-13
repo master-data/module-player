@@ -152,7 +152,7 @@ function startScopeLoop() {
 }
 function updateRestartButton() { $("restart-uade").disabled = initializing || !restartSettings.size; }
 function stageRestart(setting) {
-  const activePlayer = activeEngine === "xmp" ? xmpPlayer : player;
+  const activePlayer = activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player;
   if (!activePlayer || activePlayer.state === "disposed") return;
   restartSettings.add(setting);
   updateRestartButton();
@@ -981,8 +981,16 @@ function renderSidTrackerView() {
   });
   if (grid.dataset.sidStructureKey !== structureKey) {
     grid.replaceChildren(...[0, 1, 2].map((voice) => sidVoiceMonitor(voice, status, filterRouting, envelopes[voice])));
+    const digi = document.createElement("section");
+    digi.className = "sid-digi-trace";
+    digi.append(textElement("p", "V4 / DIGI / $D418 VOLUME DAC", "sid-trace-label"));
+    const canvas = document.createElement("canvas");
+    canvas.setAttribute("aria-label", "Fourth channel: SID volume-register sample trace, not isolated PCM");
+    digi.append(canvas);
+    grid.append(digi);
     grid.dataset.sidStructureKey = structureKey;
   }
+  drawTrackerScope(grid.querySelector(".sid-digi-trace canvas"), sidPlayer.readSidDigiTrace(selectedSidChip));
   for (const [voice, card] of [...grid.querySelectorAll(".sid-voice")].entries()) updateSidVoiceMonitor(card, voice, status, filterRouting, envelopes[voice]);
   for (const [voice, canvas] of [...grid.querySelectorAll(".sid-envelope-canvas")].entries()) {
     canvas._sidEnvelope = envelopes[voice];
@@ -1123,6 +1131,7 @@ function startTrackerAnimation() {
       trackerAnimationFrame = window.requestAnimationFrame(animateSidTracker);
     };
     animateSidTracker();
+    return;
   }
   const animate = () => {
     if (!$("tracker-dialog").open) return;
@@ -1165,7 +1174,7 @@ async function loadWithXmp(buffer, filename) {
 function createConfiguredXmpPlayer() {
   return createXmpPlayer({
     assetBaseUrl: "../xmp",
-    processorBufferSize: Number($("buffer").value),
+    processorBufferSize: configuredProcessorBufferSize("xmp"),
     audioContextSampleRate: Number($("audio-rate").value)
   });
 }
@@ -1174,11 +1183,14 @@ function prepareXmpPlayer() {
   pendingXmpPlayer ??= createConfiguredXmpPlayer();
   pendingXmpPlayer.catch(() => {});
 }
+function configuredProcessorBufferSize(engine = activeEngine) {
+  return Number($("buffer").value) || (engine === "sid" ? 512 : 4096);
+}
 function createConfiguredSidPlayer() {
   return createSidPlayer({
     assetBaseUrl: "../sid/assets",
     engine: "residfp",
-    processorBufferSize: Number($("buffer").value),
+    processorBufferSize: configuredProcessorBufferSize("sid"),
     audioContextSampleRate: Number($("audio-rate").value),
     emulationConfig: sidEmulationConfig(),
     systemRoms: sidSystemRoms
@@ -1195,20 +1207,19 @@ async function loadWithSid(buffer, filename) {
   selectedSidChip = 0;
   scopesEnabled = $("visualizer").checked;
   stopScopeLoop();
-  const processorBufferSize = Number($("buffer").value);
+  const processorBufferSize = configuredProcessorBufferSize("sid");
   // Use the player created during selection, before fetching module bytes
   // deferred this work beyond the browser's user-activation window.
-  const newSidPlayer = !sidPlayer || sidPlayer.state === "disposed" || sidPlayer.getDiagnostics().processorBufferSize !== processorBufferSize
-    ? pendingSidPlayer ?? createConfiguredSidPlayer()
-    : undefined;
+  const replaceSidPlayer = !sidPlayer || sidPlayer.state === "disposed" || sidPlayer.getDiagnostics().processorBufferSize !== processorBufferSize;
+  const newSidPlayer = pendingSidPlayer;
   pendingSidPlayer = undefined;
   await player?.dispose();
   player = undefined;
   await xmpPlayer?.dispose();
   xmpPlayer = undefined;
-  if (newSidPlayer) {
+  if (replaceSidPlayer) {
     await sidPlayer?.dispose();
-    sidPlayer = await newSidPlayer;
+    sidPlayer = await (newSidPlayer ?? createConfiguredSidPlayer());
     sidPlayer.setVolume(Number($("volume").value));
     sidPlayer.visualization?.setZoom(Number($("zoom").value));
     sidPlayer.setStreamPanning(Number($("pan").value));
@@ -1433,15 +1444,17 @@ function makeScopeCard(index, active) {
   const card = document.createElement("article");
   card.className = `scope-card${active ? "" : " inactive"}`;
   card.dataset.scope = index;
+  card.dataset.engine = activeEngine;
+  const isSidDigi = activeEngine === "sid" && index === 3;
   const isXmpOutput = activeEngine === "xmp" || activeEngine === "sid";
   const side = isXmpOutput ? ["L", "R"][index] ?? "--" : AMIGA_CHANNEL_SIDES[index] ?? "?";
-  card.append(textElement("p", isXmpOutput ? `OUT ${side}` : `CH ${String(index + 0).padStart(2, "0")} / ${side}`, "scope-label"));
+  card.append(textElement("p", isSidDigi ? `V4 DIGI / SID ${selectedSidChip + 1} / $D418` : isXmpOutput ? `OUT ${side}` : `CH ${String(index + 0).padStart(2, "0")} / ${side}`, "scope-label"));
   if (active) {
     const canvas = document.createElement("canvas");
     canvas.width = 360;
     canvas.height = 208;
     canvas.dataset.channel = index;
-    canvas.setAttribute("aria-label", `${isXmpOutput ? "Output" : "Channel"} ${index + 1} ${side === "L" ? "left" : "right"} waveform`);
+    canvas.setAttribute("aria-label", isSidDigi ? "Fourth channel: SID volume-register sample trace, not isolated PCM" : `${isXmpOutput ? "Output" : "Channel"} ${index + 1} ${side === "L" ? "left" : "right"} waveform`);
     card.append(canvas);
   } else {
     card.append(textElement("p", isXmpOutput ? "No output" : "No signal", "scope-empty"));
@@ -1493,8 +1506,10 @@ function draw(now) {
     return;
   }
   const channels = readVisualizationChannels(source);
-  if (container.children.length !== 4 || [...container.children].some((card, index) => Boolean(card.querySelector("canvas")) !== (index < channels.length))) {
-    container.replaceChildren(...Array.from({ length: 4 }, (_, index) => makeScopeCard(index, index < channels.length)));
+  const hasDigi = activeEngine === "sid" && sidPlayer.getInstalledSids() > 0;
+  const isActive = (index) => index < channels.length || hasDigi && index === 3;
+  if (container.children.length !== 4 || [...container.children].some((card, index) => card.dataset.engine !== activeEngine || Boolean(card.querySelector("canvas")) !== isActive(index))) {
+    container.replaceChildren(...Array.from({ length: 4 }, (_, index) => makeScopeCard(index, isActive(index))));
   }
   if (!channels.length) {
     $("scope-readout").textContent = "Output --";
@@ -1503,6 +1518,12 @@ function draw(now) {
   const levels = [];
   for (const canvas of container.querySelectorAll("canvas")) {
     const channel = Number(canvas.dataset.channel);
+    if (hasDigi && channel === 3) {
+      canvas.parentElement.querySelector(".scope-label").textContent = `V4 DIGI / SID ${selectedSidChip + 1} / $D418`;
+      const data = sidPlayer.readSidDigiTrace(selectedSidChip);
+      drawScope(canvas, data, { decibels: METER_FLOOR_DB, ratio: 0 });
+      continue;
+    }
     const data = channels[channel];
     const meter = meterLevel(data);
     levels.push(meter);
@@ -1739,7 +1760,7 @@ async function initializePlayer(forceUade = false) {
     player = await createUadePlayer({
       assetBaseUrl: "../uade/assets",
       visualization: $("visualizer").checked,
-      processorBufferSize: Number($("buffer").value),
+      processorBufferSize: configuredProcessorBufferSize("uade"),
       audioContextSampleRate: Number($("audio-rate").value)
     });
     player.on("state", (state) => { if (!suppressUadeFailure) showStatus(`Player state: ${state}`); updateControls(state); });
@@ -1754,7 +1775,7 @@ async function initializePlayer(forceUade = false) {
     $("initialize").textContent = "Reinitialize";
     scopesEnabled = $("visualizer").checked;
     const visualizationState = scopesEnabled ? "enabled" : "disabled";
-    showStatus(`${defaultWarning ? `${defaultWarning} ` : ""}Ready. Visualizer ${visualizationState}; buffer: ${$("buffer").value} samples.`);
+    showStatus(`${defaultWarning ? `${defaultWarning} ` : ""}Ready. Visualizer ${visualizationState}; buffer: ${configuredProcessorBufferSize("uade")} samples.`);
     showDiagnostics();
     startScopeLoop();
     await playLastSelection(forceUade);
