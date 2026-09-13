@@ -30,6 +30,16 @@ const SID_PHOSPHOR_DECAY_INTERVAL_MS = 100;
 const SID_TRACKER_TRACE_FRAME_INTERVAL_MS = 1000 / 60;
 const SID_PHOSPHOR_STORAGE_KEY = "module-player.sid-phosphor-persistence";
 const SID_PHOSPHOR_STAY_STORAGE_KEY = "module-player.sid-phosphor-stay-v3";
+const SID_ROM_SPECS = Object.freeze({
+  kernal: { input: "sid-kernal-rom", label: "KERNAL", size: 8192 },
+  basic: { input: "sid-basic-rom", label: "BASIC", size: 8192 },
+  chargen: { input: "sid-chargen-rom", label: "CHARGEN", size: 4096 }
+});
+const DEMO_SID_ROM_URLS = Object.freeze({
+  kernal: "assets/roms/c64-kernal.rom",
+  basic: "assets/roms/c64-basic.rom",
+  chargen: "assets/roms/c64-chargen.rom"
+});
 let player;
 let xmpPlayer;
 let sidPlayer;
@@ -64,6 +74,8 @@ let lastTrackerPositionKey;
 let sidRegisterDetailEnabled = true;
 let sidPhosphorEnabled = readStoredBoolean(SID_PHOSPHOR_STORAGE_KEY, false);
 let sidPhosphorStay = readStoredNumber(SID_PHOSPHOR_STAY_STORAGE_KEY, .25);
+const sidSystemRoms = {};
+let demoSidRomsReady;
 let lastMegaSidState;
 let lastMegaSidStateRevision = -1;
 let immersiveCursorTimer;
@@ -1168,7 +1180,8 @@ function createConfiguredSidPlayer() {
     engine: "residfp",
     processorBufferSize: Number($("buffer").value),
     audioContextSampleRate: Number($("audio-rate").value),
-    emulationConfig: sidEmulationConfig()
+    emulationConfig: sidEmulationConfig(),
+    systemRoms: sidSystemRoms
   });
 }
 function prepareSidPlayer() {
@@ -1177,6 +1190,7 @@ function prepareSidPlayer() {
   pendingSidPlayer.catch(() => {});
 }
 async function loadWithSid(buffer, filename) {
+  if (filename.toLowerCase() === "arkanoid.sid") await ensureDemoSidSystemRoms();
   activeEngine = "sid";
   selectedSidChip = 0;
   scopesEnabled = $("visualizer").checked;
@@ -1198,6 +1212,7 @@ async function loadWithSid(buffer, filename) {
     sidPlayer.setVolume(Number($("volume").value));
     sidPlayer.visualization?.setZoom(Number($("zoom").value));
     sidPlayer.setStreamPanning(Number($("pan").value));
+    sidPlayer.setSystemRoms(sidSystemRoms);
     sidPlayer.on("state", () => updateControls());
     sidPlayer.on("audio", scheduleSidTrackerRender);
     sidPlayer.on("ended", () => showStatus($("loop").checked ? "Looping SID tune." : "SID tune ended."));
@@ -1308,14 +1323,21 @@ async function populateSongs() {
     const requestedSong = songs.find((song) => song.toLowerCase() === requestedDemo.toLowerCase());
     if (requestedSong) {
       selectBundledSong(requestedSong);
+      prepareSelectedPlayer(requestedSong);
       return;
     }
     showStatus(`Demo module not found: ${requestedDemo}.`);
   }
-  if (!lastSelection) selectDefaultSample();
+  if (!lastSelection) {
+    selectDefaultSample();
+    prepareSelectedPlayer(lastSelection.filename);
+  }
 }
 function prepareSongs() {
-  songsReady ??= populateSongs().then(() => updateControls());
+  songsReady ??= populateSongs().then(() => {
+    $("initialize").disabled = false;
+    updateControls();
+  });
   return songsReady;
 }
 function options(filename) {
@@ -1333,6 +1355,38 @@ function sidEmulationConfig() {
     ...(sidModel ? { sidModel, forceSidModel: true } : { forceSidModel: false }),
     digiBoost: $("sid-digi-boost").checked
   };
+}
+function hasCompleteSidSystemRoms() {
+  return Object.keys(SID_ROM_SPECS).every((name) => sidSystemRoms[name]?.byteLength === SID_ROM_SPECS[name].size);
+}
+function updateSidRomStatus() {
+  const loaded = Object.keys(SID_ROM_SPECS).filter((name) => sidSystemRoms[name]).map((name) => SID_ROM_SPECS[name].label);
+  $("sid-rom-status").textContent = hasCompleteSidSystemRoms()
+    ? "C64 system ROMs are ready for RSID playback in this browser session."
+    : `RSID playback requires local KERNAL, BASIC, and CHARGEN ROM images. Loaded: ${loaded.length ? loaded.join(", ") : "none"}.`;
+}
+async function loadSidSystemRom(name, file) {
+  const spec = SID_ROM_SPECS[name];
+  if (!file) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.byteLength !== spec.size) throw new RangeError(`${spec.label} ROM must be exactly ${spec.size} bytes.`);
+  sidSystemRoms[name] = bytes;
+  sidPlayer?.setSystemRoms(sidSystemRoms);
+  updateSidRomStatus();
+  if (lastSelection?.filename === "Arkanoid.sid") await playLastSelection();
+}
+async function ensureDemoSidSystemRoms() {
+  demoSidRomsReady ??= Promise.all(Object.entries(DEMO_SID_ROM_URLS).map(async ([name, url]) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Unable to load bundled ${SID_ROM_SPECS[name].label} ROM: HTTP ${response.status}.`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength !== SID_ROM_SPECS[name].size) throw new RangeError(`Bundled ${SID_ROM_SPECS[name].label} ROM must be exactly ${SID_ROM_SPECS[name].size} bytes.`);
+    if (!sidSystemRoms[name]) sidSystemRoms[name] = bytes;
+  })).then(() => {
+    sidPlayer?.setSystemRoms(sidSystemRoms);
+    updateSidRomStatus();
+  });
+  return demoSidRomsReady;
 }
 function updateRangeReadout(input) {
   if (input.id === "track") return;
@@ -1665,6 +1719,15 @@ async function initializePlayer(forceUade = false) {
       updateRestartButton();
       return;
     }
+    await prepareSongs();
+    if (!lastSelection) defaultWarning = selectDefaultSample();
+    if (!forceUade && lastSelection && prefersXmp(lastSelection.filename)) {
+      await playLastSelection();
+      $("initialize").textContent = "Reinitialize";
+      restartSettings.clear();
+      updateRestartButton();
+      return;
+    }
     const previousPlayer = player;
     player = undefined;
     activeEngine = "uade";
@@ -1688,8 +1751,6 @@ async function initializePlayer(forceUade = false) {
     player.visualization?.setZoom(Number($("zoom").value));
     player.setStreamPanning(Number($("pan").value));
     player.setSilenceTimeout(Number($("silence").value));
-    await prepareSongs();
-    if (!lastSelection) defaultWarning = selectDefaultSample();
     $("initialize").textContent = "Reinitialize";
     scopesEnabled = $("visualizer").checked;
     const visualizationState = scopesEnabled ? "enabled" : "disabled";
@@ -1733,7 +1794,7 @@ function hasDraggedFiles(event) {
   return event.dataTransfer?.types.includes("Files");
 }
 
-$("initialize").addEventListener("click", initializePlayer);
+$("initialize").addEventListener("click", () => initializePlayer());
 $("play").addEventListener("click", async () => { try { const activePlayer = activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player; if (activePlayer?.state === "paused") return activePlayer.resume(); await playLastSelection(); } catch (error) { showStatus(error.message); } });
 $("pause").addEventListener("click", () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.pause());
 $("stop").addEventListener("click", () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.stop());
@@ -1819,6 +1880,16 @@ $("tracker-sid-chip-control").addEventListener("click", (event) => {
 });
 $("buffer").addEventListener("change", () => stageRestart("audio buffer"));
 $("audio-rate").addEventListener("change", () => stageRestart("audio rate"));
+Object.entries(SID_ROM_SPECS).forEach(([name, spec]) => {
+  $(spec.input).addEventListener("change", async (event) => {
+    try {
+      await loadSidSystemRom(name, event.target.files[0]);
+    } catch (error) {
+      event.target.value = "";
+      showStatus(error.message);
+    }
+  });
+});
 $("track").addEventListener("input", (event) => selectSubsong(Number(event.target.value)));
 $("tracker-track").addEventListener("input", (event) => selectSubsong(Number(event.target.value)));
 $("tracker-track").addEventListener("change", (event) => {
@@ -1828,7 +1899,7 @@ $("previous-track").addEventListener("click", () => restartWithSubsong(Number($(
 $("next-track").addEventListener("click", () => restartWithSubsong(Number($("track").value) + 1));
 $("tracker-previous-track").addEventListener("click", () => restartWithSubsong(Number($("track").value) - 1));
 $("tracker-next-track").addEventListener("click", () => restartWithSubsong(Number($("track").value) + 1));
-$("restart-uade").addEventListener("click", initializePlayer);
+$("restart-uade").addEventListener("click", () => initializePlayer());
 $("songs").addEventListener("change", async (event) => {
   selectBundledSong(event.target.value);
   try {

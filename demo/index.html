@@ -19,7 +19,7 @@
 
     <section class="transport panel" aria-label="Playback controls">
       <div class="transport-actions">
-        <button id="initialize" class="command primary">Initialize</button>
+        <button id="initialize" class="command primary" disabled>Initialize</button>
         <button id="play" class="command" disabled>Start</button>
         <button id="pause" class="command" disabled>Pause</button>
         <button id="stop" class="command danger" disabled>Stop</button>
@@ -69,11 +69,15 @@
           <label><span class="range-label">Stereo panning <output for="pan">0.7</output></span><input id="pan" type="range" min="0" max="2" step="0.1" value="0.7"></label>
           <label>C64 clock <select id="sid-c64-model"><option value="">Tune default</option><option value="PAL">PAL</option><option value="NTSC">NTSC</option><option value="OLD_NTSC">Old NTSC</option><option value="DREAN">Drean</option><option value="PAL_M">PAL-M</option></select></label>
           <label>SID chip <select id="sid-model"><option value="">Tune default</option><option value="MOS6581">MOS 6581</option><option value="MOS8580">MOS 8580</option></select></label>
+          <label>C64 KERNAL ROM <input id="sid-kernal-rom" type="file" accept=".rom,.bin,application/octet-stream"></label>
+          <label>C64 BASIC ROM <input id="sid-basic-rom" type="file" accept=".rom,.bin,application/octet-stream"></label>
+          <label>C64 CHARGEN ROM <input id="sid-chargen-rom" type="file" accept=".rom,.bin,application/octet-stream"></label>
           <label class="toggle">Loop module <input id="loop" type="checkbox" checked></label>
           <label class="toggle">Use XMP for MOD files <input id="prefer-xmp-mod" type="checkbox" checked></label>
           <label class="toggle">Enable scopes <input id="visualizer" type="checkbox" checked></label>
           <label class="toggle">SID digi boost <input id="sid-digi-boost" type="checkbox" checked></label>
         </div>
+        <p id="sid-rom-status" class="panel-note">RSID playback requires local KERNAL, BASIC, and CHARGEN ROM images.</p>
         <button id="restart-uade" class="command primary settings-restart" type="button" disabled>Restart player</button>
     </div>
   </aside>

@@ -19,6 +19,7 @@ Module Player is an integration layer with UADE, webXMP/libxmp, and libsidplayfp
 | Generic WebAudio Player and ChannelStreamer | Juergen Wothke | Browser audio playback and optional channel visualization support. |
 | Emscripten | The Emscripten contributors | Generated WebAssembly runtime glue included in upstream browser runtimes. |
 | Module Player format scout, derived from UADE `amifilemagic.c` and `eagleplayer.conf` | UADE contributors | Advisory format detection and player hints; UADE remains authoritative for replay-player selection. |
+| C64 system ROM images | rjanicek/vice.js C64 distribution | Authorized firmware used by the demo's strict-RSID playback. |
 
 ## Demonstration Modules
 
@@ -26,13 +27,16 @@ The demo bundles the following separate creative works. Their authors and rights
 
 | Bundled file | Title or work | Creator and group | Copyright |
 | --- | --- | --- | --- |
+| `Arkanoid.sid` | `Arkanoid` | Martin Galway | 1987 Imagine |
 | `GSLINGER.MOD` | `Guitar Slinger` | Jogeir Liljedahl / Noiseless | (c) 1992/93 Noiseless |
 | `VESURI - Major Release.mod` | `Major Release` | Vesuri da Jormas | |
 | `cust.hybris-title` | `Hybris title` | Paul van der Valk / Cope-Com | 1988 Discovery Software |
 | `di.partyland` | `Partyland` | Olof Gustafsson  | Digital Illusions |
 | `elw-lock.xm` | `Dead lock` | Elwood | |
+| `funky stars.xm` | `Hybrid song 2:20` | Quazar / Sanxion | 1996 |
 | `Last_Ninja.sid` | `The Last Ninja` | Ben Daglish & Anthony Lees | 1987 System 3 |
 | `onward.xm` | `Onward` | Jugi / Complex | (c) 1995 Jugi / Complex |
+| `sainahi_circles.mod` | `sainahi circles` | A. Mikkonen | |
 | `ghost battle (level 1).hipc` | `Ghost Battle (level 1)` | Jochen Hippel | |
 | `ghost battle (level 2).hipc` | `Ghost Battle (level 2)` | Jochen Hippel | |
 | `ghost battle (level 3).hipc` | `Ghost Battle (level 3)` | Jochen Hippel | |
