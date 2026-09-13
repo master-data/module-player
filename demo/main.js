@@ -1,7 +1,7 @@
 import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js";
 import { createXmpPlayer } from "../xmp/index.js?v=6";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
-import { createSidPlayer } from "../sid/sid-player.js?v=2";
+import { createSidPlayer } from "../sid/sid-player.js?v=3";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
 import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=22";
 
@@ -964,7 +964,8 @@ function renderSidTrackerView() {
     return;
   }
   const filterRouting = status[0x17] & 0x07;
-  const structureKey = `${selectedSidChip}:${installedSids}`;
+  const hasDigiTrace = typeof sidPlayer.readSidDigiTrace === "function";
+  const structureKey = `${selectedSidChip}:${installedSids}:${hasDigiTrace}`;
   const filterMode = [status[0x18] & 0x10 ? "LP" : undefined, status[0x18] & 0x20 ? "BP" : undefined, status[0x18] & 0x40 ? "HP" : undefined].filter(Boolean).join(" + ") || "OFF";
   const cutoff = (status[0x15] & 0x07) | (status[0x16] << 3);
   const trackerStatus = `SID ${String(selectedSidChip + 1).padStart(2, "0")} / ${String(installedSids).padStart(2, "0")}  |  FILTER ${filterMode.padEnd(12)}  |  CUTOFF ${String(cutoff).padStart(4, "0")}  |  RESONANCE ${String(status[0x17] >> 4).padStart(2, "0")}  |  VOLUME ${String(status[0x18] & 0x0f).padStart(2, "0")}`;
@@ -983,14 +984,16 @@ function renderSidTrackerView() {
     grid.replaceChildren(...[0, 1, 2].map((voice) => sidVoiceMonitor(voice, status, filterRouting, envelopes[voice])));
     const digi = document.createElement("section");
     digi.className = "sid-digi-trace";
-    digi.append(textElement("p", "V4 / DIGI / $D418 VOLUME DAC", "sid-trace-label"));
-    const canvas = document.createElement("canvas");
-    canvas.setAttribute("aria-label", "Fourth channel: SID volume-register sample trace, not isolated PCM");
-    digi.append(canvas);
+    digi.append(textElement("p", hasDigiTrace ? "V4 / DIGI / $D418 VOLUME DAC" : "V4 UNAVAILABLE / SID RUNTIME UPDATE REQUIRED", "sid-trace-label"));
+    if (hasDigiTrace) {
+      const canvas = document.createElement("canvas");
+      canvas.setAttribute("aria-label", "Fourth channel: SID volume-register sample trace, not isolated PCM");
+      digi.append(canvas);
+    }
     grid.append(digi);
     grid.dataset.sidStructureKey = structureKey;
   }
-  drawTrackerScope(grid.querySelector(".sid-digi-trace canvas"), sidPlayer.readSidDigiTrace(selectedSidChip));
+  if (hasDigiTrace) drawTrackerScope(grid.querySelector(".sid-digi-trace canvas"), sidPlayer.readSidDigiTrace(selectedSidChip));
   for (const [voice, card] of [...grid.querySelectorAll(".sid-voice")].entries()) updateSidVoiceMonitor(card, voice, status, filterRouting, envelopes[voice]);
   for (const [voice, canvas] of [...grid.querySelectorAll(".sid-envelope-canvas")].entries()) {
     canvas._sidEnvelope = envelopes[voice];
@@ -1457,7 +1460,7 @@ function makeScopeCard(index, active) {
     canvas.setAttribute("aria-label", isSidDigi ? "Fourth channel: SID volume-register sample trace, not isolated PCM" : `${isXmpOutput ? "Output" : "Channel"} ${index + 1} ${side === "L" ? "left" : "right"} waveform`);
     card.append(canvas);
   } else {
-    card.append(textElement("p", isXmpOutput ? "No output" : "No signal", "scope-empty"));
+    card.append(textElement("p", isSidDigi && typeof sidPlayer?.readSidDigiTrace !== "function" ? "V4 unavailable: update SID runtime" : isXmpOutput ? "No output" : "No signal", "scope-empty"));
   }
   return card;
 }
@@ -1506,7 +1509,7 @@ function draw(now) {
     return;
   }
   const channels = readVisualizationChannels(source);
-  const hasDigi = activeEngine === "sid" && sidPlayer.getInstalledSids() > 0;
+  const hasDigi = activeEngine === "sid" && typeof sidPlayer?.readSidDigiTrace === "function" && sidPlayer.getInstalledSids() > 0;
   const isActive = (index) => index < channels.length || hasDigi && index === 3;
   if (container.children.length !== 4 || [...container.children].some((card, index) => card.dataset.engine !== activeEngine || Boolean(card.querySelector("canvas")) !== isActive(index))) {
     container.replaceChildren(...Array.from({ length: 4 }, (_, index) => makeScopeCard(index, isActive(index))));
