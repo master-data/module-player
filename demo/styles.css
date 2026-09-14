@@ -1104,10 +1104,10 @@ dialog.tracker-dialog[open] {
 .sid-tracker > .tracker-toolbar { padding: 8px 16px; gap: 8px; }
 .sid-tracker .tracker-grid { grid-row: 5; padding: 12px 16px; gap: 10px; grid-template-rows: minmax(260px, 1fr) auto; }
 .sid-tracker .sid-voice { grid-template-rows: auto auto auto minmax(100px, 1fr); }
-.sid-tracker .sid-voice-head { padding: 8px 12px; }
-.sid-tracker .sid-waveforms { grid-column: 2; }
+.sid-tracker .sid-voice-head { grid-template-columns: auto minmax(0, 1fr); gap: 6px; padding: 8px 12px; }
+.sid-tracker .sid-waveforms { grid-column: 2; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: max-content; justify-self: end; max-width: 100%; min-width: 0; gap: 3px; overflow-x: auto; scrollbar-width: thin; }
 .sid-tracker .sid-waveforms [data-sid-flag] { white-space: nowrap; }
-.sid-tracker .sid-waveforms span { padding: 4px 2px; }
+.sid-tracker .sid-waveforms span { padding: 4px 2px; white-space: nowrap; }
 .sid-tracker .sid-envelope { min-height: 0; padding: 8px 12px; gap: 6px; }
 .sid-tracker .sid-envelope-canvas { height: 48px; }
 .sid-tracker .sid-voice-values > div { padding: 8px 10px; }
