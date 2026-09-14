@@ -710,11 +710,6 @@ function drawSidEnvelopeReconstruction(canvas, envelope) {
     const y = height * (1 - samples[index]);
     index ? context.lineTo(x, y) : context.moveTo(x, y);
   }
-  context.lineTo(width, height);
-  context.lineTo(0, height);
-  context.closePath();
-  context.fillStyle = "rgba(119, 213, 187, .12)";
-  context.fill();
   context.stroke();
 }
 function drawSidOscillatorGrid(context, width, height) {
@@ -770,17 +765,26 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
   const now = performance.now();
   const elapsed = Math.max(0, now - (canvas._sidPhosphorUpdatedAt ?? now));
   const phosphorFade = 1 - Math.pow(.01, elapsed / phosphorDecayMs());
+  const hasAudibleWaveform = Boolean(control & 0xf0) && !(control & 0x08) && envelopeLevel > 0;
   context.globalAlpha = 1;
-  context.fillStyle = !sidPhosphorEnabled || resized || !canvas._sidPhosphorPainted ? "#08191e" : `rgba(8, 25, 30, ${phosphorFade})`;
+  context.fillStyle = !hasAudibleWaveform || !sidPhosphorEnabled || resized || !canvas._sidPhosphorPainted ? "#08191e" : `rgba(8, 25, 30, ${phosphorFade})`;
   context.fillRect(0, 0, width, height);
-  canvas._sidPhosphorPainted = sidPhosphorEnabled;
+  canvas._sidPhosphorPainted = hasAudibleWaveform && sidPhosphorEnabled;
   drawSidOscillatorGrid(context, width, height);
   const originY = Math.round(height / 2) + .5;
+  if (!hasAudibleWaveform) {
+    canvas._sidPhosphorUntil = undefined;
+    context.strokeStyle = "#426568";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(0, originY);
+    context.lineTo(width, originY);
+    context.stroke();
+    return;
+  }
   const gated = control & 1;
-  const test = control & 0x08;
   const ring = control & 0x04;
   const sync = control & 0x02;
-  const hasAudibleWaveform = Boolean(control & 0xf0) && !test;
   const cycles = Math.max(1, Math.min(16, frequency / 2048));
   const phaseOffset = phase ?? 0;
   const dutyCycle = Math.max(.03, Math.min(.97, pulseWidth / 4095));
@@ -825,6 +829,31 @@ function drawSidOscillatorReconstruction(canvas, { frequency, pulseWidth, contro
     startSidPhosphorDecay(canvas);
   }
 }
+function renderSidOscillatorFrame(canvas) {
+  const width = Math.round(canvas.clientWidth);
+  const height = Math.round(canvas.clientHeight);
+  if (width < 1 || height < 1) return;
+  const resized = canvas.width !== width || canvas.height !== height;
+  const oscillator = canvas._sidOscillator;
+  const now = performance.now();
+  if (!resized && canvas._sidTraceRenderedAt !== undefined && now - canvas._sidTraceRenderedAt < SID_TRACKER_TRACE_FRAME_INTERVAL_MS) return;
+  const oscillatorKey = `${oscillator.frequency}:${oscillator.pulseWidth}:${oscillator.control}:${Math.round(oscillator.envelopeLevel * 16)}:${oscillator.noiseLfsr}:${Math.floor(oscillator.phase * 256)}`;
+  if (resized || canvas._sidRenderKey !== oscillatorKey) {
+    drawSidOscillatorReconstruction(canvas, oscillator);
+    canvas._sidRenderKey = oscillatorKey;
+    canvas._sidTraceRenderedAt = now;
+  }
+}
+function sidControlFlags(voice, status) {
+  const control = status[voice * 7 + 4];
+  const flags = [
+    { label: "SYNC", active: Boolean(control & 0x02), title: "Oscillator hard-sync enabled" },
+    { label: "RING", active: Boolean(control & 0x04), title: "Ring modulation enabled for the triangle waveform" },
+    { label: "TEST", active: Boolean(control & 0x08), title: "Oscillator test/reset bit set" }
+  ];
+  if (voice === 2) flags.push({ label: "V3 OFF", active: Boolean(status[0x18] & 0x80), title: "Voice 3 direct output disabled; filter-routed output is unaffected" });
+  return flags;
+}
 function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   const offset = voice * 7;
   const frequency = status[offset] | (status[offset + 1] << 8);
@@ -841,6 +870,13 @@ function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   const waveform = document.createElement("div");
   waveform.className = "sid-waveforms";
   for (const name of ["TRI", "SAW", "PULSE", "NOISE", "GATE"]) waveform.append(textElement("span", name, waveforms.includes(name) || name === "GATE" && control & 1 ? "is-active" : ""));
+  for (const flag of sidControlFlags(voice, status)) {
+    const badge = textElement("span", flag.label, flag.active ? "is-active" : "");
+    badge.dataset.sidFlag = flag.label;
+    badge.title = flag.title;
+    badge.setAttribute("aria-label", `${flag.title}: ${flag.active ? "on" : "off"}`);
+    waveform.append(badge);
+  }
   heading.append(waveform);
   card.append(heading);
   const envelope = document.createElement("section");
@@ -886,7 +922,7 @@ function updateSidVoiceMonitor(card, voice, status, filterRouting, envelopeState
   const control = status[offset + 4];
   const attackDecay = status[offset + 5];
   const sustainRelease = status[offset + 6];
-  const key = `${frequency}:${pulseWidth}:${control}:${attackDecay}:${sustainRelease}:${filterRouting}`;
+  const key = `${frequency}:${pulseWidth}:${control}:${attackDecay}:${sustainRelease}:${filterRouting}:${status[0x18] & 0x80}`;
   if (card.dataset.sidRegisterKey !== key) {
     card.dataset.sidRegisterKey = key;
     card.classList.toggle("is-gated", Boolean(control & 1));
@@ -895,12 +931,18 @@ function updateSidVoiceMonitor(card, voice, status, filterRouting, envelopeState
     for (const [index, name] of ["TRI", "SAW", "PULSE", "NOISE", "GATE"].entries()) {
       card.querySelectorAll(".sid-waveforms span")[index].classList.toggle("is-active", waveforms.includes(name) || name === "GATE" && Boolean(control & 1));
     }
-    card.querySelector(".sid-envelope-phase").textContent = envelopeState.phase.toUpperCase();
+    const flags = sidControlFlags(voice, status);
+    for (const [index, badge] of [...card.querySelectorAll("[data-sid-flag]")].entries()) {
+      const flag = flags[index];
+      badge.classList.toggle("is-active", flag.active);
+      badge.setAttribute("aria-label", `${flag.title}: ${flag.active ? "on" : "off"}`);
+    }
     const settings = [attackDecay >> 4, attackDecay & 0x0f, sustainRelease >> 4, sustainRelease & 0x0f];
     for (const [index, value] of settings.entries()) card.querySelectorAll(".sid-envelope-settings strong")[index].textContent = String(value);
     const facts = sidVoiceFacts(frequency, pulseWidth, filterRouting, voice);
     for (const [index, value] of facts.entries()) card.querySelectorAll(".sid-voice-values strong")[index].textContent = value;
   }
+  card.querySelector(".sid-envelope-phase").textContent = envelopeState.phase.toUpperCase();
   const oscillator = card.querySelector(".sid-register-trace canvas");
   oscillator._sidOscillator = { frequency, pulseWidth, control, envelopeLevel: envelopeState.level, noiseLfsr: updateSidNoiseState(voice, frequency, control), phase: updateSidOscillatorPhase(voice, frequency, control) };
 }
@@ -986,6 +1028,14 @@ function renderSidTrackerView() {
     digi.className = "sid-digi-trace";
     digi.append(textElement("p", hasDigiTrace ? "V4 / DIGI / $D418 VOLUME DAC" : "V4 UNAVAILABLE / SID RUNTIME UPDATE REQUIRED", "sid-trace-label"));
     if (hasDigiTrace) {
+      const facts = document.createElement("dl");
+      facts.className = "sid-digi-facts";
+      for (const label of ["REGISTER", "VOLUME", "DAC SWING"]) {
+        const fact = document.createElement("div");
+        fact.append(textElement("dt", label), textElement("dd", "--"));
+        facts.append(fact);
+      }
+      digi.append(facts);
       const canvas = document.createElement("canvas");
       canvas.setAttribute("aria-label", "Fourth channel: SID volume-register sample trace, not isolated PCM");
       digi.append(canvas);
@@ -993,23 +1043,25 @@ function renderSidTrackerView() {
     grid.append(digi);
     grid.dataset.sidStructureKey = structureKey;
   }
-  if (hasDigiTrace) drawTrackerScope(grid.querySelector(".sid-digi-trace canvas"), sidPlayer.readSidDigiTrace(selectedSidChip));
+  if (hasDigiTrace) {
+    const samples = sidPlayer.readSidDigiTrace(selectedSidChip);
+    let minimum = Infinity;
+    let maximum = -Infinity;
+    for (const sample of samples) {
+      minimum = Math.min(minimum, sample);
+      maximum = Math.max(maximum, sample);
+    }
+    const swing = samples.length ? Math.round((maximum - minimum) * 15) : 0;
+    const values = [sidHex(status[0x18], 2), `${status[0x18] & 0x0f} / 15`, `${swing} / 15`];
+    for (const [index, value] of [...grid.querySelectorAll(".sid-digi-facts dd")].entries()) value.textContent = values[index];
+    drawTrackerScope(grid.querySelector(".sid-digi-trace canvas"), samples);
+  }
   for (const [voice, card] of [...grid.querySelectorAll(".sid-voice")].entries()) updateSidVoiceMonitor(card, voice, status, filterRouting, envelopes[voice]);
   for (const [voice, canvas] of [...grid.querySelectorAll(".sid-envelope-canvas")].entries()) {
     canvas._sidEnvelope = envelopes[voice];
     drawSidEnvelopeReconstruction(canvas, canvas._sidEnvelope);
   }
-  for (const [voice, canvas] of [...grid.querySelectorAll(".sid-register-trace canvas")].entries()) {
-    const oscillator = canvas._sidOscillator;
-    const now = performance.now();
-    if (canvas._sidTraceRenderedAt !== undefined && now - canvas._sidTraceRenderedAt < SID_TRACKER_TRACE_FRAME_INTERVAL_MS) continue;
-    const oscillatorKey = `${oscillator.frequency}:${oscillator.pulseWidth}:${oscillator.control}:${Math.round(oscillator.envelopeLevel * 16)}:${oscillator.noiseLfsr}:${Math.floor(oscillator.phase * 256)}`;
-    if (canvas._sidRenderKey !== oscillatorKey) {
-      canvas._sidRenderKey = oscillatorKey;
-      canvas._sidTraceRenderedAt = now;
-      drawSidOscillatorReconstruction(canvas, oscillator);
-    }
-  }
+  for (const canvas of grid.querySelectorAll(".sid-register-trace canvas")) renderSidOscillatorFrame(canvas);
 }
 function setTrackerOrder(order, followPlayback = false) {
   const tracker = xmpPlayer?.tracker;

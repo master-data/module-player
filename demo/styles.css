@@ -1059,9 +1059,13 @@ dialog.tracker-dialog[open] {
 .sid-envelope-settings strong { color: #d9f5eb; font-size: 9px; font-variant-numeric: tabular-nums; }
 .sid-envelope-canvas { display: block; width: 100%; height: 70px; }
 
-.sid-digi-trace { grid-column: 1 / -1; min-width: 0; }
-.sid-digi-trace .sid-trace-label { position: static; padding: 8px 12px; }
-.sid-digi-trace canvas { display: block; width: 100%; height: 104px; }
+.sid-digi-trace { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; min-width: 0; }
+.sid-digi-trace .sid-trace-label { position: static; padding: 6px 12px; }
+.sid-digi-trace canvas { display: block; flex: 0 0 100%; width: 100%; height: 72px; }
+.sid-digi-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 6px 12px; }
+.sid-digi-facts > div { display: flex; align-items: baseline; gap: 6px; }
+.sid-digi-facts dt { color: #7ca19d; font-size: 8px; }
+.sid-digi-facts dd { min-width: 7ch; margin: 0; color: #efb557; font-size: 10px; font-variant-numeric: tabular-nums; }
 .sid-voice-values { display: grid; grid-template-columns: minmax(15ch, 1.6fr) minmax(8ch, .8fr) minmax(7ch, .7fr); }
 .sid-voice-values > div { min-width: 0; padding: 15px 14px; border-right: 1px solid rgba(119, 213, 187, .13); }
 .sid-voice-values > div:last-child { border-right: 0; }
@@ -1076,6 +1080,8 @@ dialog.tracker-dialog[open] {
 }
 
 .sid-register-trace canvas {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
     height: 100%;
@@ -1093,11 +1099,24 @@ dialog.tracker-dialog[open] {
     font-size: 9px;
 }
 
-.sid-tracker .tracker-scope canvas { height: 128px; }
+.sid-tracker .tracker-scope canvas { height: 64px; }
+.sid-tracker > header { padding: 10px 16px; }
+.sid-tracker > .tracker-toolbar { padding: 8px 16px; gap: 8px; }
+.sid-tracker .tracker-grid { grid-row: 5; padding: 12px 16px; gap: 10px; grid-template-rows: minmax(260px, 1fr) auto; }
+.sid-tracker .sid-voice { grid-template-rows: auto auto auto minmax(100px, 1fr); }
+.sid-tracker .sid-voice-head { padding: 8px 12px; }
+.sid-tracker .sid-waveforms { grid-column: 2; }
+.sid-tracker .sid-waveforms [data-sid-flag] { white-space: nowrap; }
+.sid-tracker .sid-waveforms span { padding: 4px 2px; }
+.sid-tracker .sid-envelope { min-height: 0; padding: 8px 12px; gap: 6px; }
+.sid-tracker .sid-envelope-canvas { height: 48px; }
+.sid-tracker .sid-voice-values > div { padding: 8px 10px; }
+.sid-tracker .sid-voice-values strong { margin-top: 3px; }
+.sid-tracker .sid-register-trace { min-height: 100px; }
 
 @media (max-width: 980px) {
     .sid-tracker[open] { display: block; overflow: auto; }
-    .sid-tracker .tracker-grid { grid-template-columns: 1fr; grid-auto-rows: max-content; overflow: visible; }
+    .sid-tracker .tracker-grid { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-rows: max-content; overflow: visible; }
 }
 
 @media (max-width: 620px) {
