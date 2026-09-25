@@ -3,7 +3,7 @@ import { createXmpPlayer } from "../xmp/index.js?v=6";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=3";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=22";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=25";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
@@ -79,10 +79,12 @@ const sidSystemRoms = {};
 let demoSidRomsReady;
 let lastMegaSidState;
 let lastMegaSidStateRevision = -1;
+let lastMegaSidPlayer;
 let immersiveCursorTimer;
 let immersiveOwnedFullscreen = false;
 let immersiveMode = "visualizer";
 let lastMegaPatternKey;
+let lastMegaTelemetryAt = -Infinity;
 let selectedSidChip = 0;
 const sidEnvelopeStates = new Map();
 const sidNoiseStates = new Map();
@@ -90,20 +92,42 @@ const sidOscillatorPhases = new Map();
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization,
   getSidState: () => {
-    if (!sidRegisterDetailEnabled || immersiveMode !== "mega" || activeEngine !== "sid") return undefined;
+    if (immersiveMode !== "mega" || activeEngine !== "sid") return undefined;
     const revision = sidPlayer?.visualization?.revision;
-    if (lastMegaSidState?.chip === selectedSidChip && revision === lastMegaSidStateRevision) return lastMegaSidState;
+    const playing = sidPlayer?.state === "playing";
+    if (lastMegaSidPlayer === sidPlayer && lastMegaSidState?.chip === selectedSidChip && revision === lastMegaSidStateRevision && lastMegaSidState.playing === playing) return lastMegaSidState;
     const status = sidPlayer?.getSidStatus(selectedSidChip);
     if (!status) return undefined;
+    lastMegaSidPlayer = sidPlayer;
     lastMegaSidStateRevision = revision;
+    const envelopeWrites = sidPlayer.getSidEnvelopeWriteHistorySnapshot(selectedSidChip);
     lastMegaSidState = {
       chip: selectedSidChip,
+      revision,
+      playing,
+      filter: {
+        cutoff: (status[0x15] & 7) | (status[0x16] << 3),
+        resonance: status[0x17] >> 4,
+        routing: status[0x17] & 7,
+        mode: status[0x18] & 0x70,
+        volume: status[0x18] & 15,
+        voice3Off: Boolean(status[0x18] & 0x80)
+      },
+      digi: sidPlayer.readSidDigiTrace?.(selectedSidChip),
       voices: [0, 1, 2].map((voice) => {
         const offset = voice * 7;
+        const attack = status[offset + 5] >> 4;
+        const decay = status[offset + 5] & 15;
+        const sustain = status[offset + 6] >> 4;
+        const release = status[offset + 6] & 15;
+        const envelope = updateSidEnvelope(voice, attack, decay, sustain, release, Boolean(status[offset + 4] & 1), envelopeWrites);
         return {
           frequency: status[offset] | (status[offset + 1] << 8),
           pulseWidth: status[offset + 2] | ((status[offset + 3] & 0x0f) << 8),
-          control: status[offset + 4]
+          control: status[offset + 4],
+          attack, decay, sustain, release,
+          envelopeLevel: envelope.level,
+          envelopePhase: envelope.phase
         };
       }),
       writes: sidPlayer.getSidWriteTraceSnapshot(selectedSidChip)
@@ -136,7 +160,7 @@ function phosphorDecayIntervalMs() { return Math.min(SID_PHOSPHOR_DECAY_INTERVAL
 function showStatus(message) { $("status").textContent = message; }
 function updateSidWriteTracing() {
   const trackerDetailActive = $("tracker-dialog").open && activeEngine === "sid" && sidRegisterDetailEnabled;
-  const megaDetailActive = $("immersive-dialog").open && activeEngine === "sid" && immersiveMode === "mega" && sidRegisterDetailEnabled;
+  const megaDetailActive = $("immersive-dialog").open && activeEngine === "sid" && immersiveMode === "mega";
   sidPlayer?.setSidWriteTraceEnabled(trackerDetailActive || megaDetailActive);
 }
 function stopScopeLoop() {
@@ -146,6 +170,7 @@ function stopScopeLoop() {
 }
 function startScopeLoop() {
   stopScopeLoop();
+  if ($("immersive-dialog").open || $("tracker-dialog").open) return;
   draw(performance.now());
   if (!scopesEnabled || !(activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization)) return;
   const refreshInterval = 1000 / Number($("scope-hz").value);
@@ -1792,23 +1817,66 @@ function renderMegaSignal(frame) {
   for (let index = 0; index < orders.children.length; index++) orders.children[index].classList.toggle("is-current", index === beat);
   lastMegaPatternKey = undefined;
 }
+function renderMegaSid(frame) {
+  const { sidState, sidFeedback } = frame;
+  const { filter } = sidState;
+  const mode = [filter.mode & 0x10 ? "LP" : "", filter.mode & 0x20 ? "BP" : "", filter.mode & 0x40 ? "HP" : ""].filter(Boolean).join("+") || "OFF";
+  $("mega-source").textContent = `SID ${sidState.chip + 1} / ${mode} / CUT ${String(filter.cutoff).padStart(4, "0")} / RES ${filter.resonance}`;
+  $("mega-position").textContent = `VOL ${filter.volume} / DAC SWING ${Math.round(sidFeedback.digiSwing * 15)} / ${filter.voice3Off ? "V3 DIRECT OFF" : "V3 DIRECT ON"} / ${frame.scene.replace("sid-", "").toUpperCase()}`;
+  const pattern = $("mega-pattern");
+  const orders = $("mega-orders");
+  if (lastMegaPatternKey !== `sid:${sidState.chip}`) {
+    $("mega-pattern-heading").replaceChildren();
+    pattern.replaceChildren(...sidState.voices.map((_, index) => {
+      const voice = document.createElement("div");
+      voice.className = "mega-sid-voice";
+      voice.append(textElement("strong", `V${index + 1}`), textElement("span", "", "mega-sid-wave"), textElement("span", "", "mega-sid-facts"), textElement("span", "", "mega-sid-envelope"));
+      return voice;
+    }));
+    orders.replaceChildren(...Array.from({ length: 25 }, (_, address) => textElement("span", address.toString(16).toUpperCase().padStart(2, "0"))));
+    orders.setAttribute("aria-label", "SID register write activity, offsets 00 through 18");
+    lastMegaPatternKey = `sid:${sidState.chip}`;
+  }
+  sidState.voices.forEach((voice, index) => {
+    const row = pattern.children[index];
+    const pitch = sidPitch(voice.frequency);
+    const flags = [voice.control & 2 ? "SYNC" : "", voice.control & 4 ? "RING" : "", voice.control & 8 ? "TEST" : ""].filter(Boolean);
+    row.children[0].textContent = `V${index + 1} / ${pitch.note} / ${voice.envelopePhase.toUpperCase()}`;
+    row.children[1].textContent = [...sidWaveforms(voice.control), ...flags].join(" + ") || "OFF";
+    row.children[2].textContent = `${pitch.hertz} / PW ${String(voice.pulseWidth).padStart(4, "0")} / ${sidFeedback.voices[index].routed ? "FLT" : "DRY"}`;
+    row.children[3].textContent = `ADSR ${[voice.attack, voice.decay, voice.sustain, voice.release].map(value => String(value).padStart(2, "0")).join(" ")} / ${Math.round(voice.envelopeLevel * 100)}%`;
+    row.style.setProperty("--sid-envelope", sidFeedback.voices[index].energy.toFixed(3));
+  });
+  for (let address = 0; address < 25; address++) {
+    const activity = immersiveVisualizer.sidRegisterFeedback.get(address)?.level ?? 0;
+    orders.children[address].style.opacity = String(.25 + activity * .75);
+    orders.children[address].classList.toggle("is-current", activity > .6);
+  }
+}
 function renderMegaFrame(frame) {
   if (immersiveMode !== "mega" || !$("immersive-dialog").open) return;
+  if (frame.time - lastMegaTelemetryAt < 80) return;
+  lastMegaTelemetryAt = frame.time;
   const stage = $("immersive-stage");
+  stage.classList.toggle("mega-sid", Boolean(frame.sidState));
   stage.style.setProperty("--mega-level", frame.signal.level.toFixed(3));
   stage.style.setProperty("--mega-low", frame.signal.low.toFixed(3));
   stage.style.setProperty("--mega-high", frame.signal.high.toFixed(3));
   stage.classList.toggle("mega-beat", frame.musicalEvent.beat);
-  renderMegaChannels(frame.channels);
+  if (!frame.sidState) renderMegaChannels(frame.channels);
   const tracker = activeEngine === "xmp" ? xmpPlayer?.tracker : undefined;
-  if (tracker?.available) renderMegaTracker(frame, tracker);
+  if (frame.sidState) renderMegaSid(frame);
+  else if (tracker?.available) renderMegaTracker(frame, tracker);
   else renderMegaSignal(frame);
 }
 function setImmersiveMode(mode) {
   immersiveMode = mode;
   lastMegaPatternKey = undefined;
+  lastMegaTelemetryAt = -Infinity;
   const mega = mode === "mega";
   $("immersive-stage").classList.toggle("mega-active", mega);
+  $("immersive-stage").classList.remove("mega-sid");
+  $("mega-orders").setAttribute("aria-label", "Pattern order journey");
   $("mega-layer").setAttribute("aria-hidden", String(!mega));
   $("immersive-kicker").lastChild.textContent = mega ? " #AFWD Chamber / INIT MEGABOOST engaged" : " #AFWD Chamber / Visualizer activated";
   updateSidWriteTracing();
@@ -2155,6 +2223,7 @@ function openImmersive(mode, opener) {
   setImmersiveMode(mode);
   updateImmersiveLabels();
   openDialog("immersive-dialog", opener);
+  stopScopeLoop();
   updateSidWriteTracing();
   immersiveVisualizer.start();
   showImmersiveCursor();
@@ -2195,6 +2264,7 @@ for (const dialog of document.querySelectorAll("dialog")) {
       $("immersive-stage").classList.remove("cursor-visible");
       immersiveVisualizer.stop();
       updateSidWriteTracing();
+      startScopeLoop();
       if (document.fullscreenElement === $("immersive-stage")) void document.exitFullscreen();
     }
   });

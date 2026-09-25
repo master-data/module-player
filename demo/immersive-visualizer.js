@@ -1,4 +1,5 @@
 const TAU = Math.PI * 2;
+const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
 const SCENES = [
   "orbit", "horizon", "lattice", "aurora", "vortex", "constellation", "prism",
   "helix", "monolith", "bloom", "rainfall", "eclipse", "ribbons", "tunnel", "terrain", "pulsefield", "infinity",
@@ -133,6 +134,11 @@ export class ImmersiveVisualizer {
     this.sidRegisterFeedback = new Map();
     this.sidFeedbackChip = undefined;
     this.sidLastWriteCycle = -Infinity;
+    this.sidVoices = [];
+    this.sidTime = 0;
+    this.sidSceneMode = false;
+    this.quality = .65;
+    this.frameBudget = { fastest: Infinity, elapsed: 0, frames: 0, stressed: 0, healthy: 0, skipFirst: true };
     this.particles = Array.from({ length: reducedMotion ? 54 : 110 }, (_, index) => this.createParticle(index / 110));
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas);
@@ -161,6 +167,7 @@ export class ImmersiveVisualizer {
     if (this.animationFrame !== undefined) return;
     this.resize();
     this.lastTime = performance.now();
+    this.frameBudget = { fastest: Infinity, elapsed: 0, frames: 0, stressed: 0, healthy: 0, skipFirst: true };
     addEventListener("pointermove", this.onPointerMove, { passive: true });
     addEventListener("pointerleave", this.onPointerLeave);
     this.animationFrame = requestAnimationFrame((time) => this.draw(time));
@@ -180,17 +187,64 @@ export class ImmersiveVisualizer {
 
   resize() {
     const bounds = this.canvas.getBoundingClientRect();
-    const pixelRatio = Math.min(devicePixelRatio || 1, 2);
-    const width = Math.max(1, Math.round(bounds.width * pixelRatio));
-    const height = Math.max(1, Math.round(bounds.height * pixelRatio));
+    const quality = this.quality ?? 1;
+    const pixelBudget = 2_500_000 * quality;
+    const pixelRatio = Math.min(devicePixelRatio || 1, 2) * (.5 + quality * .5);
+    const resolution = Math.min(pixelRatio, Math.sqrt(pixelBudget / Math.max(1, bounds.width * bounds.height)));
+    const width = Math.max(1, Math.round(bounds.width * resolution));
+    const height = Math.max(1, Math.round(bounds.height * resolution));
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
       this.canvas.height = height;
     }
   }
 
+  adaptQuality(interval, cost) {
+    const budget = this.frameBudget;
+    if (budget.skipFirst) { budget.skipFirst = false; return; }
+    if (!Number.isFinite(interval) || interval <= 0 || interval > 250) return;
+    budget.fastest = Math.min(budget.fastest, Math.max(1000 / 360, interval));
+    budget.elapsed += interval;
+    budget.frames++;
+    const cpuBudget = Math.min(4, budget.fastest * .35);
+    if (cost > cpuBudget || interval > budget.fastest * 1.45) budget.stressed++;
+    if (budget.elapsed < 1000) return;
+    let quality = this.quality;
+    if (budget.stressed / budget.frames > .15) {
+      quality = Math.max(.25, quality - .12);
+      budget.healthy = 0;
+    } else if (budget.stressed === 0) {
+      budget.healthy += budget.elapsed;
+      if (budget.healthy >= 5000) {
+        quality = Math.min(1, quality + .04);
+        budget.healthy = 0;
+      }
+    } else budget.healthy = 0;
+    budget.elapsed = 0;
+    budget.frames = 0;
+    budget.stressed = 0;
+    if (quality !== this.quality) {
+      this.quality = quality;
+      this.canvas.dataset.quality = quality.toFixed(2);
+      this.resize();
+    }
+  }
+
+  detailCount(full, minimum = 3) {
+    const quality = (this.quality ?? 1) * (this.sceneTransition < 1 ? .72 : 1);
+    return Math.max(minimum, Math.round(full * quality));
+  }
+
   readSignal() {
     const source = this.getSource?.();
+    const revision = source?.revision;
+    if (source && Number.isFinite(revision) && source === this.signalSource && revision === this.signalRevision && this.measuredSignal) {
+      this.smoothSignal(this.measuredSignal);
+      return;
+    }
+    this.signalSource = source;
+    this.signalRevision = revision;
+    this.measuredSignal = undefined;
     const channels = [];
     if (source) {
       try {
@@ -211,7 +265,7 @@ export class ImmersiveVisualizer {
     }
 
     const points = SPECTRAL_POINTS;
-    const monoSamples = new Float32Array(points);
+    const monoSamples = this.monoSamples ??= new Float32Array(points);
     let squareSum = 0;
     let peak = 0;
     let low = 0;
@@ -222,7 +276,9 @@ export class ImmersiveVisualizer {
     let fast = 0;
     for (let index = 0; index < points; index++) {
       const position = index / points;
-      const mono = channels.reduce((sum, data) => sum + sampleAt(data, position), 0) / channels.length;
+      let mono = 0;
+      for (const channel of channels) mono += sampleAt(channel, position);
+      mono /= channels.length;
       monoSamples[index] = mono;
       slow += (mono - slow) * 0.055;
       fast += (mono - fast) * 0.24;
@@ -234,13 +290,14 @@ export class ImmersiveVisualizer {
       previous = mono;
     }
     this.readTone(monoSamples);
-    this.smoothSignal({
+    this.measuredSignal = {
       level: clamp(Math.pow(Math.sqrt(squareSum / points), 0.45) * 1.6),
       peak: clamp(Math.sqrt(peak) * 1.2),
       low: clamp(Math.pow(low / points, 0.45) * 2.4),
       mid: clamp(Math.pow(mid / points, 0.45) * 2.6),
       high: clamp(Math.pow(high / points, 0.45) * 2)
-    });
+    };
+    this.smoothSignal(this.measuredSignal);
   }
 
   readTone(samples) {
@@ -374,25 +431,40 @@ export class ImmersiveVisualizer {
     camera.microY = motion * (Math.cos(time * 1.41 + camera.phase) * 0.00055 + Math.sin(time * 2.11) * 0.0003);
   }
 
-  directScene(delta, musicalEvent = {}) {
+  directScene(delta, musicalEvent = {}, sidState) {
+    const sidMode = Boolean(sidState);
+    if (sidMode !== this.sidSceneMode) {
+      this.sidSceneMode = sidMode;
+      const scenes = sidMode ? SID_SCENES : SCENES;
+      this.scene = scenes[0];
+      this.previousScene = this.scene;
+      this.previousSceneSeed = this.sceneSeed;
+      this.sceneDeck = shuffle(scenes.slice(1));
+      this.sceneElapsed = 0;
+      this.sceneDuration = sidMode ? 8 : 26;
+      this.sceneTransition = 1;
+      this.canvas.dataset.scene = this.scene;
+      this.canvas.dataset.transitionReason = "opening";
+    }
+    if (sidState?.playing === false) return;
     const directionSpeed = this.reducedMotion ? 0.4 : 1;
     this.sceneElapsed += delta * directionSpeed;
     this.sceneTransition = Math.min(1, this.sceneTransition + delta / this.transitionDuration);
-    const minimumHold = 18;
-    const fallbackAt = this.sceneDuration + 18;
+    const minimumHold = sidMode ? 6 : 18;
+    const fallbackAt = this.sceneDuration + (sidMode ? 2 : 18);
     let transitionReason;
     if (this.sceneElapsed >= minimumHold) {
       if (musicalEvent.returnFromDrop) transitionReason = "drop-return";
       else if (musicalEvent.toneBoundary) transitionReason = "tone-shift";
       else if (musicalEvent.phraseBoundary) transitionReason = "phrase-boundary";
-      else if (musicalEvent.sectionBoundary && this.sceneElapsed >= 22) transitionReason = "section-shift";
+      else if (musicalEvent.sectionBoundary && this.sceneElapsed >= (sidMode ? 7 : 22)) transitionReason = "section-shift";
       else if (musicalEvent.strongBeat && this.sceneElapsed >= this.sceneDuration) transitionReason = "accent";
     }
     if (!transitionReason && this.sceneElapsed >= fallbackAt && musicalEvent.beat) transitionReason = "fallback-beat";
-    if (!transitionReason && this.sceneElapsed >= fallbackAt + 4) transitionReason = "maximum-hold";
+    if (!transitionReason && this.sceneElapsed >= fallbackAt + (sidMode ? 1 : 4)) transitionReason = "maximum-hold";
     if (!transitionReason) return;
 
-    if (!this.sceneDeck.length) this.sceneDeck = shuffle(SCENES.filter((scene) => scene !== this.scene));
+    if (!this.sceneDeck.length) this.sceneDeck = shuffle((sidMode ? SID_SCENES : SCENES).filter((scene) => scene !== this.scene));
     const nextScene = this.sceneDeck.shift();
     this.previousScene = this.scene;
     this.previousSceneSeed = this.sceneSeed;
@@ -403,7 +475,7 @@ export class ImmersiveVisualizer {
     this.camera.gazeY = (randomUnit() - 0.5) * 0.02;
     this.camera.kick = Math.max(this.camera.kick, 0.016);
     this.sceneElapsed = 0;
-    this.sceneDuration = 24 + randomUnit() * 10 + (1 - this.signal.level) * 4;
+    this.sceneDuration = sidMode ? 8 + randomUnit() * 3 : 24 + randomUnit() * 10 + (1 - this.signal.level) * 4;
     this.transitionDuration = clamp(this.music.beatInterval * 1.6, 0.65, 1.2) * (this.reducedMotion ? 1.25 : 1);
     this.sceneTransition = 0.08;
     this.music.beatsSinceScene = 0;
@@ -415,17 +487,23 @@ export class ImmersiveVisualizer {
   }
 
   draw(time) {
+    const startedAt = performance.now();
+    const interval = time - this.lastTime;
     const delta = Math.min(0.05, Math.max(0, (time - this.lastTime) / 1000));
     this.lastTime = time;
     this.elapsed += delta * (this.reducedMotion ? 0.22 : 1);
-    this.pointer.x = mix(this.pointer.x, this.pointer.targetX, 0.035);
-    this.pointer.y = mix(this.pointer.y, this.pointer.targetY, 0.035);
+    this.pointer.x = mix(this.pointer.x, this.pointer.targetX, follow(delta, .47));
+    this.pointer.y = mix(this.pointer.y, this.pointer.targetY, follow(delta, .47));
     this.readSignal();
     const sidState = this.getSidState?.();
     const sidFeedback = sidState ? this.applySidRegisterFeedback(sidState, delta) : undefined;
+    if (!sidState) {
+      this.sidFeedbackChip = undefined;
+      this.sidVoices = [];
+    }
     const musicalEvent = this.analyzeMusic(delta);
     this.updateCamera(delta, musicalEvent);
-    this.directScene(delta, musicalEvent);
+    this.directScene(delta, musicalEvent, sidState);
     this.paint(delta, sidState, sidFeedback);
     if (this.onFrame) {
       this.onFrame({
@@ -436,9 +514,12 @@ export class ImmersiveVisualizer {
         signal: this.signal,
         music: this.music,
         channels: this.channels,
+        sidState,
+        sidFeedback,
         musicalEvent
       });
     }
+    this.adaptQuality(interval, performance.now() - startedAt);
     this.animationFrame = requestAnimationFrame((nextTime) => this.draw(nextTime));
   }
 
@@ -468,7 +549,18 @@ export class ImmersiveVisualizer {
     context.rotate(this.camera.roll);
     context.scale(this.camera.zoom, this.camera.zoom);
     context.translate(-centerX, -centerY);
-    if (this.sceneTransition < 1) {
+    if (sidState) {
+      if (this.sceneTransition < 1) {
+        context.save();
+        context.globalAlpha = 1 - blend;
+        this.drawSidScene(context, this.previousScene, width, height, sidState, sidFeedback);
+        context.restore();
+      }
+      context.save();
+      context.globalAlpha = blend;
+      this.drawSidScene(context, this.scene, width, height, sidState, sidFeedback);
+      context.restore();
+    } else if (this.sceneTransition < 1) {
       if (blend < 0.62) {
         context.save();
         context.globalAlpha = 1 - blend;
@@ -482,65 +574,447 @@ export class ImmersiveVisualizer {
     } else {
       this.drawScene(context, this.scene, width, height, centerX, centerY, hue);
     }
-    if (this.scene !== "pulsefield") this.drawParticles(context, width, height, centerX, centerY, hue, delta);
+    if (!sidState && this.scene !== "pulsefield") this.drawParticles(context, width, height, centerX, centerY, hue, delta);
     context.restore();
-    if (sidState) this.drawSidRegisterOverlay(context, width, height, sidState, sidFeedback);
     this.drawVignette(context, width, height);
   }
 
   applySidRegisterFeedback(sidState, delta) {
     const registerFeedback = this.updateSidRegisterFeedback(sidState, delta);
+    const playing = sidState.playing !== false;
+    if (playing) this.sidTime += delta * (this.reducedMotion ? .18 : 1);
+    const filter = sidState.filter ?? { cutoff: 0, resonance: 0, routing: 0, mode: 0, volume: 15 };
+    registerFeedback.voices = sidState.voices.map((voice, index) => {
+      const routed = Boolean(filter.routing & (1 << index));
+      const audible = filter.volume > 0 && Boolean(voice.control & 0xf0) && !(voice.control & 8)
+        && !(index === 2 && filter.voice3Off && !routed) && (!routed || Boolean(filter.mode));
+      const target = audible ? clamp(voice.envelopeLevel ?? Number(Boolean(voice.control & 1))) * filter.volume / 15 : 0;
+      const previous = this.sidVoices[index] ?? { energy: 0, pitch: 0, duty: .5 };
+      previous.energy = audible ? mix(previous.energy, target, follow(delta, .09)) : 0;
+      previous.pitch = mix(previous.pitch, Math.log2(1 + voice.frequency) / 16, follow(delta, .18));
+      previous.duty = mix(previous.duty, voice.pulseWidth / 4095, follow(delta, .12));
+      previous.routed = routed;
+      previous.audible = audible;
+      this.sidVoices[index] = previous;
+      return previous;
+    });
+    let minimum = 1;
+    let maximum = 0;
+    for (const value of sidState.digi ?? []) {
+      minimum = Math.min(minimum, value);
+      maximum = Math.max(maximum, value);
+    }
+    registerFeedback.digiSwing = clamp(maximum - minimum);
+    registerFeedback.filter = filter;
     const registerActivity = Math.max(...registerFeedback.voiceActivity, registerFeedback.filterActivity);
     this.signal.flux = Math.max(this.signal.flux, registerActivity * .14);
     this.signal.high = clamp(this.signal.high + registerActivity * .035);
     return registerFeedback;
   }
 
-  drawSidRegisterOverlay(context, width, height, sidState, registerFeedback) {
-    const laneHeight = height / 3;
+  sidWaveform(voice, position) {
+    const step = ((position % 1) + 1) % 1;
+    let value = 0;
+    let count = 0;
+    if (voice.control & 0x10) { value += 1 - 4 * Math.abs(step - .5); count++; }
+    if (voice.control & 0x20) { value += step * 2 - 1; count++; }
+    if (voice.control & 0x40) { value += step < voice.pulseWidth / 4095 ? 1 : -1; count++; }
+    if (voice.control & 0x80) { value += Math.sin(Math.floor(position * 64) * 127.1 + voice.frequency) * .8; count++; }
+    return count ? value / count : 0;
+  }
+
+  drawSidScene(context, scene, width, height, state, feedback) {
     context.save();
     context.globalCompositeOperation = "lighter";
-    for (let index = 0; index < sidState.voices.length; index++) {
-      const voice = sidState.voices[index];
-      const activity = registerFeedback.voiceActivity[index];
-      const laneY = laneHeight * (index + .5);
-      const waveformBits = [[0x10, "triangle"], [0x20, "saw"], [0x40, "pulse"], [0x80, "noise"]].filter(([mask]) => voice.control & mask);
-      if (!waveformBits.length || voice.control & 0x08) continue;
-      const cycles = Math.max(1, Math.min(18, voice.frequency / 2048));
-      const phase = this.elapsed / .7;
-      const duty = Math.max(.03, Math.min(.97, voice.pulseWidth / 4095));
-      context.strokeStyle = hsla(164 + index * 42, 86, 68, .05 + activity * .22);
-      context.lineWidth = Math.max(1, width * .0006);
+    if (scene === "sid-warp") this.drawSidWarp(context, width, height, state, feedback);
+    else if (scene === "sid-weave") this.drawSidWeave(context, width, height, state, feedback);
+    else if (scene === "sid-crystal") this.drawSidCrystal(context, width, height, state, feedback);
+    else if (scene === "sid-storm") this.drawSidStorm(context, width, height, state, feedback);
+    else if (scene === "sid-matrix") this.drawSidMatrix(context, width, height, state, feedback);
+    else if (scene === "sid-lissajous") this.drawSidLissajous(context, width, height, state, feedback);
+    else if (scene === "sid-radar") this.drawSidRadar(context, width, height, state, feedback);
+    else this.drawSidMachine(context, width, height, state, feedback);
+    context.restore();
+  }
+
+  drawSidWarp(context, width, height, state, feedback) {
+    const time = this.sidTime;
+    const scale = Math.min(width, height);
+    const cutoff = feedback.filter.cutoff / 2047;
+    const centerX = width * (.5 + Math.sin(time * .21) * .12);
+    const centerY = height * (.4 + Math.cos(time * .17) * .05);
+    const count = this.detailCount(this.reducedMotion ? 22 : 42, 8);
+    const points = this.detailCount(120, 48);
+    for (let layer = 0; layer < count; layer++) {
+      const voiceIndex = layer % 3;
+      const voice = state.voices[voiceIndex];
+      const visual = feedback.voices[voiceIndex];
+      const depth = ((layer / count + time * (.08 + cutoff * .05)) % 1);
+      const radius = scale * (.012 + depth * depth * 1.05);
+      const sides = 3 + Math.floor(visual.duty * 5);
+      const spin = time * .12 + depth * (1.5 + cutoff * 3);
       context.beginPath();
-      for (let point = 0; point <= 240; point++) {
-        const position = point / 240;
-        const step = (position * cycles + phase) % 1;
-        const values = waveformBits.map(([, waveform]) => {
-          if (waveform === "triangle") return 1 - 4 * Math.abs(step - .5);
-          if (waveform === "saw") return step * 2 - 1;
-          if (waveform === "pulse") return step < duty ? 1 : -1;
-          return (Math.sin((Math.floor((step + phase) * 4096) + voice.frequency * 13) * 12.9898) * 43758.5453 % 1) * 2 - 1;
-        });
-        const sample = values.reduce((sum, value) => sum + value, 0) / values.length;
-        const x = position * width;
-        const y = laneY - sample * laneHeight * (.045 + activity * .07);
-        point ? context.lineTo(x, y) : context.moveTo(x, y);
+      for (let point = 0; point <= points; point++) {
+        const turn = point / points;
+        const angle = turn * TAU + spin;
+        const polygon = Math.cos(Math.PI / sides) / Math.cos((turn * TAU % (TAU / sides)) - Math.PI / sides);
+        const wave = this.sidWaveform(voice, turn * (3 + Math.floor(visual.pitch * 8)) + time * .2);
+        const distance = radius * (polygon + wave * visual.energy * .2);
+        const horizontal = centerX + Math.cos(angle) * distance * (width / height > 1.5 ? 1.3 : 1);
+        const vertical = centerY + Math.sin(angle) * distance;
+        point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+      }
+      context.closePath();
+      context.strokeStyle = hsla([168, 18, 48][voiceIndex] + depth * 35, 95, 65, (.12 + visual.energy * .65) * Math.sin(depth * Math.PI));
+      context.lineWidth = Math.max(1, scale * .003 * depth);
+      context.stroke();
+    }
+  }
+
+  drawSidWeave(context, width, height, state, feedback) {
+    const time = this.sidTime;
+    const scale = Math.min(width, height);
+    const strands = this.detailCount(this.reducedMotion ? 9 : 18);
+    const points = this.detailCount(150, 48);
+    for (let voiceIndex = 0; voiceIndex < 3; voiceIndex++) {
+      const voice = state.voices[voiceIndex];
+      const visual = feedback.voices[voiceIndex];
+      const ring = voice.control & 4 && voice.control & 0x10;
+      for (let strand = 0; strand < strands; strand++) {
+        const depth = strand / strands;
+        context.beginPath();
+        for (let point = 0; point <= points; point++) {
+          const position = point / points;
+          const angle = position * TAU * (1 + visual.pitch * 2) - time * .6 + voiceIndex * TAU / 3;
+          const wave = this.sidWaveform(voice, position * 5 + depth * .2 + time * .1);
+          const modulation = ring ? Math.sin(angle * 3) : 1;
+          const horizontal = position * width;
+          const vertical = height * .43 + Math.sin(angle + depth * .8) * height * (.08 + visual.energy * .12)
+            + wave * modulation * scale * .07 * visual.energy + (depth - .5) * scale * (.06 + visual.duty * .1);
+          point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+        }
+        context.strokeStyle = hsla([166, 8, 45][voiceIndex] + depth * 35, 90, 67, .1 + visual.energy * .4);
+        context.lineWidth = Math.max(1, scale * .0014);
+        context.stroke();
+      }
+    }
+  }
+
+  drawSidCrystal(context, width, height, state, feedback) {
+    const time = this.sidTime;
+    const scale = Math.min(width, height);
+    const sectors = 8 + 2 * Math.floor(feedback.filter.resonance / 5);
+    const layers = this.detailCount(this.reducedMotion ? 5 : 9);
+    const cutoff = feedback.filter.cutoff / 2047;
+    context.translate(width * .5, height * .41);
+    context.rotate(Math.sin(time * .13) * .4);
+    for (let sector = 0; sector < sectors; sector++) {
+      context.save();
+      context.rotate(sector / sectors * TAU);
+      for (let layer = layers; layer > 0; layer--) {
+        const voiceIndex = (sector + layer) % 3;
+        const visual = feedback.voices[voiceIndex];
+        const wave = this.sidWaveform(state.voices[voiceIndex], layer * .13 + time * .12);
+        const radius = scale * layer / layers * (.28 + visual.energy * .13);
+        const spread = radius * (.14 + visual.duty * .3);
+        const offset = wave * visual.energy * scale * .035;
+        context.beginPath();
+        context.moveTo(radius * .32, 0);
+        context.lineTo(radius + offset, -spread);
+        context.lineTo(radius * (1.2 + cutoff * .25), 0);
+        context.lineTo(radius + offset, spread);
+        context.closePath();
+        context.fillStyle = hsla([178, 352, 44][voiceIndex] + layer * 3, 95, 55, .025 + visual.energy * .09);
+        context.fill();
+        context.strokeStyle = hsla([178, 352, 44][voiceIndex], 95, 76, .16 + visual.energy * .4);
+        context.lineWidth = Math.max(1, scale * .0015);
+        context.stroke();
+      }
+      context.restore();
+    }
+  }
+
+  drawSidStorm(context, width, height, state, feedback) {
+    const time = this.sidTime;
+    const scale = Math.min(width, height);
+    const count = this.detailCount(this.reducedMotion ? 100 : 260, 40);
+    const cutoff = feedback.filter.cutoff / 2047;
+    for (let particle = 0; particle < count; particle++) {
+      const voiceIndex = particle % 3;
+      const visual = feedback.voices[voiceIndex];
+      const angle = particle * 2.399963 + time * .035;
+      const phase = (particle * .618034 + time * (.12 + visual.pitch * .1)) % 1;
+      const spread = phase * phase;
+      const wave = this.sidWaveform(state.voices[voiceIndex], phase * 3 + time * .1);
+      const bend = angle + Math.sin(phase * 5 + time * .2) * cutoff * .5;
+      const distance = spread * scale * .9;
+      const tail = scale * (.008 + visual.energy * .1 + feedback.digiSwing * .06) * spread;
+      const centerX = width * .5 + wave * visual.energy * scale * .05;
+      const centerY = height * .4;
+      context.beginPath();
+      context.moveTo(centerX + Math.cos(bend) * distance, centerY + Math.sin(bend) * distance);
+      context.lineTo(centerX + Math.cos(bend) * (distance + tail), centerY + Math.sin(bend) * (distance + tail));
+      context.strokeStyle = hsla([163, 16, 48][voiceIndex], 95, 72, Math.sin(phase * Math.PI) * (.15 + visual.energy * .75));
+      context.lineWidth = Math.max(1, spread * scale * .004);
+      context.stroke();
+    }
+    for (let voiceIndex = 0; voiceIndex < 3; voiceIndex++) {
+      const energy = feedback.voices[voiceIndex].energy;
+      context.beginPath();
+      for (let point = 0; point <= 180; point++) {
+        const position = point / 180;
+        const horizontal = position * width;
+        const vertical = height * (.32 + voiceIndex * .09) + this.sidWaveform(state.voices[voiceIndex], position * 9 + time * .2) * scale * .07 * energy;
+        point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+      }
+      context.strokeStyle = hsla([163, 16, 48][voiceIndex], 90, 80, .1 + energy * .6);
+      context.stroke();
+    }
+  }
+
+  drawSidMatrix(context, width, height, state, feedback) {
+    const time = this.sidTime;
+    const columns = this.detailCount(width < height ? 21 : 42, 12);
+    const rows = this.detailCount(this.reducedMotion ? 14 : 24, 8);
+    const cellWidth = width * .92 / columns;
+    const cellHeight = height * .5 / rows;
+    const cutoff = feedback.filter.cutoff / 2047;
+    for (let column = 0; column < columns; column++) {
+      const voiceIndex = column % 3;
+      const voice = state.voices[voiceIndex];
+      const visual = feedback.voices[voiceIndex];
+      const wave = this.sidWaveform(voice, column / columns * 8 + time * .1);
+      for (let row = 0; row < rows; row++) {
+        const travel = (row / rows + time * (.08 + visual.pitch * .08) + column * .137) % 1;
+        const pulse = Math.pow(1 - travel, 5);
+        const gate = row / rows < (.12 + visual.energy * .85 + wave * .05);
+        const register = this.sidRegisterFeedback.get(column % 25)?.level ?? 0;
+        const light = gate ? .08 + pulse * (.4 + visual.energy * .5) : .025;
+        context.fillStyle = hsla([164, 12, 48][voiceIndex] + (row / rows > cutoff ? 0 : 28), 90, 60 + register * 20, light);
+        context.fillRect(width * .04 + column * cellWidth, height * .17 + row * cellHeight, cellWidth * .72, cellHeight * (.35 + visual.duty * .45));
+      }
+    }
+    context.strokeStyle = hsla(320, 95, 76, .2 + feedback.digiSwing * .7);
+    context.lineWidth = 2;
+    context.beginPath();
+    for (let point = 0; point <= 200; point++) {
+      const position = point / 200;
+      const horizontal = width * (.04 + position * .92);
+      const vertical = height * (.18 + cutoff * .47) - (sampleAt(state.digi, position) - feedback.filter.volume / 15) * height * .04;
+      point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+    }
+    context.stroke();
+  }
+
+  drawSidLissajous(context, width, height, state, feedback) {
+    const time = this.sidTime;
+    const scale = Math.min(width, height);
+    const layers = this.detailCount(this.reducedMotion ? 5 : 12, 2);
+    const points = this.detailCount(360, 96);
+    for (let voiceIndex = 0; voiceIndex < 3; voiceIndex++) {
+      const voice = state.voices[voiceIndex];
+      const visual = feedback.voices[voiceIndex];
+      const source = feedback.voices[(voiceIndex + 2) % 3];
+      const ratio = voice.control & 2 ? 2 : 2 + Math.floor(visual.pitch * 4);
+      const otherRatio = 3 + Math.floor(source.pitch * 3);
+      for (let layer = 0; layer < layers; layer++) {
+        const depth = layer / layers;
+        context.beginPath();
+        for (let point = 0; point <= points; point++) {
+          const phase = point / points * TAU;
+          const twist = time * .17 + voiceIndex * 1.1 + depth * .12;
+          const waveform = this.sidWaveform(voice, point / points * ratio + time * .08);
+          const radius = scale * (.16 + visual.energy * .14 + depth * .035);
+          const horizontal = width * .5 + Math.sin(phase * ratio + twist) * radius * (width > height ? 1.6 : 1);
+          const vertical = height * .41 + Math.sin(phase * otherRatio) * radius * .8 + waveform * visual.energy * scale * .035;
+          point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+        }
+        context.strokeStyle = hsla([170, 350, 48][voiceIndex] + depth * 18, 94, 72, .06 + visual.energy * .2);
+        context.lineWidth = Math.max(1, scale * .0013);
+        context.stroke();
+      }
+    }
+  }
+
+  drawSidRadar(context, width, height, state, feedback) {
+    const time = this.sidTime;
+    const scale = Math.min(width, height);
+    const sectors = this.detailCount(this.reducedMotion ? 48 : 96, 24);
+    const cutoff = feedback.filter.cutoff / 2047;
+    context.translate(width * .5, height * .41);
+    for (let sector = 0; sector < sectors; sector++) {
+      const voiceIndex = sector % 3;
+      const visual = feedback.voices[voiceIndex];
+      const angle = sector / sectors * TAU + time * .1;
+      const wave = this.sidWaveform(state.voices[voiceIndex], sector / sectors * 9 + time * .1);
+      const inner = scale * (.08 + cutoff * .07);
+      const outer = inner + scale * (.06 + visual.energy * .18 + wave * visual.energy * .05);
+      const sweep = (sector / sectors + time * .12) % 1;
+      context.beginPath();
+      context.arc(0, 0, inner, angle, angle + TAU / sectors * .7);
+      context.arc(0, 0, outer, angle + TAU / sectors * .7, angle, true);
+      context.closePath();
+      context.fillStyle = hsla([166, 14, 46][voiceIndex], 93, 62, .1 + visual.energy * .35 + Math.pow(sweep, 8) * .25);
+      context.fill();
+      context.strokeStyle = hsla([166, 14, 46][voiceIndex], 95, 78, .2 + visual.energy * .45);
+      context.lineWidth = Math.max(1, scale * .001);
+      context.stroke();
+    }
+    for (let register = 0; register < 25; register++) {
+      const activity = this.sidRegisterFeedback.get(register)?.level ?? 0;
+      const angle = register / 25 * TAU - time * .06;
+      context.strokeStyle = hsla(register < 21 ? [166, 14, 46][Math.floor(register / 7)] : 310, 95, 70, .15 + activity * .7);
+      context.lineWidth = Math.max(1, scale * .004);
+      context.beginPath();
+      context.arc(0, 0, scale * (.36 + activity * .02), angle, angle + TAU / 25 * .55);
+      context.stroke();
+    }
+  }
+
+  drawSidMachine(context, width, height, sidState, feedback) {
+    const time = this.sidTime;
+    const portrait = height > width;
+    const scale = Math.min(width, height);
+    const { filter, voices, digiSwing } = feedback;
+    const cutoff = filter.cutoff / 2047;
+    const resonance = filter.resonance / 15;
+    const hues = [167, 12, 47];
+    const centers = portrait
+      ? [[width * .28, height * .34], [width * .72, height * .34], [width * .5, height * (height < 700 ? .48 : .54)]]
+      : [[width * .22, height * .43], [width * .5, height * .43], [width * .78, height * .43]];
+    const radius = Math.min(width * (portrait ? .19 : .135), height * .2);
+    const filterY = height * (portrait ? height < 700 ? .61 : .65 : .68);
+    context.save();
+    context.globalCompositeOperation = "lighter";
+    const layers = this.detailCount(this.reducedMotion ? 10 : 22, 6);
+    for (let layer = 0; layer < layers; layer++) {
+      const depth = layer / layers;
+      const spread = .1 + depth * depth * 1.8;
+      context.strokeStyle = hsla(185 + (filter.mode & 0x40 ? 145 : 0) + depth * 35, 72, 58, .035 + depth * .1);
+      context.lineWidth = Math.max(1, scale * .001);
+      context.beginPath();
+      for (let point = 0; point <= 96; point++) {
+        const position = point / 96;
+        const horizontal = (position - .5) * width * spread + width * .5;
+        const ridge = Math.sin(position * TAU * (2 + cutoff * 9) - time + depth * 5);
+        const vertical = height * .2 + depth * height * .56 + ridge * scale * (.014 + resonance * .035) * depth;
+        point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
       }
       context.stroke();
-      if (activity) {
-        context.fillStyle = hsla(48, 96, 68, activity * .36);
-        context.fillRect(width * .025, laneY - laneHeight * .12, width * .004, laneHeight * .24);
+    }
+    for (const [index, voice] of sidState.voices.entries()) {
+      const visual = voices[index];
+      const [centerX, centerY] = centers[index];
+      const activity = feedback.voiceActivity[index];
+      const sourceIndex = (index + 2) % 3;
+      const [sourceX, sourceY] = centers[sourceIndex];
+      const ring = Boolean(voice.control & 4) && Boolean(voice.control & 0x10);
+      const sync = Boolean(voice.control & 2);
+      if ((ring || sync) && !(voice.control & 8)) {
+        context.strokeStyle = hsla(ring ? 320 : 185, 92, 72, .18 + visual.energy * .45);
+        context.lineWidth = Math.max(1, scale * .0015);
+        context.setLineDash(sync ? [scale * .009, scale * .007] : []);
+        context.beginPath();
+        context.moveTo(sourceX, sourceY);
+        context.bezierCurveTo(sourceX, sourceY - radius * 1.5, centerX, centerY - radius * 1.5, centerX, centerY);
+        context.stroke();
+        context.setLineDash([]);
       }
+      if (visual.routed) {
+        context.strokeStyle = hsla(hues[index], 90, 65, .12 + visual.energy * .35);
+        context.beginPath();
+        context.moveTo(centerX, centerY + radius * .65);
+        context.bezierCurveTo(centerX, filterY, width * (.15 + cutoff * .7), centerY, width * (.15 + cutoff * .7), filterY);
+        context.stroke();
+      }
+      const turns = 3 + Math.floor(visual.pitch * 9);
+      const rotation = time * (.08 + visual.pitch * .16) * (index === 1 ? -1 : 1);
+      const shellCount = this.detailCount(this.reducedMotion ? 4 : 8, 2);
+      const points = this.detailCount(192, 64);
+      for (let shell = shellCount - 1; shell >= 0; shell--) {
+        const depth = shell / shellCount;
+        context.beginPath();
+        for (let point = 0; point <= points; point++) {
+          const position = point / points;
+          const angle = position * TAU + rotation + depth * .3;
+          const oscillator = this.sidWaveform(voice, position * turns + time * .15 + depth * .12);
+          const modulation = ring ? Math.sin(position * TAU * (2 + Math.floor(voices[sourceIndex].pitch * 7))) : 1;
+          const folded = sync ? Math.abs(Math.sin(angle * 3)) * .15 : 0;
+          const contour = .55 + depth * .35 + oscillator * modulation * visual.energy * (.16 + visual.duty * .2) + folded * visual.energy;
+          const breath = 1 + Math.sin(angle * (3 + Math.floor(this.sceneSeed * 4)) + time * .3) * .08 * visual.energy;
+          const horizontal = centerX + Math.cos(angle) * radius * contour * breath;
+          const vertical = centerY + Math.sin(angle) * radius * contour * (1 + visual.energy * .15);
+          point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+        }
+        context.closePath();
+        context.strokeStyle = hsla(hues[index] + depth * 22, 85, 60 + (1 - depth) * 18, visual.audible ? .12 + visual.energy * .4 * (1 - depth * .65) : .035);
+        context.lineWidth = Math.max(1, scale * (shell === 0 ? .0022 : .001));
+        context.stroke();
+      }
+      for (let register = 0; register < 7; register++) {
+        const level = this.sidRegisterFeedback.get(index * 7 + register)?.level ?? 0;
+        const angle = register / 7 * TAU - time * .08;
+        const inner = radius * 1.08;
+        const outer = inner + radius * (.05 + level * .25);
+        context.strokeStyle = hsla(hues[index], 90, 75, .1 + level * .55);
+        context.lineWidth = Math.max(1, scale * .002);
+        context.beginPath();
+        context.moveTo(centerX + Math.cos(angle) * inner, centerY + Math.sin(angle) * inner);
+        context.lineTo(centerX + Math.cos(angle) * outer, centerY + Math.sin(angle) * outer);
+        context.stroke();
+      }
+      if (visual.energy > .01) {
+        context.strokeStyle = hsla(hues[index], 94, 76, .2 + activity * .3);
+        context.lineWidth = Math.max(1, scale * .0015);
+        context.beginPath();
+        for (let point = 0; point <= 120; point++) {
+          const position = point / 120;
+          const horizontal = centerX + (position - .5) * radius * 2.7;
+          const vertical = centerY + this.sidWaveform(voice, position * turns + time * .2) * radius * .24 * visual.energy;
+          point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+        }
+        context.stroke();
+      }
+    }
+    for (let band = 0; band < 3; band++) {
+      const enabled = Boolean(filter.mode & (0x10 << band));
+      context.strokeStyle = hsla(185 + band * 65, 90, 70, enabled ? .3 + resonance * .3 : .04);
+      context.lineWidth = Math.max(1, scale * .0015);
+      context.beginPath();
+      for (let point = 0; point <= 180; point++) {
+        const position = point / 180;
+        const distance = position - (.08 + cutoff * .84);
+        const peak = Math.exp(-distance * distance * (60 + resonance * 220));
+        const response = band === 0 ? 1 / (1 + Math.exp(distance * 20)) : band === 1 ? peak : 1 / (1 + Math.exp(-distance * 20));
+        const horizontal = width * (.06 + position * .88);
+        const vertical = filterY - (response * .045 + peak * resonance * .035) * height + band * scale * .008;
+        point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+      }
+      context.stroke();
+    }
+    if (digiSwing > .001) {
+      context.strokeStyle = hsla(320, 95, 76, .5 + digiSwing * .3);
+      context.lineWidth = Math.max(1, scale * .002);
+      context.beginPath();
+      for (let point = 0; point <= 256; point++) {
+        const position = point / 256;
+        const horizontal = position * width;
+        const vertical = filterY + scale * .04 - (sampleAt(sidState.digi, position) - filter.volume / 15) * scale * .09;
+        point ? context.lineTo(horizontal, vertical) : context.moveTo(horizontal, vertical);
+      }
+      context.stroke();
     }
     context.restore();
   }
 
   updateSidRegisterFeedback(sidState, delta) {
-    if (sidState.chip !== this.sidFeedbackChip) {
+    if (sidState.chip !== this.sidFeedbackChip || sidState.revision < this.sidFeedbackRevision) {
       this.sidRegisterFeedback.clear();
+      this.sidVoices = [];
       this.sidFeedbackChip = sidState.chip;
       this.sidLastWriteCycle = -Infinity;
     }
+    this.sidFeedbackRevision = sidState.revision;
     for (const [address, activity] of this.sidRegisterFeedback) {
       activity.level *= Math.exp(-delta / .9);
       if (activity.level < .01) this.sidRegisterFeedback.delete(address);
