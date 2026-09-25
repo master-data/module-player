@@ -22,6 +22,70 @@ function scopeCanvas() {
   return { canvas, backgrounds, runtime };
 }
 
+test("cutoff history freezes while paused and resumes without a time jump", () => {
+  const { canvas, runtime } = scopeCanvas();
+  runtime.updateSidFilterHistory(canvas, 0, true, 0);
+  let state = runtime.updateSidFilterHistory(canvas, 2047, true, 100);
+  assert.equal(state.samples.length, 2);
+  assert.equal(state.samples[1].cutoff, 2047);
+  runtime.updateSidFilterHistory(canvas, 2047, false, 200);
+  runtime.updateSidFilterHistory(canvas, 2047, false, 5000);
+  state = runtime.updateSidFilterHistory(canvas, 2047, true, 5100);
+  assert.equal(state.time, 100);
+  assert.equal(state.samples.length, 2);
+  state = runtime.updateSidFilterHistory(canvas, 1024, true, 5200);
+  assert.equal(state.time, 200);
+  assert.equal(state.samples.length, 3);
+});
+
+test("cutoff history retains changes between periodic samples without duplicate timestamps", () => {
+  const { canvas, runtime } = scopeCanvas();
+  runtime.updateSidFilterHistory(canvas, 0, true, 0);
+  runtime.updateSidFilterHistory(canvas, 2047, true, 16);
+  const state = runtime.updateSidFilterHistory(canvas, 0, true, 32);
+  assert.deepEqual(Array.from(state.samples, sample => [sample.time, sample.cutoff]), [[0, 0], [16, 2047], [32, 0]]);
+  runtime.updateSidFilterHistory(canvas, 2047, true, 32);
+  runtime.updateSidFilterHistory(canvas, 2047, false, 48);
+  assert.equal(state.samples.length, 3);
+});
+
+test("cutoff history is bounded to eight seconds and clears unobserved gaps", () => {
+  const { canvas, runtime } = scopeCanvas();
+  let state;
+  for (let now = 0; now <= 20000; now += 10) state = runtime.updateSidFilterHistory(canvas, 1024, true, now);
+  assert.equal(state.samples.length, 401);
+  assert.equal(state.samples[0].time, 12000);
+  state = runtime.updateSidFilterHistory(canvas, 0, true, 21000);
+  assert.equal(state.samples.length, 1);
+  assert.equal(state.samples[0].cutoff, 0);
+});
+
+test("cutoff history resets after switching SID subtunes", async () => {
+  const canvas = { _sidFilterHistory: { samples: [{ cutoff: 1024 }] } };
+  let selectedTrack;
+  const runtime = vm.createContext({
+    activeEngine: "sid",
+    selectSubsong: track => track,
+    sidPlayer: { state: "playing", selectSong: async track => { selectedTrack = track; } },
+    $: () => ({ querySelector: () => canvas })
+  });
+  vm.runInContext(source.slice(source.indexOf("async function restartWithSubsong("), source.indexOf("function setMetadata(")), runtime);
+  await runtime.restartWithSubsong(2);
+  assert.equal(selectedTrack, 2);
+  assert.equal(canvas._sidFilterHistory, undefined);
+});
+
+test("cutoff drawing maps register endpoints to the plot bounds without interpolated values", () => {
+  const { canvas, runtime } = scopeCanvas();
+  const points = [];
+  const context = canvas.getContext("2d");
+  context.fillText = () => {};
+  context.moveTo = (horizontal, vertical) => points.push([horizontal, vertical]);
+  context.lineTo = (horizontal, vertical) => points.push([horizontal, vertical]);
+  runtime.drawSidFilterHistory(canvas, { time: 8000, samples: [{ time: 0, cutoff: 0 }, { time: 8000, cutoff: 2047 }] });
+  assert.deepEqual(points.slice(-3), [[40, 78], [308, 78], [308, 12]]);
+});
+
 test("ADSR envelopes draw open traces without an area fill", () => {
   const { canvas, backgrounds, runtime } = scopeCanvas();
   for (const history of [[0, 0, 0], [0, 1, 0.5], [1, 1, 1]]) {

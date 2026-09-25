@@ -383,6 +383,8 @@ async function restartWithSubsong(track) {
   const selectedTrack = Number(selectSubsong(track));
   if (activeEngine === "sid" && sidPlayer?.state !== "disposed") {
     await sidPlayer.selectSong(selectedTrack);
+    const filterCanvas = $("tracker-grid").querySelector(".sid-filter-trace canvas");
+    if (filterCanvas) delete filterCanvas._sidFilterHistory;
     return;
   }
   if (initializing) {
@@ -433,6 +435,8 @@ function setSidMetadata(info) {
   sidEnvelopeStates.clear();
   sidNoiseStates.clear();
   sidOscillatorPhases.clear();
+  const filterCanvas = $("tracker-grid").querySelector(".sid-filter-trace canvas");
+  if (filterCanvas) delete filterCanvas._sidFilterHistory;
   const configured = sidPlayer?.getEmulationConfig?.();
   const configuredClock = configured?.c64Model && configured.forceC64Model ? `C64 ${configured.c64Model}` : undefined;
   const configuredModel = configured?.sidModel && configured.forceSidModel ? `Emulating ${configured.sidModel}` : undefined;
@@ -845,6 +849,63 @@ function renderSidOscillatorFrame(canvas) {
     canvas._sidTraceRenderedAt = now;
   }
 }
+function updateSidFilterHistory(canvas, cutoff, playing, now = performance.now()) {
+  const state = canvas._sidFilterHistory ??= { samples: [], time: 0, updatedAt: now, playing: false };
+  const elapsed = Math.max(0, now - state.updatedAt);
+  if (playing && state.playing) {
+    if (elapsed > 250) state.samples = [];
+    state.time += elapsed;
+  }
+  state.updatedAt = now;
+  state.playing = playing;
+  const last = state.samples.at(-1);
+  if (!last || playing && state.time > last.time && (cutoff !== last.cutoff || state.time - last.time >= 20)) state.samples.push({ time: state.time, cutoff });
+  while (state.samples.length > 1 && state.samples[0].time < state.time - 8000) state.samples.shift();
+  return state;
+}
+function drawSidFilterHistory(canvas, state) {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (!width || !height) return;
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#08191e";
+  context.fillRect(0, 0, width, height);
+  const left = 40;
+  const right = width - 12;
+  const top = 12;
+  const bottom = height - 22;
+  context.font = "10px monospace";
+  context.fillStyle = "#7ca19d";
+  context.strokeStyle = "rgba(119, 213, 187, .16)";
+  context.lineWidth = 1;
+  for (const value of [0, 1024, 2047]) {
+    const vertical = bottom - value / 2047 * (bottom - top);
+    context.fillText(String(value), 4, vertical + 3);
+    context.beginPath();
+    context.moveTo(left, vertical);
+    context.lineTo(right, vertical);
+    context.stroke();
+  }
+  context.fillText("-8 s", left, height - 5);
+  context.fillText("0 s", right - 18, height - 5);
+  context.strokeStyle = "#efb557";
+  context.lineWidth = 1.5;
+  context.beginPath();
+  let previousVertical;
+  for (const [index, sample] of state.samples.entries()) {
+    const horizontal = right - (state.time - sample.time) / 8000 * (right - left);
+    const vertical = bottom - sample.cutoff / 2047 * (bottom - top);
+    if (index === 0) context.moveTo(horizontal, vertical);
+    else {
+      context.lineTo(horizontal, previousVertical);
+      context.lineTo(horizontal, vertical);
+    }
+    previousVertical = vertical;
+  }
+  context.stroke();
+}
 function sidControlFlags(voice, status) {
   const control = status[voice * 7 + 4];
   const flags = [
@@ -1027,6 +1088,17 @@ function renderSidTrackerView() {
   });
   if (grid.dataset.sidStructureKey !== structureKey) {
     grid.replaceChildren(...[0, 1, 2].map((voice) => sidVoiceMonitor(voice, status, filterRouting, envelopes[voice])));
+    const filter = document.createElement("section");
+    filter.className = "sid-filter-trace";
+    const filterHeading = document.createElement("header");
+    const filterValue = textElement("p", "", "sid-filter-value");
+    for (const name of ["cutoff", "mode", "routing"]) filterValue.append(textElement("span", "", `sid-filter-${name}`));
+    filterHeading.append(textElement("p", "FILTER CUTOFF / REGISTER", "sid-filter-label"), filterValue);
+    const filterCanvas = document.createElement("canvas");
+    filterCanvas.setAttribute("role", "img");
+    filterCanvas.setAttribute("aria-label", "SID filter cutoff history, last 8 seconds, register range 0 to 2047");
+    filter.append(filterHeading, filterCanvas);
+    grid.append(filter);
     const digi = document.createElement("section");
     digi.className = "sid-digi-trace";
     digi.append(textElement("p", hasDigiTrace ? "V4 / DIGI / $D418 VOLUME DAC" : "V4 UNAVAILABLE / SID RUNTIME UPDATE REQUIRED", "sid-trace-label"));
@@ -1046,6 +1118,12 @@ function renderSidTrackerView() {
     grid.append(digi);
     grid.dataset.sidStructureKey = structureKey;
   }
+  const filterCanvas = grid.querySelector(".sid-filter-trace canvas");
+  const routing = [0, 1, 2].filter((voice) => filterRouting & (1 << voice)).map((voice) => `V${voice + 1}`).join(" + ") || "BYPASS";
+  grid.querySelector(".sid-filter-cutoff").textContent = `${String(cutoff).padStart(4, "0")} / 2047`;
+  grid.querySelector(".sid-filter-mode").textContent = filterMode;
+  grid.querySelector(".sid-filter-routing").textContent = routing;
+  drawSidFilterHistory(filterCanvas, updateSidFilterHistory(filterCanvas, cutoff, sidPlayer.state === "playing"));
   if (hasDigiTrace) {
     const samples = sidPlayer.readSidDigiTrace(selectedSidChip);
     let minimum = Infinity;
