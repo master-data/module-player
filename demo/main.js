@@ -74,6 +74,7 @@ let lastTrackerPositionKey;
 let sidRegisterDetailEnabled = true;
 let sidPhosphorEnabled = readStoredBoolean(SID_PHOSPHOR_STORAGE_KEY, false);
 let sidPhosphorStay = readStoredNumber(SID_PHOSPHOR_STAY_STORAGE_KEY, .25);
+let sidFilterTuningCustomized = false;
 const sidSystemRoms = {};
 let demoSidRomsReady;
 let lastMegaSidState;
@@ -886,7 +887,7 @@ function sidVoiceMonitor(voice, status, filterRouting, envelopeState) {
   envelopeHeader.append(textElement("p", "ENVELOPE", "sid-envelope-label"), textElement("p", envelopeState.phase.toUpperCase(), "sid-envelope-phase"));
   const settings = document.createElement("div");
   settings.className = "sid-envelope-settings";
-  for (const [name, value] of [["ATTACK", attackDecay >> 4], ["DECAY", attackDecay & 0x0f], ["SUSTAIN", sustainRelease >> 4], ["RELEASE", sustainRelease & 0x0f]]) settings.append(textElement("span", name), textElement("strong", String(value)));
+  for (const [name, value] of [["ATTACK", attackDecay >> 4], ["DECAY", attackDecay & 0x0f], ["SUSTAIN", sustainRelease >> 4], ["RELEASE", sustainRelease & 0x0f]]) settings.append(textElement("span", name), textElement("strong", String(value).padStart(2, "0")));
   envelopeHeader.append(settings);
   envelope.append(envelopeHeader);
   const envelopeCanvas = document.createElement("canvas");
@@ -938,7 +939,7 @@ function updateSidVoiceMonitor(card, voice, status, filterRouting, envelopeState
       badge.setAttribute("aria-label", `${flag.title}: ${flag.active ? "on" : "off"}`);
     }
     const settings = [attackDecay >> 4, attackDecay & 0x0f, sustainRelease >> 4, sustainRelease & 0x0f];
-    for (const [index, value] of settings.entries()) card.querySelectorAll(".sid-envelope-settings strong")[index].textContent = String(value);
+    for (const [index, value] of settings.entries()) card.querySelectorAll(".sid-envelope-settings strong")[index].textContent = String(value).padStart(2, "0");
     const facts = sidVoiceFacts(frequency, pulseWidth, filterRouting, voice);
     for (const [index, value] of facts.entries()) card.querySelectorAll(".sid-voice-values strong")[index].textContent = value;
   }
@@ -959,9 +960,11 @@ function renderSidTrackerView() {
   const registerDetailControl = $("tracker-sid-register-detail-control");
   const phosphorControl = $("tracker-sid-phosphor-control");
   const phosphorStayControl = $("tracker-sid-phosphor-stay-control");
+  const supportsFilterConfig = activeEngine === "sid" && sidPlayer?.supportsFilterConfig();
   registerDetailControl.hidden = activeEngine !== "sid";
   phosphorControl.hidden = activeEngine !== "sid";
   phosphorStayControl.hidden = activeEngine !== "sid";
+  for (const id of ["tracker-sid-filter-curve-control", "tracker-sid-filter-range-control", "tracker-sid-filter-caps-control", "tracker-sid-filter-waveforms-control"]) $(id).hidden = !supportsFilterConfig;
   if ($("tracker-sid-register-detail").checked !== sidRegisterDetailEnabled) $("tracker-sid-register-detail").checked = sidRegisterDetailEnabled;
   if ($("tracker-sid-phosphor").checked !== sidPhosphorEnabled) $("tracker-sid-phosphor").checked = sidPhosphorEnabled;
   if (Number($("tracker-sid-phosphor-stay").value) !== sidPhosphorStay) $("tracker-sid-phosphor-stay").value = String(sidPhosphorStay);
@@ -1052,7 +1055,7 @@ function renderSidTrackerView() {
       maximum = Math.max(maximum, sample);
     }
     const swing = samples.length ? Math.round((maximum - minimum) * 15) : 0;
-    const values = [sidHex(status[0x18], 2), `${status[0x18] & 0x0f} / 15`, `${swing} / 15`];
+    const values = [sidHex(status[0x18], 2), `${String(status[0x18] & 0x0f).padStart(2, "0")} / 15`, `${String(swing).padStart(2, "0")} / 15`];
     for (const [index, value] of [...grid.querySelectorAll(".sid-digi-facts dd")].entries()) value.textContent = values[index];
     drawTrackerScope(grid.querySelector(".sid-digi-trace canvas"), samples);
   }
@@ -1248,6 +1251,7 @@ function createConfiguredSidPlayer() {
     processorBufferSize: configuredProcessorBufferSize("sid"),
     audioContextSampleRate: Number($("audio-rate").value),
     emulationConfig: sidEmulationConfig(),
+    filterConfig: sidFilterConfig(),
     systemRoms: sidSystemRoms
   });
 }
@@ -1420,6 +1424,19 @@ function sidEmulationConfig() {
     ...(c64Model ? { c64Model, forceC64Model: true } : { forceC64Model: false }),
     ...(sidModel ? { sidModel, forceSidModel: true } : { forceSidModel: false }),
     digiBoost: $("sid-digi-boost").checked
+  };
+}
+function sidFilterConfig() {
+  if (!sidFilterTuningCustomized) return {};
+  const curve = $("tracker-sid-filter-curve").value;
+  const range = $("tracker-sid-filter-range").value;
+  const oldCaps = $("tracker-sid-filter-caps").value;
+  const combinedWaveforms = $("tracker-sid-filter-waveforms").value;
+  return {
+    ...(curve ? { filter6581Curve: Number(curve) } : {}),
+    ...(range ? { filter6581Range: Number(range) } : {}),
+    ...(oldCaps ? { old6581Caps: oldCaps === "true" } : {}),
+    ...(combinedWaveforms ? { combinedWaveforms } : {})
   };
 }
 function hasCompleteSidSystemRoms() {
@@ -1908,6 +1925,18 @@ $("tracker-sid-phosphor-stay").addEventListener("change", (event) => {
   }
   if ($("tracker-dialog").open && activeEngine === "sid") renderSidTrackerView();
 });
+for (const control of [$("tracker-sid-filter-curve"), $("tracker-sid-filter-range"), $("tracker-sid-filter-caps"), $("tracker-sid-filter-waveforms")]) {
+  control.addEventListener("change", () => {
+    if (activeEngine !== "sid" || !sidPlayer) return;
+    try {
+      sidFilterTuningCustomized = true;
+      sidPlayer.setFilterConfig(sidFilterConfig());
+      showStatus("SID filter tuning updated.");
+    } catch (error) {
+      showStatus(error.message);
+    }
+  });
+}
 $("silence").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setSilenceTimeout(Number(event.target.value)));
 $("zoom").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.visualization?.setZoom(Number(event.target.value)); });
 for (const control of [$("sid-c64-model"), $("sid-model"), $("sid-digi-boost")]) {

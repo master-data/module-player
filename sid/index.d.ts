@@ -42,6 +42,13 @@ export interface SidEmulationConfig {
   digiBoost?: boolean;
 }
 
+export interface SidFilterConfig {
+  filter6581Curve?: number;
+  filter6581Range?: number;
+  old6581Caps?: boolean;
+  combinedWaveforms?: "AVERAGE" | "WEAK" | "STRONG";
+}
+
 export interface SidVisualizationSource {
   readonly streamCount: number;
   readonly sampleLength: number;
@@ -66,6 +73,7 @@ export interface SidPlayerOptions {
   processorBufferSize?: number;
   engine?: SidEngine;
   emulationConfig?: SidEmulationConfig;
+  filterConfig?: SidFilterConfig;
   systemRoms?: SidSystemRoms;
 }
 
@@ -102,6 +110,8 @@ export class SidPlayer {
   setSystemRoms(roms?: SidSystemRoms): void;
   setEmulationConfig(config: SidEmulationConfig): void;
   getEmulationConfig(): Record<string, unknown> | undefined;
+  setFilterConfig(config: SidFilterConfig): void;
+  supportsFilterConfig(): boolean;
   getSidStatus(sidNumber?: number): Uint8Array | undefined;
   getSidWriteTrace(sidNumber?: number): SidWriteTrace[];
   getSidWriteTraceSnapshot(sidNumber?: number): readonly SidWriteTrace[];

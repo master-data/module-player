@@ -109,6 +109,7 @@ export class SidPlayer {
     this._processorBufferSize = options.processorBufferSize ?? 4096;
     this._engine = options.engine ?? "sidlite";
     this._emulationConfig = options.emulationConfig ?? {};
+    this._filterConfig = options.filterConfig ?? {};
     this._listeners = new Map();
     this._state = "initializing";
     this._volume = 1;
@@ -219,6 +220,7 @@ export class SidPlayer {
     const context = new this._module.SidPlayerContext();
     if (!context.configure(this._audioContext.sampleRate, true)) throw new Error(context.getLastError());
     if (Object.keys(this._emulationConfig).length && !context.setEmulationConfig(this._emulationConfig)) throw new Error(context.getLastError());
+    if (Object.keys(this._filterConfig).length && context.supportsFilterConfig?.() && !context.setFilterConfig(this._filterConfig)) throw new Error(context.getLastError());
     if (this._roms.kernal || this._roms.basic || this._roms.chargen) {
       if (!context.setSystemROMs(this._roms.kernal ?? null, this._roms.basic ?? null, this._roms.chargen ?? null)) throw new Error(context.getLastError());
     }
@@ -396,6 +398,16 @@ export class SidPlayer {
   }
 
   getEmulationConfig() { return this._sidContext?.getEmulationConfig?.(); }
+
+  setFilterConfig(config) {
+    if (!config || typeof config !== "object") throw new TypeError("SID filter config must be an object.");
+    this._filterConfig = { ...this._filterConfig, ...config };
+    if (!this._sidContext) return;
+    if (!this._sidContext.supportsFilterConfig?.()) throw new Error("SID filter configuration requires the reSIDfp engine.");
+    if (!this._sidContext.setFilterConfig(this._filterConfig)) throw new Error(this._sidContext.getLastError());
+  }
+
+  supportsFilterConfig() { return this._sidContext?.supportsFilterConfig?.() ?? false; }
 
   getSidStatus(sidNumber = 0) {
     if (!Number.isInteger(sidNumber) || sidNumber < 0) throw new RangeError("SID chip number must be a non-negative integer.");
