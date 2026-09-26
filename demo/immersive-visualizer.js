@@ -1,5 +1,5 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=19";
-import { ShaderScenes } from "./shader-scenes.js?v=6";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=21";
+import { ShaderScenes } from "./shader-scenes.js?v=12";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
@@ -1159,7 +1159,8 @@ export class ImmersiveVisualizer {
   drawShaderScene(context, scene, width, height, seed) {
     if (!this.prepareShaderScenes()) return false;
     return this.shaderScenes.draw(context, scene, width, height,
-      this.generalMotion ?? { time: this.elapsed, signal: this.signal, channels: this.channels }, seed, this.quality);
+      this.generalMotion ?? { time: this.elapsed, signal: this.signal, channels: this.channels }, seed, this.quality,
+      this.strobeEnabled && !this.reducedMotion ? (this.strobe?.opacity ?? 0) / .28 : 0, this.elapsed);
   }
 
   drawVignette(context, width, height) {

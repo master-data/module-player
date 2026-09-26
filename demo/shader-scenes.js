@@ -164,84 +164,191 @@ void main() {
 }`;
 
 const terrainShader = common + waveformShader + `
+uniform float beaconPulse;
+uniform sampler2D flightMap;
+uniform float flightClock;
+uniform vec4 cameraAudio;
+float mountainMass(vec2 position) {
+  float coarse = texture2D(terrainMap, position / 190.0).r;
+  return pow(coarse, 2.2) * (90.0 + audio.x * 2.0 + impact);
+}
 float baseElevation(vec2 position) {
-  float coarse = texture2D(terrainMap, position / 160.0).r;
-  float ridge = texture2D(terrainMap, position / 57.0 + vec2(.31, .67)).r;
-  float swell = sin(position.x * .11 + clock * .42) * cos(position.y * .085 - clock * .25);
-  return pow(coarse, 1.6) * (24.0 + audio.x * 1.6 + impact * .6)
-    + ridge * ridge * 3.0 + swell * (audio.y * .5 + impact * .2);
+  float rolling = texture2D(terrainMap, position / 100.0 + vec2(.31, .67)).r;
+  return mountainMass(position) + rolling * 3.0;
 }
 float elevation(vec2 position) {
   vec2 wave = waveAt(.5 + sin(position.x * .035 + position.y * .018) * .5);
   vec2 crossing = waveAt(.5 + sin(position.y * .027 - position.x * .016) * .5);
-  return baseElevation(position) + wave.x * 1.6 + crossing.y * 1.1;
+  return baseElevation(position) + wave.x * .6 + crossing.y * (.4 + audio.y * .1);
 }
-float surface(vec2 position, float distanceAlong) {
-  return elevation(position);
+const float flightRange = 240.0;
+vec2 flightPath(float travel) {
+  float angle = travel * .014 + sin(travel * .008) * .35;
+  float radius = 68.0 + sin(travel * .011) * 22.0;
+  return vec2(sin(angle), cos(angle)) * radius;
+}
+float flightHeight(vec2 position, float time) {
+  vec2 coordinate = position / 190.0 * 128.0 - .5;
+  vec2 base = floor(coordinate);
+  vec2 fraction = fract(coordinate);
+  vec2 inverse = 1.0 - fraction;
+  vec2 weight0 = inverse * inverse * inverse / 6.0;
+  vec2 weight1 = (3.0 * fraction * fraction * fraction - 6.0 * fraction * fraction + 4.0) / 6.0;
+  vec2 weight2 = (-3.0 * fraction * fraction * fraction + 3.0 * fraction * fraction + 3.0 * fraction + 1.0) / 6.0;
+  vec2 weight3 = fraction * fraction * fraction / 6.0;
+  vec2 lowerWeight = weight0 + weight1;
+  vec2 upperWeight = weight2 + weight3;
+  vec2 lower = (base - .5 + weight1 / lowerWeight) / 128.0;
+  vec2 upper = (base + 1.5 + weight3 / upperWeight) / 128.0;
+  float ground = texture2D(flightMap, lower).r * lowerWeight.x * lowerWeight.y
+    + texture2D(flightMap, vec2(upper.x, lower.y)).r * upperWeight.x * lowerWeight.y
+    + texture2D(flightMap, vec2(lower.x, upper.y)).r * lowerWeight.x * upperWeight.y
+    + texture2D(flightMap, upper).r * upperWeight.x * upperWeight.y;
+  return ground + 9.0 + (sin(time * .24 + seed * PI * 2.0) * .5 + .5) * 16.0;
 }
 vec3 sky(vec3 direction) {
   float altitude = max(direction.y, 0.0);
-  vec3 color = mix(vec3(.57, .62, .67), vec3(.07, .20, .37), pow(altitude, .45));
+  vec3 color = mix(vec3(.46, .56, .66), vec3(.045, .16, .31), pow(altitude, .45));
   vec3 sun = normalize(vec3(-.65, .42, .7));
   color += vec3(1.0, .69, .36) * pow(max(dot(direction, sun), 0.0), 160.0) * 1.4;
   return color;
 }
+float beaconBox(vec3 origin, vec3 direction, vec3 center, vec3 bounds) {
+  vec3 inverse = (step(vec3(0.0), direction) * 2.0 - 1.0) / max(abs(direction), vec3(.000001));
+  vec3 first = (center - bounds - origin) * inverse;
+  vec3 second = (center + bounds - origin) * inverse;
+  vec3 entry = min(first, second);
+  vec3 exit = max(first, second);
+  float nearDistance = max(entry.x, max(entry.y, entry.z));
+  float farDistance = min(exit.x, min(exit.y, exit.z));
+  return farDistance >= max(nearDistance, 0.0) ? max(nearDistance, 0.0) : 10000.0;
+}
 void main() {
   vec2 screen = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
-  float travel = clock * 2.7 + seed * 120.0;
-  vec2 path = vec2(sin(travel * .025) * 12.0, travel);
-  float altitude = baseElevation(path) + 7.8 + audio.x * .5;
-  vec3 origin = vec3(path.x, altitude, path.y);
-  vec3 forward = normalize(vec3(cos(travel * .025) * .3, -.24, 1.0));
-  vec3 horizontal = normalize(cross(vec3(0.0, 1.0, 0.0), forward));
-  vec3 vertical = cross(forward, horizontal);
-  vec3 direction = normalize(forward * 1.6 + horizontal * screen.x + vertical * screen.y);
-  float distanceAlong = .15;
-  float lastDistance = distanceAlong;
+  float travel = flightClock * 11.0 + seed * 120.0;
+  vec2 path = flightPath(travel);
+  vec2 ahead = flightPath(travel + 10.0);
+  vec2 beyond = flightPath(travel + 22.0);
+  vec2 heading = normalize(ahead - path);
+  vec2 nextHeading = normalize(beyond - ahead);
+  vec2 sway = vec2(heading.y, -heading.x) * cameraAudio.w * 2.5;
+  path += sway;
+  ahead += sway;
+  float lift = cameraAudio.x * 4.0 + cameraAudio.y * 1.5;
+  vec3 origin = vec3(path.x, flightHeight(path, flightClock) + lift, path.y);
+  float climb = (flightHeight(ahead, flightClock + 10.0 / 11.0) + lift - origin.y) / max(length(ahead - path), 1.0);
+  float pitch = -.16 + .42 * climb / sqrt(1.0 + climb * climb) + cameraAudio.x * .03 - cameraAudio.z * .02;
+  float turn = heading.x * nextHeading.y - heading.y * nextHeading.x;
+  float bank = .3 * turn / sqrt(.012 + turn * turn) + cameraAudio.w * .055
+    + sin(flightClock * .19 + seed * PI * 2.0) * .035
+    + sin(flightClock * .4 + seed * PI * 2.0) * cameraAudio.y * .025;
+  float yaw = sin(flightClock * .16 + seed * PI * 2.0) * .045 + cameraAudio.w * .045;
+  heading = normalize(mix(heading, normalize(-path), .8 + sin(flightClock * .15) * .06));
+  heading = vec2(heading.x * cos(yaw) + heading.y * sin(yaw), heading.y * cos(yaw) - heading.x * sin(yaw));
+  vec3 forward = normalize(vec3(heading.x, pitch, heading.y));
+  vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), forward));
+  vec3 up = cross(forward, right);
+  vec3 horizontal = right * cos(bank) + up * sin(bank);
+  vec3 vertical = up * cos(bank) - right * sin(bank);
+  vec3 direction = normalize(forward * (1.45 - cameraAudio.z * .035) + horizontal * screen.x + vertical * screen.y);
+  float distanceAlong = 0.0;
+  float lastDistance = 0.0;
   bool hit = false;
-  vec3 point = origin;
   for (int stepIndex = 0; stepIndex < 1024; stepIndex++) {
-    point = origin + direction * distanceAlong;
-    float gap = point.y - surface(point.xz, distanceAlong);
-    if (gap < max(.015, distanceAlong / resolution.y * .7)) { hit = true; break; }
-    if (distanceAlong > 150.0) break;
+    if (distanceAlong > flightRange) break;
+    vec3 probe = origin + direction * distanceAlong;
+    float gap = probe.y - elevation(probe.xz);
+    if (gap < max(.012, distanceAlong / resolution.y * .65)) { hit = true; break; }
     lastDistance = distanceAlong;
-    distanceAlong += clamp(gap * .2, .01, 1.6 + detail * .4);
+    distanceAlong += clamp(gap * .16, .006, 2.0);
   }
   vec3 color = sky(direction);
   if (hit) {
     for (int refine = 0; refine < 5; refine++) {
       float middle = (lastDistance + distanceAlong) * .5;
       vec3 probe = origin + direction * middle;
-      if (probe.y > surface(probe.xz, middle)) lastDistance = middle;
+      if (probe.y > elevation(probe.xz)) lastDistance = middle;
       else distanceAlong = middle;
     }
-    point = origin + direction * distanceAlong;
-    float epsilon = .14;
-    float floorHeight = surface(point.xz, distanceAlong);
+    vec3 point = origin + direction * distanceAlong;
+    float epsilon = .45;
     vec3 normal = normalize(vec3(
-      surface(point.xz - vec2(epsilon, 0.0), distanceAlong) - surface(point.xz + vec2(epsilon, 0.0), distanceAlong),
+      elevation(point.xz - vec2(epsilon, 0.0)) - elevation(point.xz + vec2(epsilon, 0.0)),
       epsilon * 2.0,
-      surface(point.xz - vec2(0.0, epsilon), distanceAlong) - surface(point.xz + vec2(0.0, epsilon), distanceAlong)));
+      elevation(point.xz - vec2(0.0, epsilon)) - elevation(point.xz + vec2(0.0, epsilon))));
     vec3 sun = normalize(vec3(-.65, .42, .7));
     float shade = 1.0;
-    for (int shadowStep = 1; shadowStep <= 8; shadowStep++) {
-      float offset = float(shadowStep) * .65;
-      vec3 probe = point + sun * offset;
-      shade = min(shade, smoothstep(-.3, .5, probe.y - elevation(probe.xz)));
+    for (int shadowStep = 1; shadowStep <= 12; shadowStep++) {
+      float offset = float(shadowStep) * .9;
+      vec3 probe = point + normal * .12 + sun * offset;
+      shade = min(shade, smoothstep(-.25, .6, probe.y - elevation(probe.xz)));
     }
-    vec3 rock = mix(vec3(.035, .12, .075), vec3(.27, .30, .28), smoothstep(3.0, 10.0, floorHeight));
-    rock = mix(rock, vec3(.46, .50, .48), smoothstep(12.0, 17.0, floorHeight) * smoothstep(.55, .9, normal.y));
+    float mineral = texture2D(terrainMap, point.xz / 32.0).r;
+    vec3 rock = mix(vec3(.065, .075, .08), vec3(.24, .22, .19), mineral);
+    float meadow = (1.0 - smoothstep(10.0, 20.0, point.y)) * smoothstep(.45, .8, normal.y);
+    rock = mix(rock, vec3(.065, .13, .08), meadow * .7);
+    float snow = smoothstep(17.0, 29.0, point.y + mineral * 5.0)
+      * smoothstep(.35, .8, normal.y);
+    rock = mix(rock, vec3(.72, .79, .82), snow);
     float diffuse = max(dot(normal, sun), 0.0);
-    color = rock * (vec3(.13, .22, .28) + vec3(1.5, 1.22, .83) * diffuse * (.2 + shade * .8));
+    color = rock * (vec3(.24, .30, .34) + vec3(1.1, .98, .8) * diffuse * (.4 + shade * .6));
     color += vec3(.012, .026, .025) * pow(diffuse, 4.0) * (audio.z + impact * .2);
-    float visibility = exp(-distanceAlong * .0075) * (1.0 - smoothstep(100.0, 150.0, distanceAlong));
+    float visibility = exp(-distanceAlong * .0035) * (1.0 - smoothstep(170.0, flightRange, distanceAlong));
     color = mix(sky(direction), color, visibility);
   }
+  float visibleDistance = hit ? distanceAlong : flightRange;
+  vec2 beaconLocation = vec2(0.0);
+  vec3 lamp = vec3(beaconLocation.x, baseElevation(beaconLocation) + 22.0, beaconLocation.y);
+  {
+    float towerDistance = beaconBox(origin, direction, lamp - vec3(0.0, 11.0, 0.0), vec3(.5, 11.0, .5));
+    float visibility = 1.0 - smoothstep(110.0, flightRange, length(lamp - origin));
+    if (towerDistance < visibleDistance) {
+      vec3 towerPoint = origin + direction * towerDistance;
+      float cap = smoothstep(lamp.y - 1.0, lamp.y - .65, towerPoint.y);
+      vec3 towerColor = mix(vec3(.025, .035, .04), vec3(.55, .055, .008) * (.45 + beaconPulse * 3.0), cap);
+      color = mix(color, towerColor, visibility * exp(-towerDistance * .006));
+      visibleDistance = towerDistance;
+    }
+  }
+  {
+    lamp.y += .25;
+    float along = dot(lamp - origin, direction);
+    if (along > 0.0 && along < visibleDistance) {
+      vec3 separation = origin + direction * along - lamp;
+      float radius = length(separation);
+      float footprint = max(along / resolution.y, .025);
+      float core = 1.0 - smoothstep(.12, .20 + footprint, radius);
+      float halo = exp(-radius * radius / 1.4) * beaconPulse;
+      float shaft = exp(-dot(separation.xz, separation.xz) / (.025 + footprint * footprint))
+        * exp(-abs(separation.y) / 2.8) * beaconPulse;
+      float visibility = 1.0 - smoothstep(110.0, flightRange, along);
+      color += visibility * (vec3(1.0, .32, .055) * (core * (.4 + beaconPulse * 2.0) + halo * .65)
+        + vec3(1.0, .65, .28) * shaft * .8);
+    }
+  }
+  vec3 beamDirection = normalize(vec3(sin(flightClock * .65), -.08, cos(flightClock * .65)));
+  float beam = 0.0;
+  float beamStep = min(visibleDistance, 150.0) / 40.0;
+  for (int beamIndex = 0; beamIndex < 40; beamIndex++) {
+    vec3 point = origin + direction * (float(beamIndex) + .5) * beamStep;
+    vec3 fromLamp = point - lamp;
+    float along = dot(fromLamp, beamDirection);
+    if (along <= 0.0 || along >= 120.0) continue;
+    float radius = length(fromLamp - beamDirection * along);
+    float cone = 1.0 - smoothstep(along * .018 + .15, along * .06 + .35, radius);
+    if (cone <= 0.0) continue;
+    float clear = 1.0;
+    for (int shadowIndex = 1; shadowIndex <= 16; shadowIndex++) {
+      vec3 probe = mix(lamp, point, float(shadowIndex) / 16.0);
+      if (probe.y < elevation(probe.xz)) { clear = 0.0; break; }
+    }
+    beam += cone * clear * exp(-along * .025) * beamStep;
+  }
+  color += vec3(1.0, .52, .18) * (1.0 - exp(-beam * .12)) * (.16 + beaconPulse * .84);
   gl_FragColor = vec4(finish(color), 1.0);
 }`;
 
-function heightTexture() {
+function heightTexture(octaves = 6) {
   const size = 512;
   const values = new Uint16Array(size * size * 4);
   const hash = (horizontal, vertical) => {
@@ -262,7 +369,7 @@ function heightTexture() {
     for (let column = 0; column < size; column++) {
       let value = 0;
       let amplitude = .5;
-      for (let octave = 0; octave < 6; octave++) {
+      for (let octave = 0; octave < octaves; octave++) {
         const period = 4 * 2 ** octave;
         value += noise(column / size * period, row / size * period, period) * amplitude;
         amplitude *= .5;
@@ -279,11 +386,57 @@ function heightTexture() {
   return texture;
 }
 
+export function createFlightHeightTexture(terrain) {
+  const size = 128;
+  const sourceSize = terrain.image.width;
+  const block = sourceSize / size;
+  let heights = new Float32Array(size * size);
+  for (let row = 0; row < sourceSize; row++) {
+    for (let column = 0; column < sourceSize; column++) {
+      const height = THREE.DataUtils.fromHalfFloat(terrain.image.data[(row * sourceSize + column) * 4]);
+      const index = Math.floor(row / block) * size + Math.floor(column / block);
+      heights[index] = Math.max(heights[index], Math.pow(height, 2.2) * 93.2);
+    }
+  }
+  const weights = [1, 4, 7, 10, 13, 10, 7, 4, 1];
+  for (const maximum of [true, false]) {
+    const radius = maximum ? 12 : 4;
+    for (const horizontal of [true, false]) {
+      const filtered = new Float32Array(heights.length);
+      for (let row = 0; row < size; row++) {
+        for (let column = 0; column < size; column++) {
+          let value = 0;
+          for (let offset = -radius; offset <= radius; offset++) {
+            const sourceRow = horizontal ? row : (row + offset + size) % size;
+            const sourceColumn = horizontal ? (column + offset + size) % size : column;
+            const height = heights[sourceRow * size + sourceColumn];
+            value = maximum ? Math.max(value, height) : value + height * weights[offset + radius] / 57;
+          }
+          filtered[row * size + column] = value;
+        }
+      }
+      heights = filtered;
+    }
+  }
+  const values = new Uint16Array(size * size * 4);
+  for (let index = 0; index < heights.length; index++) {
+    values[index * 4] = values[index * 4 + 1] = values[index * 4 + 2] = THREE.DataUtils.toHalfFloat(heights[index]);
+    values[index * 4 + 3] = THREE.DataUtils.toHalfFloat(1);
+  }
+  const texture = new THREE.DataTexture(values, size, size, THREE.RGBAFormat, THREE.HalfFloatType);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.magFilter = texture.minFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export class ShaderScenes {
   constructor() {
     this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, depth: false, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(1);
     this.texture = heightTexture();
+    this.mountainTexture = heightTexture(3);
+    this.flightTexture = createFlightHeightTexture(this.mountainTexture);
     this.geometry = new THREE.PlaneGeometry(2, 2);
     this.camera = new THREE.Camera();
     this.scene = new THREE.Scene();
@@ -291,7 +444,9 @@ export class ShaderScenes {
     this.uniforms = {
       resolution: { value: new THREE.Vector2() }, clock: { value: 0 }, seed: { value: 0 },
       audio: { value: new THREE.Vector4() }, impact: { value: 0 }, detail: { value: 1 },
-      terrainMap: { value: this.texture }, waveform: { value: this.waveform }
+      terrainMap: { value: this.texture }, flightMap: { value: this.flightTexture },
+      waveform: { value: this.waveform }, beaconPulse: { value: 0 }, flightClock: { value: 0 },
+      cameraAudio: { value: new THREE.Vector4() }
     };
     this.materials = [tunnelShader, terrainShader, rasterShader].map(fragmentShader => new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false
@@ -323,17 +478,23 @@ export class ShaderScenes {
     }
   }
 
-  draw(context, name, width, height, state, seed, quality) {
+  draw(context, name, width, height, state, seed, quality, beaconPulse = 0, flightTime = state.time) {
     if (this.renderer.getContext().isContextLost()) return false;
     const canvas = this.renderer.domElement;
     if (canvas.width !== width || canvas.height !== height) this.renderer.setSize(width, height, false);
     const { signal, time, impact = 0 } = state;
     this.uniforms.resolution.value.set(width, height);
     this.uniforms.clock.value = time;
+    this.uniforms.flightClock.value = flightTime;
+    const cameraAudio = state.flight?.values;
+    this.uniforms.cameraAudio.value.set(cameraAudio?.[0] ?? 0, cameraAudio?.[1] ?? 0,
+      cameraAudio?.[2] ?? 0, cameraAudio?.[3] ?? 0);
     this.uniforms.seed.value = seed;
     this.uniforms.audio.value.set(signal.low, signal.mid, signal.high, signal.level);
     this.uniforms.impact.value = impact;
     this.uniforms.detail.value = quality;
+    this.uniforms.terrainMap.value = name === "voxel-flight" ? this.mountainTexture : this.texture;
+    this.uniforms.beaconPulse.value = Number.isFinite(beaconPulse) ? THREE.MathUtils.clamp(beaconPulse, 0, 1) : 0;
     if (name === "raster-twist" || name === "voxel-flight") this.updateWaveform(state.channels);
     this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
     this.renderer.render(this.scene, this.camera);
@@ -345,6 +506,8 @@ export class ShaderScenes {
     this.materials.forEach(material => material.dispose());
     this.geometry.dispose();
     this.texture.dispose();
+    this.mountainTexture.dispose();
+    this.flightTexture.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
   }

@@ -35,6 +35,20 @@ function fixture({ channelCount = 2, audio = true, capture } = {}) {
   return { adapter, context, nodes, tracks, stream, options: () => options, setSample: value => { sample = value; } };
 }
 
+test("demo stylesheet retains capture, strobe and SID presentation contracts", async () => {
+  const css = await readFile(new URL("../demo/styles.css", import.meta.url), "utf8");
+  for (const selector of [".capture-controls", ".immersive-actions", ".immersive-effect", ".mega-sid-voice", ".sid-filter-trace", ".sid-filter-value"]) {
+    assert(css.includes(`${selector} {`), `Missing presentation rules for ${selector}`);
+  }
+  const strobe = css.match(/\.immersive-strobe-control\s*\{([^}]+)\}/)?.[1];
+  assert(strobe, "Strobe control styling must remain present");
+  assert.match(strobe, /opacity:\s*0\s*;/);
+  assert.match(strobe, /pointer-events:\s*none\s*;/);
+  assert(css.includes(".cursor-visible .immersive-strobe-control"));
+  assert(css.includes(".immersive-strobe-control:has(input:focus-visible)"));
+  assert(css.includes("#close-immersive-visualizer[hidden]"));
+});
+
 test("system audio refreshes stable stereo buffers and revision without audible routing", async () => {
   const setup = fixture();
   assert.equal(await setup.adapter.start(), true);

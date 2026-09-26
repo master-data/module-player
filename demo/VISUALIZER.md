@@ -48,7 +48,7 @@ particles; changing scene names did not produce a strong enough visual change.
 
 | Retired scene | Assessment and replacement direction |
 | --- | --- |
-| Orbit | Thin disconnected ellipses lacked a focal structure. Aperture uses segmented, spectrum-shaped rings. |
+| Orbit | Thin disconnected ellipses lacked a focal structure. Aperture uses overlapping, waveform-shaped iris blades. |
 | Horizon | Sparse bands and a wireframe floor felt unfinished. Contours fills the frame with layered relief. |
 | Lattice | Uniform grid density and weak hierarchy. Cascade makes magnitude and depth legible. |
 | Aurora | Flat, separated ribbons lacked the density of fabric. Silk combines two stereo thread fields. |
@@ -72,7 +72,12 @@ particles; changing scene names did not produce a strong enough visual change.
 
 ## Replacement deck
 
-- Aperture: segmented mechanical rings with six spectrum sectors.
+- Aperture: two counter-rotating layers of twelve curved iris blades, with
+    continuous teal and warm metallic gradients. Bass and beat momentum open the
+    central aperture; mids sweep the blades and stereo PCM bends their edges.
+    Six spectral bands shape highlights, with treble lifting the inner rim.
+    Adaptive detail reduces curve samples without removing blades or closing the
+    opening. It uses the shared inertial audio state and preserves the starfield.
 - Silk: flowing stereo thread fields with warm and cool layers.
 - Contours: stacked topographic ridges and highlighted elevation lines.
 - Diffraction: opposing curved line fans without a central ornament.
@@ -130,21 +135,52 @@ Three.js shaders, composited into the existing Canvas scene transitions.
 - Dot Vortex: a full-height polar point field with three-lobed traveling waves.
     Bass and beats expand its radius, mids wind its arms, and highs deform the
     silhouette. This foreground effect is separate from the persistent stars.
-- Voxel Flight: an original terrain flyover inspired by the landscape aesthetic
-    of Elevated, not a recreation of its code or assets. A cached, seamless
-    512-square half-float height map drives a continuous raymarched landscape
-    with rounded ridges, directional shadows, muted stone and atmospheric depth.
-    There is no position/height quantization or luminous contour banding.
-    Signed, inertial stereo PCM displaces the ground through two crossing,
-    smoothly sampled spatial waves, sharing Raster Twist's 64-point buffer.
-    Silence removes waveform relief; mono feeds both directions. Camera height
-    follows the base terrain with clearance for bounded waveform peaks.
-    Pixel-aware ray tolerance and extra grazing-ray iterations prevent unfinished
-    rays from exposing sky through the ground. Surface visibility fades fully
-    into the sky at the distance limit; a fixed normal sample spacing keeps
-    slope-based materials stable as the camera rises.
-    Bass and beats gently lift ridges; mids deform terrain and treble lifts
-    sunlit highlights. This is a heightfield, not a block or volumetric voxel engine.
+- Voxel Flight retains its scene name but is a continuous alpine flyover,
+    inspired by Elevated's mountain-flight aesthetic rather than literal cubes.
+    Three.js renders a raymarched heightfield with no grid snapping, block faces
+    or tiled edges. A cached seamless 512-square half-float height map supplies
+    broad mountain masses and softly rolling relief. Voxel uses three noise
+    octaves instead of six, without the sharp ridge or fine crag layers;
+    other GPU scenes retain their original texture. Continuous surface
+    normals control directional shadows, lowland vegetation and slope-dependent
+    snow on upper slopes. Distant ranges fade into matching sky fog over a
+    240-unit view distance; pixel-aware intersection tolerance and refinement
+    prevent grazing rays from exposing sky through the terrain.
+    The perspective camera circles one fixed beacon along a varying-radius
+    route, with climbs, descents and curvature-driven banking capped below
+    18 degrees. Gentle independent yaw (2.6 degrees) and roll (2 degrees) add
+    slow panning and rotation even in silence. The gaze eases around the beacon.
+    A separate 128-square clearance map is built once from the smoother terrain:
+    a conservative neighborhood maximum followed by smoothing keeps the camera
+    above peaks without following every small ridge. Convex cubic B-spline sampling
+    avoids velocity changes at texture-cell boundaries. A slow 16-unit altitude
+    cycle adds sweeping ascents and descents; bounded pitch looks ahead into both
+    the terrain and that cycle. Flight uses elapsed time rather than the music's
+    accelerated animation clock, so beats cannot jerk the camera speed. Reduced
+    motion slows that clock. Clearance includes maximum ridge and waveform relief.
+    Audio adds a separate critically damped camera response (3.5 radians/second),
+    integrated once per frame in shared motion rather than during drawing.
+    Bass and mids add up to 5.5 units of lift; stereo energy balance adds up to
+    2.5 units of lateral sway, slight yaw and banking. Midrange adds a slow roll,
+    and treble subtly changes pitch and field of view. Added banking stays below
+    five degrees. Clearance is sampled at the displaced camera position; audio
+    lift is upward only. Mono remains centered, polarity does not affect steering,
+    and missing audio eases back to the base flight. Reduced motion scales this
+    response to 20%. The strobe envelope does not drive camera jolts.
+    Signed, inertial stereo PCM adds two continuous crossing spatial waves,
+    sharing Raster Twist's 64-point buffer. Silence removes waveform relief and
+    mono feeds both directions. Bass and beats lift mountain masses, mids modulate
+    waveform relief and treble lifts highlights. This is an original procedural
+    landscape, not a recreation of the intro's code or assets. The Canvas Terrain
+    fallback remains available when WebGL is unavailable.
+    Exactly one world-anchored beacon stands at the center of the flight route.
+    Its red-orange lamp casts a rotating volumetric cone. View-ray integration
+    stops at nearer terrain or the tower, and samples toward the lamp reject
+    light blocked by the landscape. No repeated or respawning towers remain.
+    Its pulse uses the Strobe overlay's exact normalized opacity: immediate
+    peak, then the same 160 ms quadratic decay, with no independent beat clock.
+    With Strobe off or reduced motion enabled, the lamp and beam retain a dim
+    steady light without pulsing. Only GPU Voxel Flight contains this beacon.
 
 All five share inertial audio and reduced-motion timing. Canvas geometry adapts
 under load; drawing does not advance state, so outgoing and incoming crossfade
@@ -156,7 +192,7 @@ begins. The height map is generated once per renderer; frames are rendered live,
 not played from a prerecorded animation. The GPU canvas uses the same native
 pixel dimensions as the visible canvas, without adaptive resolution reduction.
 Closing retains GPU resources for reopening; disposing the visualizer releases
-materials, geometry, texture and WebGL context. Missing/lost WebGL falls back to
+materials, geometry, terrain, mountain and flight-clearance textures, and WebGL context. Missing/lost WebGL falls back to
 the original Canvas checker/twister effects and a variant of the existing Terrain scene.
 
 Cascade scales its normalized spectral contribution by the audio level, so

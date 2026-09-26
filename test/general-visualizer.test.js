@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GENERAL_SCENES, updateGeneralMotion } from "../demo/general-scenes.js";
 import { ImmersiveVisualizer } from "../demo/immersive-visualizer.js";
-import { SHADER_SCENES, ShaderScenes } from "../demo/shader-scenes.js";
+import { SHADER_SCENES, ShaderScenes, createFlightHeightTexture } from "../demo/shader-scenes.js";
+import { DataUtils, RepeatWrapping, LinearFilter } from "../demo/vendor/three/three.module.min.js";
 
 function renderer() {
   return Object.assign(Object.create(ImmersiveVisualizer.prototype), {
@@ -117,6 +118,44 @@ test("waveform inertia retains momentum and matches across 30, 60 and 240 Hz", (
     assert(motion.bands.every(value => Math.abs(value) < .001));
   }
   for (const result of results.slice(1)) result.forEach((value, index) => assert(Math.abs(value - results[0][index]) < 1e-10));
+});
+
+test("camera audio eases independently of refresh rate and settles without a source", () => {
+  const snapshots = [];
+  for (const rate of [30, 60, 144, 240]) {
+    const view = renderer();
+    view.channels = [new Float32Array(96).fill(.5), new Float32Array(96).fill(.1)];
+    const motion = updateGeneralMotion(view, 0);
+    const storage = motion.flight.values;
+    assert.deepEqual([...storage], [0, 0, 0, 0]);
+    updateGeneralMotion(view, 1 / rate, { strongBeat: true, beat: true });
+    assert(storage[0] > 0 && storage[0] < .005, "Bass must ease in without a camera kick");
+    for (let frame = 1; frame < rate; frame++) updateGeneralMotion(view, 1 / rate);
+    assert.equal(motion.flight.values, storage);
+    assert(storage[0] > .5 && storage[0] < .6);
+    assert(storage[3] < -.5 && storage[3] > -1, "Energy on the left must steer left");
+    snapshots.push([...storage]);
+    view.channels = [];
+    for (let frame = 0; frame < rate * 4; frame++) updateGeneralMotion(view, 1 / rate);
+    assert(storage.every(value => Math.abs(value) < .001), "Missing audio restores the base flight");
+  }
+  for (const result of snapshots.slice(1)) result.forEach((value, index) => assert(Math.abs(value - snapshots[0][index]) < 1e-10));
+});
+
+test("camera stereo follows channel energy, duplicates mono and reduces motion", () => {
+  const camera = (channels, reducedMotion = false) => {
+    const view = Object.assign(renderer(), { channels, reducedMotion });
+    return [...updateGeneralMotion(view, 1).flight.values];
+  };
+  const left = new Float32Array(96).fill(.5);
+  const right = new Float32Array(96).fill(.1);
+  const normal = camera([left, right]);
+  const reversed = camera([right, left]);
+  assert.equal(normal[3], -reversed[3]);
+  assert.deepEqual(camera([Float32Array.from(left, value => -value), right]), normal);
+  assert.equal(camera([left])[3], 0);
+  assert.equal(camera([left, left])[3], 0);
+  camera([left, right], true).forEach((value, index) => assert(Math.abs(value - normal[index] * .2) < 1e-10));
 });
 
 test("music has a fast attack and beat momentum decays consistently without a flash or step", () => {
@@ -252,6 +291,36 @@ test("GPU scenes dispatch at native dimensions with shared motion and fall back 
   }
 });
 
+test("Aperture retains two complete iris layers and an open center at every detail level", () => {
+  for (const quality of [.25, 1]) {
+    for (const impact of [0, 1.2]) {
+      const view = Object.assign(renderer(), { quality });
+      updateGeneralMotion(view, .2);
+      view.generalMotion.impact = impact;
+      const drawing = capture();
+      let fills = 0;
+      let gradients = 0;
+      const context = new Proxy(drawing.context, {
+        get: (target, name) => {
+          if (name === "fill") return (...args) => { fills++; return target.fill(...args); };
+          if (name === "createLinearGradient") return (...args) => { gradients++; return target.createLinearGradient(...args); };
+          return target[name];
+        }
+      });
+      view.drawScene(context, "aperture", 1440, 900, 720, 450);
+      assert.equal(fills, 24);
+      assert.equal(gradients, 24);
+      const coordinates = drawing.result().coordinates;
+      for (let index = 0; index < coordinates.length; index += 2) {
+        const radius = Math.hypot(coordinates[index], coordinates[index + 1]);
+        assert(radius > 900 * .06, "The central aperture must remain open");
+        assert(radius < 900 * .52, "Blades must remain inside the scene framing");
+      }
+      assert.equal(drawing.result().depth, 0);
+    }
+  }
+});
+
 test("Copper uses one smooth gradient per bar at every detail level", () => {
   for (const quality of [.25, 1]) {
     const view = Object.assign(renderer(), { quality });
@@ -302,19 +371,113 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
       getContext: () => ({ isContextLost: () => false }), render() {}
     },
     uniforms: {
-      resolution: { value: { set() {} } }, clock: {}, seed: {},
-      audio: { value: { set() {} } }, impact: {}, detail: {}
+      resolution: { value: { set() {} } }, clock: {}, flightClock: {}, seed: {}, terrainMap: {},
+      audio: { value: { set() {} } }, cameraAudio: { value: { set() {} } }, impact: {}, detail: {}, beaconPulse: {}
     }
   });
   const state = { time: 12, signal: renderer().signal, channels: [new Float32Array([.5, -.5])] };
+  const cameraUploads = [];
+  gpu.texture = { name: "original" };
+  gpu.mountainTexture = { name: "smooth" };
+  gpu.uniforms.cameraAudio.value.set = (...values) => cameraUploads.push(values);
   for (const scene of ["raster-twist", "voxel-flight"]) {
     gpu.waveform.fill(0);
     assert.equal(gpu.draw({ drawImage() {} }, scene, 1440, 900, state, .4, 1), true);
+    assert.equal(gpu.uniforms.terrainMap.value, scene === "voxel-flight" ? gpu.mountainTexture : gpu.texture);
     assert(gpu.waveform[0] > .5, scene);
     assert(gpu.waveform[126] < -.5, scene);
     gpu.draw({ drawImage() {} }, scene, 1440, 900, { ...state, channels: [] }, .4, 1);
     assert(gpu.waveform.every(value => value === 0), `${scene} must not retain another scene's waveform`);
   }
+  for (const [pulse, expected] of [[1, 1], [.25, .25], [-1, 0], [2, 1], [NaN, 0], [undefined, 0]]) {
+    gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1, pulse);
+    assert.equal(gpu.uniforms.beaconPulse.value, expected);
+  }
+  gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1, 1, 7);
+  assert.equal(gpu.uniforms.flightClock.value, 7);
+  assert.equal(gpu.uniforms.clock.value, state.time);
+  const flight = { values: new Float64Array([.5, .2, .1, -.6]) };
+  const before = [...flight.values];
+  gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, { ...state, flight }, .4, 1);
+  assert.deepEqual(cameraUploads.at(-1), before);
+  assert.deepEqual([...flight.values], before, "Drawing cannot advance camera smoothing");
+  gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1);
+  assert.deepEqual(cameraUploads.at(-1), [0, 0, 0, 0]);
+});
+
+test("flight clearance map smooths peaks while conservatively covering terrain and wrapped edges", () => {
+  const size = 512;
+  const data = new Uint16Array(size * size * 4).fill(DataUtils.toHalfFloat(.15));
+  for (const [column, row] of [[0, 0], [511, 511], [252, 256], [126, 384]]) {
+    data[(row * size + column) * 4] = DataUtils.toHalfFloat(1);
+  }
+  const before = data.slice();
+  const texture = createFlightHeightTexture({ image: { width: size, data } });
+  try {
+    assert.deepEqual(data, before);
+    assert.equal(texture.wrapS, RepeatWrapping);
+    assert.equal(texture.wrapT, RepeatWrapping);
+    assert.equal(texture.magFilter, LinearFilter);
+    const heightAt = (column, row) => DataUtils.fromHalfFloat(texture.image.data[
+      (((row + 128) % 128) * 128 + (column + 128) % 128) * 4]);
+    for (let row = 0; row < size; row++) {
+      for (let column = 0; column < size; column++) {
+        const horizontal = (column + .5) / 4 - .5;
+        const vertical = (row + .5) / 4 - .5;
+        const left = Math.floor(horizontal);
+        const top = Math.floor(vertical);
+        let lowerBound = Infinity;
+        for (let offsetY = -1; offsetY <= 2; offsetY++) {
+          for (let offsetX = -1; offsetX <= 2; offsetX++) {
+            lowerBound = Math.min(lowerBound, heightAt(left + offsetX, top + offsetY));
+          }
+        }
+        const mountain = Math.pow(DataUtils.fromHalfFloat(data[(row * size + column) * 4]), 2.2) * 93.2;
+        assert(lowerBound + .08 >= mountain, `Clearance at ${column},${row}`);
+      }
+    }
+    let largestStep = 0;
+    for (let row = 0; row < 128; row++) {
+      for (let column = 0; column < 128; column++) {
+        largestStep = Math.max(largestStep, Math.abs(heightAt(column, row) - heightAt(column + 1, row)),
+          Math.abs(heightAt(column, row) - heightAt(column, row + 1)));
+      }
+    }
+    assert(largestStep < 24, "A sharp peak must not become a sudden camera-height step");
+  } finally {
+    texture.dispose();
+  }
+});
+
+test("Voxel beacon shares the exact strobe envelope without advancing scene state", () => {
+  const view = renderer();
+  const motion = updateGeneralMotion(view, .1);
+  const pulses = [];
+  view.prepareShaderScenes = () => true;
+  view.shaderScenes = { draw: (...args) => {
+    assert.equal(args[4], motion);
+    assert.equal(args[8], view.elapsed, "Flight must use elapsed time, not the music-driven clock");
+    pulses.push(args[7]);
+    return true;
+  } };
+  const draw = () => view.drawShaderScene({}, "voxel-flight", 1440, 900, .4);
+  view.setStrobeEnabled(true);
+  view.updateStrobe(1 / 60, { beat: true });
+  draw();
+  draw();
+  view.updateStrobe(.08);
+  draw();
+  view.updateStrobe(.08);
+  draw();
+  assert.deepEqual(pulses, [1, 1, .25, 0]);
+  view.updateStrobe(1 / 60, { beat: true });
+  view.reducedMotion = true;
+  draw();
+  assert.equal(pulses.at(-1), 0);
+  view.reducedMotion = false;
+  view.setStrobeEnabled(false);
+  draw();
+  assert.equal(pulses.at(-1), 0);
 });
 
 test("GPU scene resources are released with the visualizer", () => {
@@ -327,6 +490,17 @@ test("GPU scene resources are released with the visualizer", () => {
   view.dispose();
   assert.equal(released, 1);
   assert.equal(view.shaderScenes, undefined);
+  const resources = [];
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
+    materials: [{ dispose: () => resources.push("material") }],
+    geometry: { dispose: () => resources.push("geometry") },
+    texture: { dispose: () => resources.push("terrain") },
+    mountainTexture: { dispose: () => resources.push("mountain") },
+    flightTexture: { dispose: () => resources.push("flight") },
+    renderer: { dispose: () => resources.push("renderer"), forceContextLoss: () => resources.push("context") }
+  });
+  gpu.dispose();
+  assert.deepEqual(resources, ["material", "geometry", "terrain", "mountain", "flight", "renderer", "context"]);
 });
 
 test("Dot Vortex occupies the portrait height even at minimum detail", () => {

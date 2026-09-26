@@ -132,6 +132,25 @@ export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
   motion.impactVelocity = (motion.impactVelocity - impactFrequency * momentum * elapsed) * impactDecay;
   motion.time ??= renderer.elapsed ?? 0;
   motion.time += elapsed * (.8 + motion.signal.level * 1.8 + motion.impact * 2) * (renderer.reducedMotion ? .22 : 1);
+  const flight = motion.flight ??= { values: new Float64Array(4), velocities: new Float64Array(4) };
+  let leftEnergy = 0;
+  let rightEnergy = 0;
+  for (let index = 0; index < points; index++) {
+    leftEnergy += motion.targets[energyOffset + index] / points;
+    rightEnergy += motion.targets[energyOffset + points + index] / points;
+  }
+  const totalEnergy = leftEnergy + rightEnergy;
+  const balance = (rightEnergy - leftEnergy) / (totalEnergy + .04) * Math.min(1, totalEnergy * 4);
+  const flightFrequency = 3.5;
+  const flightDecay = Math.exp(-flightFrequency * elapsed);
+  for (let index = 0; index < 4; index++) {
+    const measured = index === 3 ? balance : motion.targets[points * 2 + index];
+    const target = channels.length ? Math.max(-1, Math.min(1, measured)) * (renderer.reducedMotion ? .2 : 1) : 0;
+    const offset = flight.values[index] - target;
+    const velocity = flight.velocities[index] + flightFrequency * offset;
+    flight.values[index] = target + (offset + velocity * elapsed) * flightDecay;
+    flight.velocities[index] = (flight.velocities[index] - flightFrequency * velocity * elapsed) * flightDecay;
+  }
   return motion;
 }
 
@@ -570,27 +589,43 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     drawCrystalFacets(context, scale, time, 12, detail(9, 3), cutoff, voices,
       (voiceIndex, position) => audio(position % 1, voiceIndex % 2));
   } else {
-    const rings = detail(18, 7);
-    const segments = 6;
-    const points = detail(32, 12);
-    context.rotate(time * .045);
-    for (let ring = 0; ring < rings; ring++) {
-      const depth = ring / (rings - 1);
-      const radius = scale * (.08 + depth * .31) * (1 + low * .2 + impact * .2);
-      for (let segment = 0; segment < segments; segment++) {
-        const energy = Math.min(1, bands[segment] * 2 + mid * .15);
-        const start = segment / segments * TAU + depth * (.7 + Math.sin(time * .16) * .2 + impact * .25);
-        curve.begin();
-        for (let point = 0; point <= points; point++) {
-          const position = point / points;
-          const angle = start + position * TAU / segments * (.64 + energy * .23);
-          const ripple = audio((segment + position) / segments, segment % 2) * scale * .055;
-          const horizontal = Math.cos(angle) * (radius + ripple);
-          const vertical = Math.sin(angle) * (radius + ripple);
-          curve.point(horizontal, vertical);
+    const blades = 12;
+    const points = detail(30, 10);
+    const opening = scale * (.09 + low * .065 + impact * .075);
+    for (let layer = 0; layer < 2; layer++) {
+      const direction = layer ? 1 : -1;
+      const outer = scale * (layer ? .43 : .49);
+      const inner = opening * (layer ? 1 : 1.18);
+      const rotation = time * .085 * direction + seed * TAU + layer * .24;
+      const twist = direction * (.78 + Math.sin(time * .19) * .2 + mid * .24 + impact * .18);
+      for (let blade = 0; blade < blades; blade++) {
+        const energy = Math.min(1, bands[blade % 6] * 2 + high * .25);
+        const start = blade / blades * TAU + rotation;
+        const hue = blade % 4 === 0 ? palette[1] : palette[0] + layer * 12;
+        const gradient = context.createLinearGradient(
+          Math.cos(start) * inner, Math.sin(start) * inner,
+          Math.cos(start + twist) * outer, Math.sin(start + twist) * outer);
+        gradient.addColorStop(0, ink(hue, .82, 65 + high * 12));
+        gradient.addColorStop(.18, ink(hue, .75, 38 + energy * 14));
+        gradient.addColorStop(.55, ink(hue + 12, .6, 14 + energy * 9));
+        gradient.addColorStop(.82, ink(hue, .68, 32 + energy * 16));
+        gradient.addColorStop(1, ink(hue, .08, 12));
+        curve.begin(true);
+        for (let edge = 0; edge < 2; edge++) {
+          for (let point = 0; point <= points; point++) {
+            const position = edge ? 1 - point / points : point / points;
+            const taper = Math.sin(position * Math.PI);
+            const ripple = audio(position, blade % 2) * scale * .025 * taper;
+            const radius = inner + (outer - inner) * position + ripple;
+            const spread = (.32 + taper * .13) * (edge ? 1 : 0);
+            const angle = start + twist * position + spread;
+            curve.point(Math.cos(angle) * radius, Math.sin(angle) * radius);
+          }
         }
         curve.end();
-        stroke(context, palette[segment % 3 === 0 ? 1 : 0] + depth * 18, .2 + energy * .5 + depth * .15, lineWidth * (ring % 7 === 0 ? 2 : 1));
+        context.fillStyle = gradient;
+        context.fill();
+        stroke(context, hue, (layer ? .26 : .12) + energy * .18, lineWidth);
       }
     }
   }
