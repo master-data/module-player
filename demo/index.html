@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Module Player</title>
   <link rel="icon" href="favicon.ico">
-  <link rel="stylesheet" href="styles.css?v=56">
+  <link rel="stylesheet" href="styles.css?v=58">
 </head>
 <body>
   <main class="player-shell">
@@ -136,12 +136,16 @@
           </div>
           <div class="immersive-actions">
             <p id="immersive-effect" class="immersive-effect" aria-label="Current effect"></p>
+            <label id="immersive-strobe-control" class="immersive-strobe-control">
+              <input id="immersive-strobe" type="checkbox">
+              <span>Strobe</span>
+            </label>
             <button id="close-immersive-visualizer" class="command" type="button" hidden>Close visualizer</button>
           </div>
         </header>
       </div>
     </div>
   </dialog>
-  <script type="module" src="main.js?v=139"></script>
+  <script type="module" src="main.js?v=150"></script>
 </body>
 </html>

@@ -96,12 +96,14 @@ to distinguish the filled landscape from Wavegarden's separate line-wave effect.
 Scenes use a nonrepeating shuffled deck, musical transition cues and a bounded
 maximum hold. Effects crossfade over 0.8-1.2 seconds with smooth, balanced opacity;
 reduced motion lengthens the fade. Crossfades retain each scene's seed.
-A persistent 180-star circular field runs behind both the general visualizer and
+A persistent 360-star circular field runs behind both the general visualizer and
 MEGABOOST. Stars orbit the screen center with depth-dependent speeds, using the
 same radius scale on both axes for circular motion. The field extends beyond
 the viewport diagonal, including in silence, so the screen clips the outer
 orbits instead of showing a circular boundary.
-Energy drives rotation speed and brightness, bass gently expands the orbits,
+Translucent points use 16-47% opacity and respect parent alpha, keeping the field
+behind the main geometry rather than competing with it. Energy drives
+rotation speed and brightness, bass gently expands the orbits,
 treble enlarges the stars, and smoothed beat accents brighten and expand the field.
 Stars render as clean points without trails and advance once per frame, independently of effect seeds and
 transitions. The field is drawn once beneath
@@ -121,6 +123,46 @@ Interference and Weave use closed quadratic splines with matching endpoints
 and tangents across the wraparound. Their final audio sample need not equal the
 first; the closing curve blends those control points without a gap or straight
 closing segment. Other effects retain their intentionally open paths.
+
+The fullscreen Strobe checkbox defaults to off and toggles immediately without
+a confirmation prompt. Explicit changes are saved in local storage under
+`module-player.immersive-strobe` and restored on reload and when opening the view.
+Unavailable storage falls back to an in-memory preference for the page session.
+Detected beats trigger an immediate 28% overlay peak on the same rendered frame,
+followed by a 160 ms quadratic fade-out, with no fade-in delay. Strobe uses a
+separate bass attack detector, bypassing the scene director's tempo-based beat gap.
+System audio supplies dedicated 30-180 Hz analysis: each channel passes through
+a 30 Hz high-pass and two 180 Hz low-pass filters, without connecting to the
+audible output. Bass history uses a sample-rate-scaled power-of-two window of at
+least 20 ms (1024 samples at 48 kHz). Energy is the strongest RMS of four short
+blocks within that history (256 samples each at 48 kHz), so pre-hit silence does
+not dilute the attack while retained history reduces bass-cycle ripple. The stronger
+channel is used so opposite stereo phases cannot cancel. Filters and analysis
+windows have inherent response time; there is no additional trigger queue.
+Module sources without dedicated bass analysis use the existing low-band estimate,
+requiring it to exceed midrange by 35% and exceed treble. This fallback is less
+frequency-selective than the system-audio filters.
+Only bass rise contributes to attack strength, with a gate of .045 plus 3 times
+its recent average. Bass must exceed .12 and rise by more than 18% of its previous
+level. Overall volume and midrange rises cannot trigger on their own. After a
+hit, bass must fall below 70% of its peak before another attack can fire, avoiding
+multiple flashes within one hit without a timed cooldown. This is bass selection,
+not instrument classification: a bass-note attack can also trigger it.
+Cached audio revisions do not
+retrigger it, and source changes reset its history. Timing and maximum resolvable
+hit rate still depend on fresh audio data and browser frame scheduling, so this
+is not sample-accurate detection. There
+is no free-running flash during silence and no flashing
+while SID playback is paused. Strobe is available in both Visualizer and
+MEGABOOST, including system-audio visualization. Its control follows the close
+button's inactivity timeout even while active, reappearing on pointer movement,
+pointer down or keyboard activity. Keyboard focus keeps it visible; mouse focus
+does not prevent auto-hide. Closing the view disables strobe without clearing
+the saved choice. Reduced-motion preferences disable strobe, including changes
+made during playback, without overwriting the preference. Turning reduced motion
+off does not resume strobe until the view is reopened or the toggle is enabled.
+Rapid flashing can trigger photosensitive seizures; the overlay opacity is not
+a guarantee of photosensitivity safety.
 
 General scenes share a critically damped waveform and spectrum state, updated
 once per frame before either crossfade layer is drawn. Its exact spring step

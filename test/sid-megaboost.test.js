@@ -170,8 +170,11 @@ test("opening immersive playback suspends dashboard scopes and prevents restart 
   const source = await readFile(new URL("../demo/main.js", import.meta.url), "utf8");
   let stops = 0;
   let starts = 0;
+  let strobeRestores = 0;
   const runtime = vm.createContext({
     visualizationInput: "module",
+    immersiveStrobePreference: true,
+    setImmersiveStrobe: enabled => { assert.equal(enabled, true); strobeRestores++; },
     setImmersiveMode() {}, updateImmersiveLabels() {}, openDialog() {}, updateSidWriteTracing() {}, showImmersiveCursor() {},
     stopScopeLoop: () => stops++, immersiveVisualizer: { start: () => starts++ }, document: { fullscreenElement: {} }
   });
@@ -179,6 +182,7 @@ test("opening immersive playback suspends dashboard scopes and prevents restart 
   runtime.openImmersive("mega", {});
   assert.equal(stops, 1);
   assert.equal(starts, 1);
+  assert.equal(strobeRestores, 1);
   runtime.$ = () => ({ open: true });
   runtime.draw = () => assert.fail("Hidden scopes must not draw");
   const start = source.indexOf("function startScopeLoop(");

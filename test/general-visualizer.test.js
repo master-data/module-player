@@ -493,7 +493,190 @@ test("starfield persists through scene changes and drawing never advances it", (
   view.updateStarfield(1, { playing: true });
   assert(view.starfield.time > time);
   assert.equal(view.starfield.stars, stars);
-  assert.equal(stars.length, 180);
+  assert.equal(stars.length, 360);
+  assert(stars.every((star) => star.size >= 1 && star.size <= 2.1));
+});
+
+test("strobe detects fresh attacks without a timed gap or sustained-tone retriggers", () => {
+  for (const rate of [30, 60, 240]) {
+    const view = renderer();
+    view.setStrobeEnabled(true);
+    const measure = level => ({ level, low: level, mid: level * .3, high: level * .15 });
+    const hits = [];
+    for (let frame = 0; frame < 30; frame++) {
+      const hit = view.detectStrobeHit(measure(frame % 3 === 0 ? .5 : .05));
+      view.updateStrobe(1 / rate, { beat: hit });
+      if (hit) {
+        hits.push(frame);
+        assert.equal(view.strobe.opacity, .28);
+      }
+    }
+    assert.deepEqual(hits, Array.from({ length: 10 }, (_, index) => index * 3));
+    view.strobeOnset = undefined;
+    assert.equal(view.detectStrobeHit(measure(0)), false);
+    assert.equal(view.detectStrobeHit(measure(.01)), false, "Small rises must stay below the higher gate");
+    assert.equal(view.detectStrobeHit(measure(0)), false);
+    assert.equal(view.detectStrobeHit(measure(.15)), true);
+    assert.equal(view.detectStrobeHit(measure(.3)), false);
+    for (let frame = 0; frame < 100; frame++) assert.equal(view.detectStrobeHit(measure(.3)), false);
+    assert.equal(view.detectStrobeHit(measure(0)), false);
+    assert.equal(view.detectStrobeHit(measure(.02)), false, "Quiet fluctuations must not flash after sustained audio");
+    for (let frame = 0; frame < 100; frame++) {
+      assert.equal(view.detectStrobeHit(measure(frame % 2 ? .025 : 0)), false);
+    }
+    assert.equal(view.detectStrobeHit(measure(0)), false);
+    assert.equal(view.detectStrobeHit(measure(.15)), true, "Clear attacks must still trigger immediately");
+  }
+});
+
+test("strobe requires bass attacks rather than midrange, treble or overall volume", () => {
+  const view = renderer();
+  assert.equal(view.detectStrobeHit({ low: .3, mid: 0, high: 0 }), true);
+  assert.equal(view.detectStrobeHit({ low: .29, mid: 0, high: 0 }), false);
+  assert.equal(view.detectStrobeHit({ low: .5, mid: 0, high: 0 }), false, "A ripple within the same bass hit must not re-arm the trigger");
+  const quiet = { level: .08, low: .06, mid: .05, high: .04 };
+  const reset = () => { view.strobeOnset = undefined; view.detectStrobeHit(quiet); };
+  reset();
+  assert.equal(view.detectStrobeHit({ level: .5, low: .08, mid: .2, high: .9 }), false, "Treble-led attacks must not flash");
+  reset();
+  view.detectStrobeHit({ level: .6, low: .6, mid: .3, high: .2 });
+  view.detectStrobeHit({ level: .6, low: .6, mid: .3, high: .2 });
+  assert.equal(view.detectStrobeHit({ level: .9, low: .6, mid: .9, high: .8 }), false, "Midrange and volume increases without bass attack must not flash");
+  reset();
+  for (let step = 1; step <= 30; step++) {
+    const level = .08 + step * .02;
+    assert.equal(view.detectStrobeHit({ level, low: level, mid: level, high: level * .5 }), false, "Gradual swells must not flash");
+  }
+  reset();
+  assert.equal(view.detectStrobeHit({ level: .6, low: .4, mid: .7, high: .55 }), false, "Mid-led snare-like attacks must not flash");
+  for (const impact of [
+    { level: .6, low: .8, mid: .3, high: .15 },
+    { level: .08, low: .5, mid: .1, high: .05 }
+  ]) {
+    reset();
+    for (let hit = 0; hit < 8; hit++) {
+      assert.equal(view.detectStrobeHit(impact), true, "Bass impacts must trigger without a cooldown or overall volume rise");
+      assert.equal(view.detectStrobeHit(quiet), false);
+    }
+  }
+});
+
+test("strobe does not retrigger cached audio or synthesize hits without a source", () => {
+  const view = renderer();
+  const source = { revision: 1, readChannels: () => [new Float32Array(256).fill(.3)] };
+  Object.assign(view, {
+    getSource: () => source,
+    previousSignal: { level: 0, low: 0, mid: 0, high: 0 },
+    music: { toneReady: false }, signalSource: undefined
+  });
+  view.readSignal();
+  assert.equal(view.strobeHit, true);
+  const onset = view.strobeOnset;
+  view.readSignal();
+  assert.equal(view.strobeHit, false);
+  assert.equal(view.strobeOnset, onset);
+  source.revision++;
+  view.readSignal();
+  assert.equal(view.strobeHit, false);
+  for (let frame = 0; frame < 12; frame++) {
+    source.revision++;
+    source.readChannels = () => [new Float32Array(256).fill(frame % 2 ? .3 : .001)];
+    view.readSignal();
+    assert.equal(view.strobeHit, Boolean(frame % 2), "Fresh PCM attacks must trigger without waiting for scene beats");
+  }
+  view.getSource = () => undefined;
+  view.readSignal();
+  assert.equal(view.strobeHit, false);
+  assert.equal(view.strobeOnset, undefined);
+  view.getSource = () => source;
+  source.readChannels = () => [new Float32Array(256).fill(.5)];
+  source.readBassEnergy = () => 0;
+  source.revision++;
+  view.readSignal();
+  assert.equal(view.strobeHit, false, "Full-band audio cannot override a silent bass analyser");
+  source.readBassEnergy = () => .5;
+  source.revision++;
+  view.readSignal();
+  assert.equal(view.strobeHit, true, "Filtered bass must trigger without an overall level rise");
+});
+
+test("strobe follows every detected beat immediately and respects reduced motion", () => {
+  for (const rate of [30, 60, 240]) {
+    const view = renderer();
+    view.updateStrobe(1 / rate, { beat: true });
+    assert.equal(view.strobe, undefined);
+    assert.equal(view.setStrobeEnabled(true), true);
+    const flashes = [];
+    let peak = 0;
+    for (let frame = 0; frame < rate * 5; frame++) {
+      const previousFlash = view.strobe.lastFlashAt;
+      view.updateStrobe(1 / rate, { beat: true });
+      if (view.strobe.lastFlashAt !== previousFlash) {
+        flashes.push(view.strobe.lastFlashAt);
+        assert.equal(view.strobe.opacity, .28, "Flash must peak on the detected beat frame");
+      }
+      peak = Math.max(peak, view.strobe.opacity);
+      assert(view.strobe.opacity >= 0 && view.strobe.opacity <= .28);
+    }
+    assert(peak > .25);
+    assert.equal(flashes.length, rate * 5, "No detected beats may be skipped by a strobe cooldown");
+    view.updateStrobe(.2);
+    assert.equal(view.strobe.opacity, 0);
+    const lastFlash = view.strobe.lastFlashAt;
+    view.signal.level = 0;
+    view.updateStrobe(1, { beat: false });
+    assert.equal(view.strobe.lastFlashAt, lastFlash);
+    view.signal.level = .01;
+    view.updateStrobe(.01, { beat: true });
+    assert.equal(view.strobe.opacity, .28, "Quiet detected beats must not be rejected by a second threshold");
+    view.updateStrobe(.08);
+    assert.equal(view.strobe.opacity, .07);
+    view.updateStrobe(.01, { beat: true }, { playing: false });
+    assert.equal(view.strobe.opacity, 0);
+    view.setStrobeEnabled(false);
+    assert.equal(view.strobe.opacity, 0);
+    view.setStrobeEnabled(true);
+    view.reducedMotion = true;
+    view.updateStrobe(.01, { beat: true });
+    assert.equal(view.strobeEnabled, false);
+    assert.equal(view.setStrobeEnabled(true), false);
+  }
+});
+
+test("strobe draws one bounded overlay without advancing its envelope", () => {
+  const view = renderer();
+  const drawing = capture();
+  view.drawStrobe(drawing.context, 1440, 900);
+  assert.equal(drawing.result().points, 0);
+  view.setStrobeEnabled(true);
+  view.updateStrobe(.01, { beat: true });
+  view.updateStrobe(.08);
+  const state = structuredClone(view.strobe);
+  view.drawStrobe(drawing.context, 1440, 900);
+  assert.equal(drawing.result().points, 1);
+  assert.equal(drawing.result().depth, 0);
+  assert.deepEqual(view.strobe, state);
+  view.setStrobeEnabled(false);
+  view.drawStrobe(drawing.context, 1440, 900);
+  assert.equal(drawing.result().points, 1);
+});
+
+test("starfield remains translucent even at maximum energy and respects parent alpha", () => {
+  const view = renderer();
+  view.updateStarfield(0);
+  Object.assign(view.starfield, { energy: 1, bass: 1, treble: 1, accent: 1 });
+  const alphas = [];
+  const context = {
+    globalAlpha: .5,
+    save() { this.savedAlpha = this.globalAlpha; },
+    restore() { this.globalAlpha = this.savedAlpha; },
+    beginPath() {}, arc() {},
+    fill() { alphas.push(this.globalAlpha); }
+  };
+  view.drawStarfield(context, 1440, 900);
+  assert.equal(alphas.length, 360);
+  assert(alphas.every(alpha => alpha > 0 && alpha <= .235));
+  assert.equal(context.globalAlpha, .5);
 });
 
 test("starfield motion is refresh-rate independent and reduced motion is slower", () => {

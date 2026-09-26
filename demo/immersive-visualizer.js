@@ -223,12 +223,14 @@ export class ImmersiveVisualizer {
   }
 
   readSignal() {
+    this.strobeHit = false;
     const source = this.getSource?.();
     const revision = source?.revision;
     if (source && Number.isFinite(revision) && source === this.signalSource && revision === this.signalRevision && this.measuredSignal) {
       this.smoothSignal(this.measuredSignal);
       return;
     }
+    if (source !== this.signalSource || (Number.isFinite(revision) && revision < this.signalRevision)) this.strobeOnset = undefined;
     this.signalSource = source;
     this.signalRevision = revision;
     this.measuredSignal = undefined;
@@ -246,6 +248,7 @@ export class ImmersiveVisualizer {
     }
     this.channels = channels;
     if (!channels.length) {
+      this.strobeOnset = undefined;
       const idle = 0.035 + Math.sin(this.elapsed * 0.7) * 0.008;
       this.smoothSignal({ level: idle, peak: idle, low: idle, mid: idle * 0.7, high: idle * 0.4 });
       return;
@@ -284,7 +287,34 @@ export class ImmersiveVisualizer {
       mid: clamp(Math.pow(mid / points, 0.45) * 2.6),
       high: clamp(Math.pow(high / points, 0.45) * 2)
     };
+    const bassEnergy = source?.readBassEnergy?.();
+    this.detectStrobeHit(Number.isFinite(bassEnergy)
+      ? { low: bassEnergy, mid: 0, high: 0 }
+      : this.measuredSignal);
     this.smoothSignal(this.measuredSignal);
+  }
+
+  detectStrobeHit(measured) {
+    const detector = this.strobeOnset ??= {
+      previous: { level: 0, low: 0, mid: 0, high: 0 }, averageRise: 0, peakBass: 0, armed: true
+    };
+    const lowRise = Math.max(0, measured.low - detector.previous.low);
+    const rise = lowRise;
+    const threshold = .045 + detector.averageRise * 3;
+    if (!detector.armed) {
+      detector.peakBass = Math.max(detector.peakBass, measured.low);
+      if (measured.low < detector.peakBass * .7) detector.armed = true;
+    }
+    this.strobeHit = detector.armed && rise > threshold
+      && rise > detector.previous.low * .18 && measured.low > .12
+      && measured.low > measured.mid * 1.35 && measured.low > measured.high;
+    if (this.strobeHit) {
+      detector.armed = false;
+      detector.peakBass = measured.low;
+    }
+    detector.averageRise = mix(detector.averageRise, rise, .04);
+    detector.previous = measured;
+    return this.strobeHit;
   }
 
   readTone(samples) {
@@ -476,11 +506,11 @@ export class ImmersiveVisualizer {
   updateStarfield(delta, sidState, musicalEvent = {}) {
     this.starfield ??= {
       time: 0, energy: 0, bass: 0, treble: 0, pulse: 0, accent: 0,
-      stars: Array.from({ length: 180 }, () => ({
+      stars: Array.from({ length: 360 }, () => ({
         angle: randomUnit() * TAU,
         orbit: Math.sqrt(randomUnit()),
         depth: randomUnit(),
-        size: .6 + randomUnit() * .8,
+        size: 1 + randomUnit() * 1.1,
         tint: randomUnit()
       }))
     };
@@ -495,7 +525,7 @@ export class ImmersiveVisualizer {
     if (musicalEvent.beat) field.pulse = Math.min(1, field.pulse + (musicalEvent.strongBeat ? .8 : .45));
     field.pulse *= Math.exp(-delta / .45);
     field.accent = mix(field.accent, field.pulse, follow(delta, .12));
-    field.time += delta * motion * (.075 + energy * .18 + bass * .1);
+    field.time += delta * motion * (.12 + energy * .3 + bass * .14);
   }
 
   drawStarfield(context, width, height) {
@@ -505,19 +535,55 @@ export class ImmersiveVisualizer {
     const scale = Math.hypot(width, height) * .65;
     const pixelRatio = this.pixelRatio ?? 1;
     context.save();
+    const baseAlpha = context.globalAlpha;
     context.globalCompositeOperation = "source-over";
     for (const star of field.stars) {
       const angle = star.angle + field.time * (.5 + (1 - star.depth) * .8);
       const orbit = scale * star.orbit * (.85 + motion * (field.bass * .1 + field.accent * .05));
       const horizontal = width * .5 + Math.cos(angle) * orbit;
       const vertical = height * .5 + Math.sin(angle) * orbit;
-      const radius = star.size * (.65 + (1 - star.depth) * .65 + field.treble * .35) * pixelRatio;
-      context.globalAlpha = clamp(.2 + (1 - star.depth) * .3 + field.energy * .2 + motion * field.accent * .2);
+      const radius = star.size * (.8 + (1 - star.depth) * .8 + field.treble * .45) * pixelRatio;
+      context.globalAlpha = baseAlpha * (.16 + (1 - star.depth) * .18 + field.energy * .08 + motion * field.accent * .05);
       context.fillStyle = star.tint < .2 ? "#f5d9b0" : star.tint > .8 ? "#9adbea" : "#e3edf2";
       context.beginPath();
       context.arc(horizontal, vertical, radius, 0, TAU);
       context.fill();
     }
+    context.restore();
+  }
+
+  setStrobeEnabled(enabled) {
+    this.strobeEnabled = Boolean(enabled) && !this.reducedMotion;
+    this.strobe = { time: 0, lastFlashAt: -Infinity, age: 1, opacity: 0 };
+    return this.strobeEnabled;
+  }
+
+  updateStrobe(delta, musicalEvent = {}, sidState) {
+    if (this.reducedMotion && this.strobeEnabled) this.setStrobeEnabled(false);
+    if (!this.strobeEnabled || sidState?.playing === false) {
+      if (this.strobe) {
+        this.strobe.opacity = 0;
+        this.strobe.age = 1;
+      }
+      return;
+    }
+    const strobe = this.strobe;
+    strobe.time += delta;
+    strobe.age += delta;
+    if (musicalEvent.beat) {
+      strobe.age = 0;
+      strobe.lastFlashAt = strobe.time;
+    }
+    strobe.opacity = strobe.age < .16 ? (1 - strobe.age / .16) ** 2 * .28 : 0;
+  }
+
+  drawStrobe(context, width, height) {
+    if (!this.strobeEnabled || this.reducedMotion || !this.strobe?.opacity) return;
+    context.save();
+    context.globalCompositeOperation = "source-over";
+    context.globalAlpha = this.strobe.opacity;
+    context.fillStyle = "#e9f5ff";
+    context.fillRect(0, 0, width, height);
     context.restore();
   }
 
@@ -541,6 +607,7 @@ export class ImmersiveVisualizer {
     this.updateCamera(delta, musicalEvent);
     this.directScene(delta, musicalEvent, sidState);
     this.updateStarfield(delta, sidState, musicalEvent);
+    this.updateStrobe(delta, { beat: this.strobeHit }, sidState);
     if (this.resizePending || (this.pixelRatio !== undefined && this.pixelRatio !== (globalThis.devicePixelRatio || 1))) this.applyResize();
     this.paint(delta, sidState, sidFeedback);
     if (this.onFrame) {
@@ -616,6 +683,7 @@ export class ImmersiveVisualizer {
     }
     context.restore();
     this.drawVignette(context, width, height);
+    this.drawStrobe(context, width, height);
   }
 
   applySidRegisterFeedback(sidState, delta) {

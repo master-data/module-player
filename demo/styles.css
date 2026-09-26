@@ -825,6 +825,47 @@ dialog.tracker-dialog[open] {
     max-width: 50%;
 }
 
+.immersive-strobe-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 10px;
+    margin: 0;
+    max-width: 100%;
+    color: #e3edf2;
+    font-size: 12px;
+    letter-spacing: 0;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease;
+}
+
+.immersive-strobe-control input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: #77edc7;
+}
+
+.cursor-visible .immersive-strobe-control,
+.immersive-strobe-control:has(input:focus-visible) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.strobe-active .immersive-strobe-control {
+    background: #102a2a;
+    border-radius: 4px;
+}
+
+.immersive-strobe-control:has(input:disabled) {
+    color: #9caeaf;
+    cursor: not-allowed;
+}
+
 .immersive-effect {
     margin: 0;
     max-width: 100%;

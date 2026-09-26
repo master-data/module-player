@@ -24,7 +24,8 @@ function fixture({ channelCount = 2, audio = true, capture } = {}) {
   };
   const context = { state: "running", destination: {},
     resume: async () => {}, close: async () => { context.state = "closed"; },
-    createMediaStreamSource: node, createChannelSplitter: node, createAnalyser: node
+    createMediaStreamSource: node, createChannelSplitter: node, createAnalyser: node,
+    createBiquadFilter: () => Object.assign(node(), { frequency: { value: 0 }, Q: { value: 0 } })
   };
   let options;
   const adapter = new SystemAudioCapture({
@@ -58,6 +59,36 @@ test("system audio refreshes stable stereo buffers and revision without audible 
   assert.equal(setup.adapter.readSource(), undefined);
   setup.adapter.stop();
   assert(setup.tracks.every(track => track.stops === 1));
+});
+
+test("system audio exposes separate 30-180 Hz bass analysis without changing channel samples", async () => {
+  const setup = fixture();
+  await setup.adapter.start();
+  const filters = setup.nodes.filter(node => node.frequency);
+  assert.deepEqual(filters.map(filter => [filter.type, filter.frequency.value]), [
+    ["highpass", 30], ["lowpass", 180], ["lowpass", 180],
+    ["highpass", 30], ["lowpass", 180], ["lowpass", 180]
+  ]);
+  assert(filters.every(filter => filter.Q.value === Math.SQRT1_2));
+  assert.equal(setup.adapter.session.bassSamples.length, 1024);
+  assert(setup.adapter.session.bassAnalysers.every(analyser => analyser.fftSize === 1024));
+  setup.setSample(.02);
+  const source = setup.adapter.readSource();
+  assert(Math.abs(source.readBassEnergy() - .08) < 1e-6);
+  assert(Math.abs(source.readChannel(0)[0] - .02) < 1e-6);
+  setup.setSample(0);
+  setup.adapter.readSource();
+  assert.equal(source.readBassEnergy(), 0);
+  for (const analyser of setup.adapter.session.bassAnalysers) {
+    analyser.getFloatTimeDomainData = buffer => {
+      buffer.fill(0);
+      buffer.fill(.05, buffer.length * .75);
+    };
+  }
+  setup.adapter.readSource();
+  assert(Math.abs(source.readBassEnergy() - .2) < 1e-6, "A fresh bass attack must not be diluted by preceding silence");
+  setup.adapter.stop();
+  assert(setup.nodes.every(node => node.disconnected));
 });
 
 test("mono capture stays mono and ending screen sharing releases audio", async () => {
@@ -141,6 +172,7 @@ test("closing and reopening the visualizer reuses live capture until explicitly 
   setup.adapter.mediaDevices.getDisplayMedia = () => assert.fail("Reopening must not request another share");
   let starts = 0;
   let stops = 0;
+  let strobeEnabled = true;
   let onClose;
   let onCloseClick;
   const dialog = { id: "immersive-dialog", addEventListener: (_, handler) => { onClose = handler; } };
@@ -148,10 +180,12 @@ test("closing and reopening the visualizer reuses live capture until explicitly 
   const stage = { classList: { remove() {} } };
   const runtime = vm.createContext({
     dialog, visualizationInput: "system", systemAudio: setup.adapter,
+    immersiveStrobePreference: true,
     immersiveCursorTimer: undefined, clearTimeout,
     $: name => name === "close-immersive-visualizer" ? closeButton : name === "immersive-dialog" ? dialog : stage,
     document: { fullscreenElement: {} }, closeDialog: () => onClose(),
     setImmersiveMode() {}, updateImmersiveLabels() {}, openDialog() {},
+    setImmersiveStrobe: enabled => { strobeEnabled = enabled; },
     stopScopeLoop() {}, startScopeLoop() {}, updateSidWriteTracing() {}, showImmersiveCursor() {},
     immersiveVisualizer: { start: () => starts++, stop: () => stops++ }
   });
@@ -161,14 +195,101 @@ test("closing and reopening the visualizer reuses live capture until explicitly 
   runtime.openImmersive("visualizer", {});
   onCloseClick();
   assert.equal(stops, 1);
+  assert.equal(strobeEnabled, false);
   assert.equal(setup.adapter.state, "active");
   assert(setup.tracks.every(track => track.readyState === "live" && track.stops === 0));
   runtime.openImmersive("visualizer", {});
   assert.equal(starts, 2);
+  assert.equal(strobeEnabled, true);
   assert.equal(setup.adapter.readSource(), audioSource);
   onClose();
   setup.adapter.stop();
   assert(setup.tracks.every(track => track.readyState === "ended" && track.stops === 1));
+});
+
+test("strobe controls persist explicit choices without confirmation and respect reduced motion", async () => {
+  const source = (await readFile(new URL("../demo/main.js", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  let onToggle;
+  let onClick;
+  let onMotionChange;
+  let active = false;
+  const checkbox = { checked: false, disabled: false, addEventListener: (name, callback) => {
+    if (name === "change") onToggle = callback;
+    if (name === "click") onClick = callback;
+  } };
+  const control = { title: "" };
+  const stage = { classList: { toggle: (_, value) => { active = value; } } };
+  const preference = { matches: false, addEventListener: (_, callback) => { onMotionChange = callback; } };
+  const visualizer = {
+    reducedMotion: false,
+    setStrobeEnabled: enabled => Boolean(enabled) && !visualizer.reducedMotion
+  };
+  const stored = new Map();
+  const storageKey = "module-player.immersive-strobe";
+  let storageBlocked = false;
+  const globals = {
+    $: name => name === "immersive-strobe" ? checkbox : name === "immersive-strobe-control" ? control : stage,
+    immersiveVisualizer: visualizer, immersiveMotionPreference: preference,
+    window: { confirm: () => assert.fail("Strobe must not request confirmation") },
+    localStorage: {
+      getItem: key => { if (storageBlocked) throw new Error("Storage blocked"); return stored.get(key) ?? null; },
+      setItem: (key, value) => { if (storageBlocked) throw new Error("Storage blocked"); stored.set(key, value); }
+    }
+  };
+  const loadControls = () => {
+    const runtime = vm.createContext({ ...globals });
+    vm.runInContext(source.slice(source.indexOf("function readStoredBoolean("), source.indexOf("function readStoredNumber(")), runtime);
+    vm.runInContext(source.slice(source.indexOf("const STROBE_STORAGE_KEY"), source.indexOf("function showImmersiveCursor(")), runtime);
+    return runtime;
+  };
+  const runtime = loadControls();
+  assert.equal(checkbox.disabled, false);
+  assert.equal(checkbox.checked, false);
+  checkbox.checked = true;
+  onToggle();
+  assert.equal(checkbox.checked, true);
+  assert.equal(active, true);
+  assert.equal(stored.get(storageKey), "true");
+  runtime.setImmersiveStrobe(false);
+  assert.equal(stored.get(storageKey), "true");
+  loadControls();
+  assert.equal(checkbox.checked, true);
+  checkbox.checked = false;
+  onToggle();
+  assert.equal(active, false);
+  assert.equal(stored.get(storageKey), "false");
+  loadControls();
+  assert.equal(checkbox.checked, false);
+  checkbox.checked = true;
+  onToggle();
+  preference.matches = true;
+  onMotionChange();
+  assert.equal(active, false);
+  assert.equal(checkbox.checked, false);
+  assert.equal(checkbox.disabled, true);
+  assert.equal(visualizer.reducedMotion, true);
+  assert.match(control.title, /unavailable/);
+  assert.equal(stored.get(storageKey), "true");
+  loadControls();
+  assert.equal(active, false);
+  preference.matches = false;
+  onMotionChange();
+  assert.equal(checkbox.disabled, false);
+  assert.equal(checkbox.checked, false);
+  loadControls();
+  assert.equal(checkbox.checked, true);
+  let blurs = 0;
+  onClick({ detail: 0, currentTarget: { blur: () => blurs++ } });
+  assert.equal(blurs, 0);
+  onClick({ detail: 1, currentTarget: { blur: () => blurs++ } });
+  assert.equal(blurs, 1);
+  storageBlocked = true;
+  const blockedRuntime = loadControls();
+  assert.equal(checkbox.checked, false);
+  checkbox.checked = true;
+  onToggle();
+  assert.equal(active, true);
+  assert.equal(vm.runInContext("immersiveStrobePreference", blockedRuntime), true);
 });
 
 test("effect label follows scene changes in system audio and general module views", async () => {

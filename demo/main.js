@@ -4,8 +4,8 @@ import { createXmpPlayer } from "../xmp/index.js?v=7";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=4";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=45";
-import { SystemAudioCapture } from "./system-audio.js?v=1";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=53";
+import { SystemAudioCapture } from "./system-audio.js?v=3";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
@@ -93,6 +93,7 @@ const sidNoiseStates = new Map();
 const sidOscillatorPhases = new Map();
 let visualizationInput = "module";
 const systemAudio = new SystemAudioCapture({ onChange: updateSystemAudio });
+const immersiveMotionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => visualizationInput === "system" ? systemAudio.readSource() : activeVisualizationSource(),
   getSidState: () => {
@@ -139,7 +140,7 @@ const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
     return lastMegaSidState;
   },
   onFrame: renderMegaFrame,
-  reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  reducedMotion: immersiveMotionPreference.matches
 });
 
 function readStoredBoolean(key, fallback) {
@@ -2258,6 +2259,34 @@ $("open-tracker").addEventListener("click", (event) => {
   stopScopeLoop();
   startTrackerAnimation();
 });
+const STROBE_STORAGE_KEY = "module-player.immersive-strobe";
+let immersiveStrobePreference = readStoredBoolean(STROBE_STORAGE_KEY, false);
+
+function setImmersiveStrobe(enabled) {
+  const active = immersiveVisualizer.setStrobeEnabled(enabled);
+  $("immersive-strobe").checked = active;
+  $("immersive-stage").classList.toggle("strobe-active", active);
+}
+function updateImmersiveMotionPreference() {
+  immersiveVisualizer.reducedMotion = immersiveMotionPreference.matches;
+  $("immersive-strobe").disabled = immersiveMotionPreference.matches;
+  $("immersive-strobe-control").title = immersiveMotionPreference.matches
+    ? "Strobe is unavailable while reduced motion is enabled"
+    : "Beat-synchronized strobe. Flashing lights may trigger seizures.";
+  if (immersiveMotionPreference.matches) setImmersiveStrobe(false);
+}
+$("immersive-strobe").addEventListener("change", () => {
+  immersiveStrobePreference = $("immersive-strobe").checked;
+  storeBoolean(STROBE_STORAGE_KEY, immersiveStrobePreference);
+  setImmersiveStrobe(immersiveStrobePreference);
+});
+$("immersive-strobe").addEventListener("click", (event) => {
+  if (event.detail > 0) event.currentTarget.blur();
+});
+immersiveMotionPreference.addEventListener("change", updateImmersiveMotionPreference);
+setImmersiveStrobe(immersiveStrobePreference);
+updateImmersiveMotionPreference();
+
 function showImmersiveCursor() {
   clearTimeout(immersiveCursorTimer);
   $("immersive-stage").classList.add("cursor-visible");
@@ -2273,6 +2302,7 @@ function openImmersive(mode, opener) {
   openDialog("immersive-dialog", opener);
   stopScopeLoop();
   updateSidWriteTracing();
+  setImmersiveStrobe(immersiveStrobePreference);
   immersiveVisualizer.start();
   showImmersiveCursor();
   if (!document.fullscreenElement) void $("immersive-stage").requestFullscreen().catch(() => {});
@@ -2321,6 +2351,7 @@ for (const dialog of document.querySelectorAll("dialog")) {
       startScopeLoop();
     }
     if (dialog.id === "immersive-dialog") {
+      setImmersiveStrobe(false);
       clearTimeout(immersiveCursorTimer);
       immersiveCursorTimer = undefined;
       $("immersive-stage").classList.remove("cursor-visible");

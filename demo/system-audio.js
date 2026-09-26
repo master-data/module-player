@@ -85,10 +85,32 @@ export class SystemAudioCapture {
         return analyser;
       });
       const channels = session.analysers.map(() => new Float32Array(256));
+      const bassSampleLength = Math.min(32768, 2 ** Math.ceil(Math.log2((session.context.sampleRate || 48000) * .02)));
+      session.bassAnalysers = Array.from({ length: streamCount }, (_, index) => {
+        let previous;
+        for (const [type, frequency] of [["highpass", 30], ["lowpass", 180], ["lowpass", 180]]) {
+          const filter = session.context.createBiquadFilter();
+          filter.type = type;
+          filter.frequency.value = frequency;
+          filter.Q.value = Math.SQRT1_2;
+          session.nodes.push(filter);
+          if (previous) previous.connect(filter);
+          else splitter.connect(filter, index);
+          previous = filter;
+        }
+        const analyser = session.context.createAnalyser();
+        analyser.fftSize = bassSampleLength;
+        session.nodes.push(analyser);
+        previous.connect(analyser);
+        return analyser;
+      });
+      session.bassSamples = new Float32Array(bassSampleLength);
+      session.bassEnergy = 0;
       session.source = {
         streamCount, sampleLength: 256, revision: 0,
         readChannel: index => channels[index],
-        readChannels: () => channels
+        readChannels: () => channels,
+        readBassEnergy: () => session.bassEnergy
       };
       this.notify("active");
       return true;
@@ -108,6 +130,18 @@ export class SystemAudioCapture {
     if (this.state !== "active") return undefined;
     const { source, analysers } = this.session;
     analysers.forEach((analyser, index) => analyser.getFloatTimeDomainData(source.readChannel(index)));
+    const { bassAnalysers, bassSamples } = this.session;
+    let bassEnergy = 0;
+    for (const analyser of bassAnalysers) {
+      analyser.getFloatTimeDomainData(bassSamples);
+      const blockLength = bassSamples.length / 4;
+      for (let offset = 0; offset < bassSamples.length; offset += blockLength) {
+        let squareSum = 0;
+        for (let index = offset; index < offset + blockLength; index++) squareSum += bassSamples[index] ** 2;
+        bassEnergy = Math.max(bassEnergy, Math.sqrt(squareSum / blockLength) * 4);
+      }
+    }
+    this.session.bassEnergy = Math.min(1, bassEnergy);
     source.revision++;
     return source;
   }
