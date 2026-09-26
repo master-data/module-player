@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GENERAL_SCENES, updateGeneralMotion } from "../demo/general-scenes.js";
 import { ImmersiveVisualizer } from "../demo/immersive-visualizer.js";
+import { SHADER_SCENES, ShaderScenes } from "../demo/shader-scenes.js";
 
 function renderer() {
   return Object.assign(Object.create(ImmersiveVisualizer.prototype), {
@@ -171,7 +172,7 @@ test("every scene uses inertial audio and drawing never advances its shared cros
 });
 
 test("all general scenes are distinct, finite and adapt geometry at desktop and mobile sizes", () => {
-  assert.equal(GENERAL_SCENES.length, 12);
+  assert.equal(GENERAL_SCENES.length, 17);
   const view = renderer();
   for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     const signatures = new Set();
@@ -216,11 +217,124 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       const view = Object.assign(renderer(), { quality: .25, canvas: { clientWidth: width } });
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
-        if (!["terrain", "prism", "helix"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
-        if (!["cascade", "prism", "monolith"].includes(scene)) assert(result.curves > 0, scene);
+        if (!["terrain", "voxel-flight", "prism", "helix", "copper"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
+        if (!["cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
   }
+});
+
+test("GPU scenes dispatch at native dimensions with shared motion and fall back without WebGL", () => {
+  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist"]);
+  const view = renderer();
+  const motion = updateGeneralMotion(view, .1);
+  const calls = [];
+  view.shaderScenes = { draw: (...args) => { calls.push(args); return true; } };
+  view.canvas = { getContext() {} };
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { value: {}, configurable: true });
+  try {
+    for (const scene of SHADER_SCENES) {
+      const result = render(view, scene, 2880, 1800);
+      assert.equal(result.points, 0);
+      const args = calls.at(-1);
+      assert.equal(args[1], scene);
+      assert.deepEqual(args.slice(2, 4), [2880, 1800]);
+      assert.equal(args[4], motion);
+      assert.equal(args[5], view.sceneSeed);
+      assert.equal(args[6], view.quality);
+    }
+    view.shaderScenes.draw = () => false;
+    for (const scene of SHADER_SCENES) assert(render(view, scene).points > 38, scene);
+  } finally {
+    if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
+    else delete globalThis.document;
+  }
+});
+
+test("Copper uses one smooth gradient per bar at every detail level", () => {
+  for (const quality of [.25, 1]) {
+    const view = Object.assign(renderer(), { quality });
+    const drawing = capture();
+    let gradients = 0;
+    let rectangles = 0;
+    const context = new Proxy(drawing.context, {
+      get: (target, name) => {
+        if (name === "createLinearGradient") return (...args) => { gradients++; return target.createLinearGradient(...args); };
+        if (name === "fillRect") return (...args) => { rectangles++; return target.fillRect(...args); };
+        return target[name];
+      }
+    });
+    view.drawScene(context, "copper", 1440, 900, 720, 450);
+    assert.equal(gradients, 9);
+    assert.equal(rectangles, 9, "Bars must not split into flat raster strips");
+  }
+});
+
+test("waveform-driven shaders upload signed stereo without changing shared samples", () => {
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), { waveform: new Float32Array(128) });
+  const left = Float32Array.from({ length: 96 }, (_, index) => Math.sin(index / 95 * Math.PI * 4) * .5);
+  const right = Float32Array.from(left, value => -value);
+  const original = [...left];
+  const storage = gpu.waveform;
+  gpu.updateWaveform([left, right]);
+  assert(gpu.waveform.some(value => value > .5));
+  assert(gpu.waveform.some(value => value < -.5));
+  for (let point = 0; point < 64; point++) assert.equal(gpu.waveform[point * 2], -gpu.waveform[point * 2 + 1]);
+  assert.deepEqual([...left], original);
+  const first = [...gpu.waveform];
+  gpu.updateWaveform([left, right]);
+  assert.deepEqual([...gpu.waveform], first);
+  assert.equal(gpu.waveform, storage);
+  gpu.updateWaveform([left]);
+  for (let point = 0; point < 64; point++) assert.equal(gpu.waveform[point * 2], gpu.waveform[point * 2 + 1]);
+  gpu.updateWaveform([new Float32Array([NaN, Infinity, -20, 20])]);
+  assert(gpu.waveform.every(value => Number.isFinite(value) && Math.abs(value) <= 1));
+  gpu.updateWaveform([]);
+  assert(gpu.waveform.every(value => value === 0));
+});
+
+test("terrain and twister refresh waveform uniforms on each draw", () => {
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
+    waveform: new Float32Array(128), mesh: {}, materials: [{}, {}, {}],
+    renderer: {
+      domElement: { width: 1440, height: 900 },
+      getContext: () => ({ isContextLost: () => false }), render() {}
+    },
+    uniforms: {
+      resolution: { value: { set() {} } }, clock: {}, seed: {},
+      audio: { value: { set() {} } }, impact: {}, detail: {}
+    }
+  });
+  const state = { time: 12, signal: renderer().signal, channels: [new Float32Array([.5, -.5])] };
+  for (const scene of ["raster-twist", "voxel-flight"]) {
+    gpu.waveform.fill(0);
+    assert.equal(gpu.draw({ drawImage() {} }, scene, 1440, 900, state, .4, 1), true);
+    assert(gpu.waveform[0] > .5, scene);
+    assert(gpu.waveform[126] < -.5, scene);
+    gpu.draw({ drawImage() {} }, scene, 1440, 900, { ...state, channels: [] }, .4, 1);
+    assert(gpu.waveform.every(value => value === 0), `${scene} must not retain another scene's waveform`);
+  }
+});
+
+test("GPU scene resources are released with the visualizer", () => {
+  const view = renderer();
+  let released = 0;
+  view.stop = () => {};
+  view.resizeObserver = { disconnect() {} };
+  view.shaderScenes = { dispose: () => released++ };
+  view.dispose();
+  view.dispose();
+  assert.equal(released, 1);
+  assert.equal(view.shaderScenes, undefined);
+});
+
+test("Dot Vortex occupies the portrait height even at minimum detail", () => {
+  const view = Object.assign(renderer(), { quality: .25 });
+  const result = render(view, "dot-vortex", 390, 844);
+  const vertical = result.coordinates.filter((_, index) => index % 4 === 1);
+  assert(Math.max(...vertical) - Math.min(...vertical) > 844 * .6);
+  assert(result.points >= 250);
 });
 
 test("restored bars and thick vertically sweeping waves remain in the general deck", () => {
@@ -471,6 +585,26 @@ test("general director visits every replacement and never enters the retired sce
   assert.equal(visited.size, GENERAL_SCENES.length);
 });
 
+test("all scene changes respect a persistent hold before musical transitions", () => {
+  for (const sidState of [undefined, { playing: true }]) {
+    for (const reason of ["returnFromDrop", "toneBoundary", "phraseBoundary", "sectionBoundary", "strongBeat", "beat"]) {
+      const view = Object.assign(renderer(), {
+        canvas: { dataset: {} }, camera: { phase: 0 }, transitionDuration: 1,
+        music: { beatInterval: .5, toneFast: [], toneCentroidFast: .5 }
+      });
+      view.directScene(0, {}, sidState);
+      for (let change = 0; change < 3; change++) {
+        const previous = view.scene;
+        view.directScene(19.9, { [reason]: true }, sidState);
+        assert.equal(view.scene, previous, reason);
+        view.directScene(4.1, { [reason]: true }, sidState);
+        assert.notEqual(view.scene, previous, reason);
+        assert.equal(view.sceneDuration, 20);
+      }
+    }
+  }
+});
+
 test("general crossfade keeps the outgoing seed and balances both scenes around the midpoint", () => {
   const drawing = capture();
   drawing.context.createRadialGradient = () => ({ addColorStop() {} });
@@ -549,23 +683,130 @@ test("strobe detects fresh attacks without a timed gap or sustained-tone retrigg
     assert.equal(view.detectStrobeHit(measure(0)), false);
     assert.equal(view.detectStrobeHit(measure(.01)), false, "Small rises must stay below the higher gate");
     assert.equal(view.detectStrobeHit(measure(0)), false);
-    assert.equal(view.detectStrobeHit(measure(.15)), true);
-    assert.equal(view.detectStrobeHit(measure(.3)), false);
-    for (let frame = 0; frame < 100; frame++) assert.equal(view.detectStrobeHit(measure(.3)), false);
+    assert.equal(view.detectStrobeHit(measure(.15)), false, "Weak intro pulses must not flash");
+    assert.equal(view.detectStrobeHit(measure(.4)), true);
+    for (let frame = 0; frame < 100; frame++) assert.equal(view.detectStrobeHit(measure(.4)), false);
     assert.equal(view.detectStrobeHit(measure(0)), false);
     assert.equal(view.detectStrobeHit(measure(.02)), false, "Quiet fluctuations must not flash after sustained audio");
     for (let frame = 0; frame < 100; frame++) {
       assert.equal(view.detectStrobeHit(measure(frame % 2 ? .025 : 0)), false);
     }
     assert.equal(view.detectStrobeHit(measure(0)), false);
-    assert.equal(view.detectStrobeHit(measure(.15)), true, "Clear attacks must still trigger immediately");
+    assert.equal(view.detectStrobeHit(measure(.4)), true, "Clear attacks must still trigger immediately");
   }
+});
+
+test("strobe rejects weak intro pulses and non-bass-dominant filtered attacks", () => {
+  const view = renderer();
+  for (let pulse = 0; pulse < 20; pulse++) {
+    assert.equal(view.detectStrobeHit({ low: .02, mid: 0, high: 0, bassRatio: 1 }), false);
+    assert.equal(view.detectStrobeHit({ low: .2, mid: 0, high: 0, bassRatio: 1 }), false);
+  }
+  for (const bassRatio of [.1, .25, .5, .74]) {
+    view.strobeOnset = undefined;
+    assert.equal(view.detectStrobeHit({ low: .5, mid: 0, high: 0, bassRatio }), false);
+  }
+  view.strobeOnset = undefined;
+  assert.equal(view.detectStrobeHit({ low: .5, mid: 0, high: 0, bassRatio: .8 }), true);
+});
+
+test("strobe follows attacks over continuing bass without retriggering one sustained hit", () => {
+  const view = renderer();
+  const measure = low => ({ low, mid: 0, high: 0, bassRatio: 1 });
+  for (let pulse = 0; pulse < 10; pulse++) {
+    for (let frame = 0; frame < 15; frame++) assert.equal(view.detectStrobeHit(measure(0)), false);
+    assert.equal(view.detectStrobeHit(measure(.3)), true);
+  }
+  view.strobeOnset = undefined;
+  assert.equal(view.detectStrobeHit(measure(.6)), true);
+  for (let pulse = 0; pulse < 10; pulse++) {
+    assert.equal(view.detectStrobeHit(measure(.4)), false);
+    assert.equal(view.detectStrobeHit(measure(.6)), false, "Minor modulation must not repeat a sustained hit");
+  }
+  for (let frame = 0; frame < 15; frame++) assert.equal(view.detectStrobeHit(measure(.2)), false);
+  assert.equal(view.detectStrobeHit(measure(.6)), true, "A distinct attack after bass subsides still fires");
+  view.strobeOnset = undefined;
+  for (let frame = 0; frame <= 120; frame++) {
+    assert.equal(view.detectStrobeHit(measure(frame / 120 * .68)), false, "Gradual bass swells must not flash");
+  }
+});
+
+test("strobe ringing tails must cross the baseline before another attack", () => {
+  const view = renderer();
+  const measure = low => ({ low, mid: 0, high: 0, bassRatio: .8 });
+  assert.equal(view.detectStrobeHit(measure(.8), 1 / 144), true);
+  assert.equal(view.detectStrobeHit(measure(.5), 1 / 144), false);
+  assert.equal(view.detectStrobeHit(measure(.7), 1 / 144), false);
+  assert.equal(view.strobeOnset.armed, false);
+  for (let frame = 0; frame < 40; frame++) view.detectStrobeHit(measure(.12), 1 / 144);
+  assert.equal(view.detectStrobeHit(measure(.7), 1 / 144), true);
+});
+
+test("strobe follows timed beats at 30-240 Hz over background bass", () => {
+  for (const rate of [30, 60, 144, 240]) {
+    for (const bpm of [90, 128, 174]) {
+      const view = renderer();
+      const interval = 60 / bpm;
+      const hits = [];
+      for (let frame = 0; frame < Math.ceil((.5 + interval * 8) * rate); frame++) {
+        const time = frame / rate;
+        const beat = Math.floor((time - .5) / interval);
+        const phase = time - .5 - beat * interval;
+        const envelope = time < .5 ? 0 : Math.min(1, phase / .012) * Math.exp(-Math.max(0, phase - .012) / .065);
+        const low = .12 + envelope * .65;
+        if (view.detectStrobeHit({ low, mid: 0, high: 0, bassRatio: .8 }, 1 / rate)) hits.push(time);
+      }
+      assert.equal(hits.length, 8, `${rate}Hz at ${bpm} BPM: ${hits}`);
+      hits.forEach((time, beat) => assert(Math.abs(time - (.5 + beat * interval)) < .05, `${rate}Hz onset alignment`));
+    }
+  }
+});
+
+test("strobe follows bass beats under a steady full-band mix and above unity", () => {
+  for (const rate of [30, 60, 144, 240]) {
+    for (const bpm of [90, 128, 174]) {
+      for (const [background, amplitude] of [[.12, .65], [.45, .55], [1.1, .8]]) {
+        const view = renderer();
+        const interval = 60 / bpm;
+        const hits = [];
+        for (let frame = 0; frame < Math.ceil((.5 + interval * 8) * rate); frame++) {
+          const time = frame / rate;
+          const beat = Math.floor((time - .5) / interval);
+          const phase = time - .5 - beat * interval;
+          const envelope = time < .5 ? 0 : Math.min(1, phase / .012) * Math.exp(-Math.max(0, phase - .012) / .065);
+          const low = background + envelope * amplitude;
+          const fullBand = Math.hypot(1.4, low);
+          if (view.detectStrobeHit({ low, mid: 0, high: 0, fullBand, bassRatio: low / fullBand }, 1 / rate) && time >= .5) hits.push(time);
+        }
+        assert.equal(hits.length, 8, `${rate}Hz, ${bpm}BPM, bass bed ${background}: ${hits}`);
+        hits.forEach((time, beat) => assert(Math.abs(time - (.5 + beat * interval)) < .05));
+      }
+    }
+  }
+});
+
+test("module strobe does not promote quiet low-frequency PCM with visual gain", () => {
+  const view = renderer();
+  const source = { revision: 0, readChannels: () => [new Float32Array(256).fill(.02)] };
+  Object.assign(view, {
+    getSource: () => source, music: { toneReady: false },
+    previousSignal: { level: 0, low: 0, mid: 0, high: 0 }
+  });
+  for (let pulse = 0; pulse < 10; pulse++) {
+    for (const amplitude of [0, .02]) {
+      source.revision++;
+      source.readChannels = () => [new Float32Array(256).fill(amplitude)];
+      view.readSignal();
+      assert.equal(view.strobeHit, false);
+    }
+  }
+  assert(view.measuredSignal.low > .22, "The waveform may remain visually responsive without flashing");
 });
 
 test("strobe requires bass attacks rather than midrange, treble or overall volume", () => {
   const view = renderer();
-  assert.equal(view.detectStrobeHit({ low: .3, mid: 0, high: 0 }), true);
-  assert.equal(view.detectStrobeHit({ low: .29, mid: 0, high: 0 }), false);
+  assert.equal(view.detectStrobeHit({ low: .4, mid: 0, high: 0 }), true);
+  assert.equal(view.detectStrobeHit({ low: .39, mid: 0, high: 0 }), false);
   assert.equal(view.detectStrobeHit({ low: .5, mid: 0, high: 0 }), false, "A ripple within the same bass hit must not re-arm the trigger");
   const quiet = { level: .08, low: .06, mid: .05, high: .04 };
   const reset = () => { view.strobeOnset = undefined; view.detectStrobeHit(quiet); };
@@ -628,6 +869,15 @@ test("strobe does not retrigger cached audio or synthesize hits without a source
   view.readSignal();
   assert.equal(view.strobeHit, false, "Full-band audio cannot override a silent bass analyser");
   source.readBassEnergy = () => .5;
+  source.readBassRatio = () => .2;
+  source.revision++;
+  view.readSignal();
+  assert.equal(view.strobeHit, false, "Filtered leakage must not override the full-band reference");
+  source.readBassEnergy = () => 0;
+  source.revision++;
+  view.readSignal();
+  source.readBassEnergy = () => .5;
+  source.readBassRatio = () => .95;
   source.revision++;
   view.readSignal();
   assert.equal(view.strobeHit, true, "Filtered bass must trigger without an overall level rise");

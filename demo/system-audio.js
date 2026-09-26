@@ -86,9 +86,16 @@ export class SystemAudioCapture {
       });
       const channels = session.analysers.map(() => new Float32Array(256));
       const bassSampleLength = Math.min(32768, 2 ** Math.ceil(Math.log2((session.context.sampleRate || 48000) * .02)));
+      session.referenceAnalysers = Array.from({ length: streamCount }, (_, index) => {
+        const analyser = session.context.createAnalyser();
+        analyser.fftSize = bassSampleLength;
+        session.nodes.push(analyser);
+        splitter.connect(analyser, index);
+        return analyser;
+      });
       session.bassAnalysers = Array.from({ length: streamCount }, (_, index) => {
         let previous;
-        for (const [type, frequency] of [["highpass", 30], ["lowpass", 180], ["lowpass", 180]]) {
+        for (const [type, frequency] of [["highpass", 35], ["lowpass", 110], ["lowpass", 110]]) {
           const filter = session.context.createBiquadFilter();
           filter.type = type;
           filter.frequency.value = frequency;
@@ -106,11 +113,15 @@ export class SystemAudioCapture {
       });
       session.bassSamples = new Float32Array(bassSampleLength);
       session.bassEnergy = 0;
+      session.fullBandEnergy = 0;
+      session.bassRatio = 0;
       session.source = {
         streamCount, sampleLength: 256, revision: 0,
         readChannel: index => channels[index],
         readChannels: () => channels,
-        readBassEnergy: () => session.bassEnergy
+        readBassEnergy: () => session.bassEnergy,
+        readFullBandEnergy: () => session.fullBandEnergy,
+        readBassRatio: () => session.bassRatio
       };
       this.notify("active");
       return true;
@@ -130,18 +141,23 @@ export class SystemAudioCapture {
     if (this.state !== "active") return undefined;
     const { source, analysers } = this.session;
     analysers.forEach((analyser, index) => analyser.getFloatTimeDomainData(source.readChannel(index)));
-    const { bassAnalysers, bassSamples } = this.session;
-    let bassEnergy = 0;
-    for (const analyser of bassAnalysers) {
+    const { bassAnalysers, referenceAnalysers, bassSamples } = this.session;
+    const readEnergy = analyser => {
       analyser.getFloatTimeDomainData(bassSamples);
       const blockLength = bassSamples.length / 4;
+      let energy = 0;
       for (let offset = 0; offset < bassSamples.length; offset += blockLength) {
         let squareSum = 0;
         for (let index = offset; index < offset + blockLength; index++) squareSum += bassSamples[index] ** 2;
-        bassEnergy = Math.max(bassEnergy, Math.sqrt(squareSum / blockLength) * 4);
+        energy = Math.max(energy, Math.sqrt(squareSum / blockLength) * 4);
       }
-    }
-    this.session.bassEnergy = Math.min(1, bassEnergy);
+      return energy;
+    };
+    const bassEnergy = Math.max(...bassAnalysers.map(readEnergy));
+    const fullBandEnergy = Math.max(...referenceAnalysers.map(readEnergy));
+    this.session.bassEnergy = bassEnergy;
+    this.session.fullBandEnergy = fullBandEnergy;
+    this.session.bassRatio = fullBandEnergy > 1e-6 ? Math.min(1, bassEnergy / fullBandEnergy) : 0;
     source.revision++;
     return source;
   }

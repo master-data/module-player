@@ -293,14 +293,14 @@ test("SID director visits all eight effects before repeating and transitions wit
   const visited = new Set([renderer.scene]);
   for (let change = 0; change < 7; change++) {
     const previous = renderer.scene;
-    renderer.directScene(15, {}, state);
+    renderer.directScene(24, {}, state);
     assert.equal(renderer.previousScene, previous);
     assert(renderer.sceneTransition < 1);
     visited.add(renderer.scene);
   }
   assert.equal(visited.size, 8);
   const previous = renderer.scene;
-  renderer.directScene(15, {}, state);
+  renderer.directScene(24, {}, state);
   assert.notEqual(renderer.scene, previous);
   state.playing = false;
   renderer.directScene(100, {}, state);

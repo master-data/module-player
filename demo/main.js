@@ -4,8 +4,8 @@ import { createXmpPlayer } from "../xmp/index.js?v=7";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=4";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=54";
-import { SystemAudioCapture } from "./system-audio.js?v=3";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=66";
+import { SystemAudioCapture } from "./system-audio.js?v=6";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];

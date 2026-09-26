@@ -1,10 +1,11 @@
-export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix"];
+export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight"];
 
 const TAU = Math.PI * 2;
 const PALETTES = {
   aperture: [174, 38], silk: [12, 183], contours: [162, 44], diffraction: [38, 200],
   cascade: [195, 16], interference: [176, 342], weave: [40, 186], prism: [188, 38],
-  monolith: [190, 32], wavegarden: [165, 345]
+  monolith: [190, 32], wavegarden: [165, 345], copper: [18, 182],
+  "checker-tunnel": [168, 332], "raster-twist": [192, 22], "dot-vortex": [42, 178]
 };
 
 function ink(hue, alpha = 1, lightness = 68) {
@@ -166,6 +167,10 @@ export function drawCrystalFacets(context, scale, time, sectors, layers, cutoff,
 }
 
 export function drawGeneralScene(renderer, context, scene, width, height, centerX, centerY, seed = renderer.sceneSeed) {
+  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist") {
+    if (renderer.drawShaderScene?.(context, scene, width, height, seed)) return;
+    if (scene === "voxel-flight") return drawGeneralScene(renderer, context, "terrain", width, height, centerX, centerY, seed + .37);
+  }
   const palette = PALETTES[scene] ?? PALETTES.aperture;
   const scale = Math.min(width, height);
   const detail = (full, minimum) => renderer.detailCount(renderer.reducedMotion ? full * .7 : full, minimum);
@@ -189,7 +194,112 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (scene === "terrain") {
+  if (scene === "copper") {
+    const barHeight = height * (.055 + low * .025 + impact * .03);
+    for (let bar = 0; bar < 9; bar++) {
+      const phase = time * .48 + bar * .57 + seed * TAU;
+      const vertical = Math.sin(phase) * height * (.29 + impact * .045)
+        + Math.sin(phase * .61 + bar) * height * .06;
+      const skew = Math.sin(phase * .37) * width * .06;
+      const top = vertical - barHeight * .5;
+      const gradient = context.createLinearGradient(0, top, 0, top + barHeight);
+      for (let stop = 0; stop <= 16; stop++) {
+        const position = stop / 16;
+        const shine = Math.sin(position * Math.PI) ** 3;
+        gradient.addColorStop(position, ink(palette[bar % 2] + bar * 8,
+          .5 + shine * .45, 12 + shine * (58 + high * 12)));
+      }
+      context.fillStyle = gradient;
+      context.fillRect(-width * .6 + skew, top, width * 1.2, barHeight);
+    }
+    const points = detail(128, 40);
+    for (let ribbon = 0; ribbon < 3; ribbon++) {
+      curve.begin();
+      for (let point = 0; point <= points; point++) {
+        const position = point / points;
+        curve.point((position - .5) * width,
+          Math.sin(position * TAU * 1.5 + time * .7 + ribbon * 2) * height * (.14 + mid * .08)
+          + audio(position, ribbon % 2) * scale * (.08 + impact * .05));
+      }
+      curve.end();
+      stroke(context, 175 + ribbon * 24, .65, lineWidth * .7);
+    }
+  } else if (scene === "checker-tunnel") {
+    const rings = detail(30, 12);
+    const sectors = detail(28, 12);
+    const reach = Math.hypot(width, height) * .85;
+    const travel = time * .7;
+    const shift = travel % 1;
+    const cell = Math.floor(travel);
+    const vertex = (depth, sector) => {
+      const radius = scale * .025 + reach * depth ** 2.3;
+      const angle = sector / sectors * TAU + Math.sin(time * .21 + depth * 2) * .35
+        + depth * (.55 + mid * .3) + impact * .13;
+      const bend = (1 - depth) ** 2;
+      return [Math.cos(angle) * radius + Math.sin(time * .31) * width * .15 * bend,
+        Math.sin(angle) * radius + Math.cos(time * .27) * height * (.13 + low * .08 + impact * .07) * bend];
+    };
+    for (let ring = 0; ring < rings; ring++) {
+      const near = (ring + shift) / rings;
+      const far = (ring + 1 + shift) / rings;
+      for (let sector = 0; sector < sectors; sector++) {
+        const bright = ((ring - cell + sector) % 2 + 2) % 2;
+        const corners = [vertex(near, sector), vertex(far, sector), vertex(far, sector + 1), vertex(near, sector + 1)];
+        context.beginPath();
+        context.moveTo(...corners[0]);
+        for (const corner of corners.slice(1)) context.lineTo(...corner);
+        context.closePath();
+        context.fillStyle = ink(palette[bright], .35 + Math.min(1, far) * .55,
+          bright ? 28 + level * 20 + Math.min(1, far) * 16 : 7 + Math.min(1, far) * 5);
+        context.fill();
+      }
+    }
+  } else if (scene === "raster-twist") {
+    const slices = detail(128, 40);
+    const span = height * .94;
+    const ribbonWidth = Math.min(width * .3, height * .26) * (1 + low * .25 + impact * .22);
+    for (let slice = 0; slice < slices; slice++) {
+      const position = slice / slices;
+      const next = (slice + 1) / slices;
+      const phaseAt = value => time * .75 + Math.sin(value * TAU + time * .23) * (1.5 + mid)
+        + value * TAU * (1.25 + impact * .18);
+      const centerAt = value => Math.sin(value * TAU * .5 + time * .36) * width * .18
+        + audio(value) * scale * .035;
+      for (let face = 0; face < 4; face++) {
+        const phase = phaseAt(position) + face * Math.PI / 2;
+        const nextPhase = phaseAt(next) + face * Math.PI / 2;
+        const front = Math.sin(phase + Math.PI / 4);
+        const start = centerAt(position);
+        const end = centerAt(next);
+        context.beginPath();
+        context.moveTo(start + Math.cos(phase) * ribbonWidth, (position - .5) * span);
+        context.lineTo(end + Math.cos(nextPhase) * ribbonWidth, (next - .5) * span);
+        context.lineTo(end + Math.cos(nextPhase + Math.PI / 2) * ribbonWidth, (next - .5) * span);
+        context.lineTo(start + Math.cos(phase + Math.PI / 2) * ribbonWidth, (position - .5) * span);
+        context.closePath();
+        context.fillStyle = ink(palette[face % 2] + face * 12,
+          front > 0 ? .92 : 0, 18 + Math.max(0, front) ** 3 * (55 + high * 12));
+        context.fill();
+      }
+    }
+  } else if (scene === "dot-vortex") {
+    const rings = detail(38, 14);
+    const spokes = detail(56, 18);
+    for (let ring = rings - 1; ring >= 0; ring--) {
+      const depth = (ring + 1) / rings;
+      for (let spoke = 0; spoke < spokes; spoke++) {
+        const angle = spoke / spokes * TAU + time * .25 + depth * (3 + mid * 1.5);
+        const wave = Math.sin(angle * 3 - time * .8 + depth * 9);
+        const radius = scale * depth * (.39 + low * .07 + impact * .09)
+          * (1 + wave * (.12 + high * .08));
+        const horizontal = Math.cos(angle) * radius * (1.1 + Math.sin(time * .17) * .2);
+        const vertical = Math.sin(angle) * radius * height / scale * .85;
+        const size = Math.max(pixelRatio, scale * .0045) * (.4 + depth * 1.3 + level * .5);
+        context.fillStyle = ink(palette[spoke % 2] + wave * 18, .3 + depth * .65, 52 + wave * 18 + high * 12);
+        context.fillRect(horizontal - size * .5, vertical - size * .5, size, size);
+      }
+    }
+  } else if (scene === "terrain") {
     const layers = 5;
     const points = detail(64, 24);
     const bottom = height - centerY;

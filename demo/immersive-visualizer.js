@@ -1,4 +1,5 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=14";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=19";
+import { ShaderScenes } from "./shader-scenes.js?v=6";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
@@ -75,7 +76,7 @@ export class ImmersiveVisualizer {
     this.sceneSeed = randomUnit();
     this.previousSceneSeed = this.sceneSeed;
     this.sceneElapsed = 0;
-    this.sceneDuration = 16;
+    this.sceneDuration = 20;
     this.sceneTransition = 1;
     this.transitionDuration = 1;
     this.canvas.dataset.scene = this.scene;
@@ -151,6 +152,7 @@ export class ImmersiveVisualizer {
 
   start() {
     if (this.animationFrame !== undefined) return;
+    this.prepareShaderScenes();
     this.resize();
     this.lastTime = performance.now();
     this.frameBudget = { fastest: Infinity, elapsed: 0, frames: 0, stressed: 0, healthy: 0, skipFirst: true };
@@ -169,6 +171,8 @@ export class ImmersiveVisualizer {
   dispose() {
     this.stop();
     this.resizeObserver.disconnect();
+    this.shaderScenes?.dispose();
+    this.shaderScenes = undefined;
   }
 
   resize() {
@@ -288,31 +292,45 @@ export class ImmersiveVisualizer {
       high: clamp(Math.pow(high / points, 0.45) * 2)
     };
     const bassEnergy = source?.readBassEnergy?.();
+    const strobeNow = performance.now() / 1000;
+    const strobeDelta = this.strobeOnset && Number.isFinite(this.strobeReadAt)
+      ? Math.max(0, strobeNow - this.strobeReadAt) : 1 / 60;
+    this.strobeReadAt = strobeNow;
     this.detectStrobeHit(Number.isFinite(bassEnergy)
-      ? { low: bassEnergy, mid: 0, high: 0 }
-      : this.measuredSignal);
+      ? { low: bassEnergy, mid: 0, high: 0, bassRatio: source?.readBassRatio?.(), fullBand: source?.readFullBandEnergy?.() }
+      : { low: low / points * 4, mid: mid / points * 4, high: high / points * 4 }, strobeDelta);
     this.smoothSignal(this.measuredSignal);
   }
 
-  detectStrobeHit(measured) {
+  detectStrobeHit(measured, delta = 1 / 60) {
     const detector = this.strobeOnset ??= {
-      previous: { level: 0, low: 0, mid: 0, high: 0 }, averageRise: 0, peakBass: 0, armed: true
+      previous: { low: 0 }, baseline: 0, referenceBaseline: 0, peakBass: 0, floorBass: 0, armed: true
     };
-    const lowRise = Math.max(0, measured.low - detector.previous.low);
-    const rise = lowRise;
-    const threshold = .045 + detector.averageRise * 3;
+    const duration = Number.isFinite(delta) ? Math.max(0, delta) : 0;
+    const previousBaseline = detector.baseline;
+    detector.baseline = mix(previousBaseline, measured.low, 1 - Math.exp(-duration / .08));
+    const rise = measured.low - detector.baseline;
+    const reference = Number.isFinite(measured.fullBand) ? measured.fullBand
+      : measured.bassRatio > 0 ? measured.low / measured.bassRatio : measured.low;
+    detector.referenceBaseline = mix(detector.referenceBaseline, reference, 1 - Math.exp(-duration / .08));
+    const referenceRise = Math.max(0, reference - detector.referenceBaseline);
+    const bassAttack = !Number.isFinite(measured.bassRatio) || measured.bassRatio >= .75
+      || (measured.bassRatio >= .25 && rise >= referenceRise * .75);
+    const threshold = Math.max(.10, detector.baseline * .25);
     if (!detector.armed) {
       detector.peakBass = Math.max(detector.peakBass, measured.low);
-      if (measured.low < detector.peakBass * .7) detector.armed = true;
+      const release = detector.peakBass - (detector.peakBass - detector.floorBass) * .35;
+      if (measured.low < release && measured.low < detector.baseline) detector.armed = true;
     }
     this.strobeHit = detector.armed && rise > threshold
-      && rise > detector.previous.low * .18 && measured.low > .12
+      && measured.low > detector.previous.low && measured.low > .22
+      && bassAttack
       && measured.low > measured.mid * 1.35 && measured.low > measured.high;
     if (this.strobeHit) {
       detector.armed = false;
       detector.peakBass = measured.low;
+      detector.floorBass = previousBaseline;
     }
-    detector.averageRise = mix(detector.averageRise, rise, .04);
     detector.previous = measured;
     return this.strobeHit;
   }
@@ -458,7 +476,7 @@ export class ImmersiveVisualizer {
       this.previousSceneSeed = this.sceneSeed;
       this.sceneDeck = shuffle(scenes.filter((scene) => scene !== this.scene));
       this.sceneElapsed = 0;
-      this.sceneDuration = sidMode ? 8 : 16;
+      this.sceneDuration = 20;
       this.sceneTransition = 1;
       this.canvas.dataset.scene = this.scene;
       this.canvas.dataset.transitionReason = "opening";
@@ -467,8 +485,8 @@ export class ImmersiveVisualizer {
     const directionSpeed = this.reducedMotion ? 0.4 : 1;
     this.sceneElapsed += delta * directionSpeed;
     this.sceneTransition = Math.min(1, this.sceneTransition + delta / this.transitionDuration);
-    const minimumHold = sidMode ? 6 : 10;
-    const fallbackAt = this.sceneDuration + (sidMode ? 2 : 3);
+    const minimumHold = this.sceneDuration;
+    const fallbackAt = this.sceneDuration + 2;
     let transitionReason;
     if (this.sceneElapsed >= minimumHold) {
       if (musicalEvent.returnFromDrop) transitionReason = "drop-return";
@@ -478,7 +496,7 @@ export class ImmersiveVisualizer {
       else if (musicalEvent.strongBeat && this.sceneElapsed >= this.sceneDuration) transitionReason = "accent";
     }
     if (!transitionReason && this.sceneElapsed >= fallbackAt && musicalEvent.beat) transitionReason = "fallback-beat";
-    if (!transitionReason && this.sceneElapsed >= fallbackAt + (sidMode ? 1 : 2)) transitionReason = "maximum-hold";
+    if (!transitionReason && this.sceneElapsed >= fallbackAt + 2) transitionReason = "maximum-hold";
     if (!transitionReason) return;
 
     if (!this.sceneDeck.length) this.sceneDeck = shuffle((sidMode ? SID_SCENES : SCENES).filter((scene) => scene !== this.scene));
@@ -492,7 +510,7 @@ export class ImmersiveVisualizer {
     this.camera.gazeY = (randomUnit() - 0.5) * 0.02;
     this.camera.kick = Math.max(this.camera.kick, 0.016);
     this.sceneElapsed = 0;
-    this.sceneDuration = sidMode ? 8 + randomUnit() * 3 : 14 + randomUnit() * 4;
+    this.sceneDuration = 20;
     this.transitionDuration = clamp(this.music.beatInterval * 2, 0.8, 1.2) * (this.reducedMotion ? 1.25 : 1);
     this.sceneTransition = 0;
     this.music.beatsSinceScene = 0;
@@ -1122,6 +1140,26 @@ export class ImmersiveVisualizer {
 
   drawScene(context, scene, width, height, centerX, centerY, seed = this.sceneSeed) {
     drawGeneralScene(this, context, scene, width, height, centerX, centerY, seed);
+  }
+
+  prepareShaderScenes() {
+    if (this.shaderUnavailable || typeof document === "undefined" || !this.canvas?.getContext) return false;
+    if (!this.shaderScenes) {
+      try {
+        this.shaderScenes = new ShaderScenes();
+      } catch (error) {
+        this.shaderUnavailable = true;
+        console.warn("GPU visualizer unavailable; using Canvas scenes.", error);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  drawShaderScene(context, scene, width, height, seed) {
+    if (!this.prepareShaderScenes()) return false;
+    return this.shaderScenes.draw(context, scene, width, height,
+      this.generalMotion ?? { time: this.elapsed, signal: this.signal, channels: this.channels }, seed, this.quality);
   }
 
   drawVignette(context, width, height) {

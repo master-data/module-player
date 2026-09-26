@@ -91,14 +91,86 @@ particles; changing scene names did not produce a strong enough visual change.
     traveling phase. Broad curved strands use inertial PCM and bass-driven amplitude;
     beats add a smooth amplitude accent and strand sampling adapts to rendering load.
 
+### Demoscene-inspired additions
+
+Five original procedural compositions join the general deck (17 scenes total).
+These reference classic raster and point-field techniques, not the artwork,
+logos, music or exact choreography of a particular demo. Copper and Dot Vortex
+use Canvas. Checker Tunnel, Raster Twist and Voxel Flight use locally vendored
+Three.js shaders, composited into the existing Canvas scene transitions.
+
+- Copper: nine overlapping metallic bars with continuous vertical gradients,
+    illuminated centers and
+    three flowing stereo ribbons. Bass and beats expand the bars; mids widen the
+    wave motion and treble lifts the highlights.
+- Checker Tunnel: a continuous raymarched curved surface with derivative-filtered
+    charcoal checker tiles, muted teal/red illumination and a dark distance fade.
+    There are no recycled polygon rings or visible geometry insertion planes.
+    The camera follows the tunnel tangent with gentle audio-driven expansion.
+    Twist modulation is bounded rather than multiplied by world depth. Angular
+    filtering avoids the atan wrap; only converged rays shade the wall, with
+    pixel-aware tolerance and extra iteration headroom for grazing rays.
+    Seamless procedural wall textures blend with inertial audio: bass introduces
+    cloudy satin variation, mids blend flowing mineral veins, and treble adds
+    fine crosshatch etching. Cylindrical mapping has no angular wrap seam;
+    distant fine detail filters away rather than shimmering. Silence restores
+    the subdued base checker material without an independent texture switch.
+- Raster Twist: one continuous, rounded four-sided GPU surface, retaining the
+    original twister's torsion without separately culled raster slices. Smooth
+    teal/copper metal, softbox reflections and angle-dependent color give it
+    depth without scanline grain. The signed, inertial stereo waveform forms the
+    bar's centerline: left bends sideways and right displaces depth from bottom
+    to top. A reused 64-point stereo buffer and cubic interpolation keep bends
+    continuous; bounded gain prevents clipping. Mono feeds both axes, silence
+    straightens the centerline, and drawing never advances the shared PCM state.
+    Bass and beats widen the body; mids increase
+    torsion and treble lifts highlights. Proper surface intersections replace
+    face visibility toggles. Rounded ends remain inside the viewport, and
+    transparent surroundings preserve the persistent starfield behind it.
+- Dot Vortex: a full-height polar point field with three-lobed traveling waves.
+    Bass and beats expand its radius, mids wind its arms, and highs deform the
+    silhouette. This foreground effect is separate from the persistent stars.
+- Voxel Flight: an original terrain flyover inspired by the landscape aesthetic
+    of Elevated, not a recreation of its code or assets. A cached, seamless
+    512-square half-float height map drives a continuous raymarched landscape
+    with rounded ridges, directional shadows, muted stone and atmospheric depth.
+    There is no position/height quantization or luminous contour banding.
+    Signed, inertial stereo PCM displaces the ground through two crossing,
+    smoothly sampled spatial waves, sharing Raster Twist's 64-point buffer.
+    Silence removes waveform relief; mono feeds both directions. Camera height
+    follows the base terrain with clearance for bounded waveform peaks.
+    Pixel-aware ray tolerance and extra grazing-ray iterations prevent unfinished
+    rays from exposing sky through the ground. Surface visibility fades fully
+    into the sky at the distance limit; a fixed normal sample spacing keeps
+    slope-based materials stable as the camera rises.
+    Bass and beats gently lift ridges; mids deform terrain and treble lifts
+    sunlit highlights. This is a heightfield, not a block or volumetric voxel engine.
+
+All five share inertial audio and reduced-motion timing. Canvas geometry adapts
+under load; drawing does not advance state, so outgoing and incoming crossfade
+layers remain synchronized. Terrain remains the opening scene, and the SID
+register-driven scene deck is unchanged.
+
+All three GPU programs compile when the visualizer opens, before animation timing
+begins. The height map is generated once per renderer; frames are rendered live,
+not played from a prerecorded animation. The GPU canvas uses the same native
+pixel dimensions as the visible canvas, without adaptive resolution reduction.
+Closing retains GPU resources for reopening; disposing the visualizer releases
+materials, geometry, texture and WebGL context. Missing/lost WebGL falls back to
+the original Canvas checker/twister effects and a variant of the existing Terrain scene.
+
 Cascade scales its normalized spectral contribution by the audio level, so
 low-frequency background noise cannot hold the left-hand bars up during silence.
 The bars settle to their baseline while the decorative tile motion continues.
 
 Non-SID playback opens on Terrain. XMP telemetry includes the current scene name
 to distinguish the filled landscape from Wavegarden's separate line-wave effect.
-Scenes use a nonrepeating shuffled deck, musical transition cues and a bounded
-maximum hold. Effects crossfade over 0.8-1.2 seconds with smooth, balanced opacity;
+Both scene decks use a nonrepeating shuffle and a consistent 20-second minimum
+hold. Musical transition cues cannot shorten that hold. After 20 seconds, section,
+phrase, tone and strong-beat cues can select the next scene; after 22 seconds any
+beat can do so, with a guaranteed transition at 24 seconds even in silence.
+Reduced motion slows this scene clock to 40%; paused SID playback freezes it.
+Effects crossfade over 0.8-1.2 seconds with smooth, balanced opacity;
 reduced motion lengthens the fade. Crossfades retain each scene's seed.
 A persistent 360-star circular field runs behind both the general visualizer and
 MEGABOOST. Stars orbit the screen center with depth-dependent speeds, using the
@@ -135,23 +207,45 @@ Unavailable storage falls back to an in-memory preference for the page session.
 Detected beats trigger an immediate 28% overlay peak on the same rendered frame,
 followed by a 160 ms quadratic fade-out, with no fade-in delay. Strobe uses a
 separate bass attack detector, bypassing the scene director's tempo-based beat gap.
-System audio supplies dedicated 30-180 Hz analysis: each channel passes through
-a 30 Hz high-pass and two 180 Hz low-pass filters, without connecting to the
+System audio supplies dedicated 35-110 Hz analysis: each channel passes through
+a 35 Hz high-pass and two 110 Hz low-pass filters, without connecting to the
 audible output. Bass history uses a sample-rate-scaled power-of-two window of at
 least 20 ms (1024 samples at 48 kHz). Energy is the strongest RMS of four short
 blocks within that history (256 samples each at 48 kHz), so pre-hit silence does
 not dilute the attack while retained history reduces bass-cycle ripple. The stronger
 channel is used so opposite stereo phases cannot cancel. Filters and analysis
 windows have inherent response time; there is no additional trigger queue.
-Module sources without dedicated bass analysis use the existing low-band estimate,
+Matched unfiltered analysers retain the same history and quarter-block RMS measure.
+Bass and full-band measurements remain unclipped, preserving attacks above unity.
+A bass amplitude ratio of at least 75% still qualifies. In a busier mix, a ratio
+of at least 25% qualifies only when the new bass rise is at least 75% of the new
+full-band rise, each measured above its own 80 ms baseline. This lets steady
+vocals or synths coexist with a distinct kick without rejecting that kick simply
+because the total mix is louder. These are amplitude ratios, not frequency-bin
+energy percentages; weak low-pass leakage from non-bass attacks is still rejected.
+Module sources without dedicated bass analysis use the unboosted low-band estimate,
 requiring it to exceed midrange by 35% and exceed treble. This fallback is less
-frequency-selective than the system-audio filters.
-Only bass rise contributes to attack strength, with a gate of .045 plus 3 times
-its recent average. Bass must exceed .12 and rise by more than 18% of its previous
-level. Overall volume and midrange rises cannot trigger on their own. After a
-hit, bass must fall below 70% of its peak before another attack can fire, avoiding
-multiple flashes within one hit without a timed cooldown. This is bass selection,
-not instrument classification: a bass-note attack can also trigger it.
+frequency-selective than the system-audio filters. The visualizer's nonlinear
+gain no longer promotes quiet module PCM into strobe attacks.
+Attacks are measured against an exponential local bass baseline with an 80 ms
+time constant, updated from elapsed time between fresh signal reads. Bass must
+exceed .22, be rising, and exceed this baseline by both .10 and 25% of the
+baseline. This replaces the single-frame rise gate that missed beats at high
+refresh rates. The baseline is not a wait period: a qualifying attack flashes
+on the same frame. After a hit, bass must shed 35% of its peak excursion above
+the pre-attack baseline and fall below the current baseline before rearming.
+This rejects ringing tails without demanding
+near-silence between beats on a continuing bass bed. There is no timed cooldown
+or predicted/free-running beat clock. This is bass-onset detection, not instrument
+classification: a bass-note attack can also trigger it.
+Tests cover 90/128/174 BPM over background bass and a steady full-band mix,
+including bass above unity, at 30/60/144/240 Hz. Offline
+Web Audio checks detected four of four strong 40/60/80/120 Hz pulses, with no
+duplicates, and rejected weak pulses and tested 180/440 Hz attacks at all four
+rates, both alone and over a steady 700 Hz background (96 cases).
+Synthetic onset latency was at most 33 ms, excluding live capture latency.
+This does not guarantee every kick in a mixed song. The filter cutoffs are not brick walls:
+strong transients outside the nominal band may still qualify.
 Cached audio revisions do not
 retrigger it, and source changes reset its history. Timing and maximum resolvable
 hit rate still depend on fresh audio data and browser frame scheduling, so this

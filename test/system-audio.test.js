@@ -61,13 +61,13 @@ test("system audio refreshes stable stereo buffers and revision without audible 
   assert(setup.tracks.every(track => track.stops === 1));
 });
 
-test("system audio exposes separate 30-180 Hz bass analysis without changing channel samples", async () => {
+test("system audio exposes separate 35-110 Hz bass analysis without changing channel samples", async () => {
   const setup = fixture();
   await setup.adapter.start();
   const filters = setup.nodes.filter(node => node.frequency);
   assert.deepEqual(filters.map(filter => [filter.type, filter.frequency.value]), [
-    ["highpass", 30], ["lowpass", 180], ["lowpass", 180],
-    ["highpass", 30], ["lowpass", 180], ["lowpass", 180]
+    ["highpass", 35], ["lowpass", 110], ["lowpass", 110],
+    ["highpass", 35], ["lowpass", 110], ["lowpass", 110]
   ]);
   assert(filters.every(filter => filter.Q.value === Math.SQRT1_2));
   assert.equal(setup.adapter.session.bassSamples.length, 1024);
@@ -87,6 +87,30 @@ test("system audio exposes separate 30-180 Hz bass analysis without changing cha
   }
   setup.adapter.readSource();
   assert(Math.abs(source.readBassEnergy() - .2) < 1e-6, "A fresh bass attack must not be diluted by preceding silence");
+  setup.adapter.stop();
+  assert(setup.nodes.every(node => node.disconnected));
+});
+
+test("bass and full-band onset measurements retain headroom above one", async () => {
+  const setup = fixture();
+  await setup.adapter.start();
+  assert(setup.adapter.session.referenceAnalysers.every(analyser => analyser.fftSize === 1024));
+  setup.setSample(.5);
+  for (const analyser of setup.adapter.session.bassAnalysers) {
+    analyser.getFloatTimeDomainData = buffer => buffer.fill(.1);
+  }
+  const source = setup.adapter.readSource();
+  assert(Math.abs(source.readBassRatio() - .2) < 1e-6, "Loud non-bass audio must not saturate the reference level");
+  for (const analyser of setup.adapter.session.bassAnalysers) {
+    analyser.getFloatTimeDomainData = buffer => buffer.fill(.4);
+  }
+  setup.adapter.readSource();
+  assert(Math.abs(source.readBassEnergy() - 1.6) < 1e-6);
+  assert.equal(source.readFullBandEnergy(), 2);
+  assert(Math.abs(source.readBassRatio() - .8) < 1e-6);
+  setup.setSample(0);
+  setup.adapter.readSource();
+  assert.equal(source.readBassRatio(), 0);
   setup.adapter.stop();
   assert(setup.nodes.every(node => node.disconnected));
 });
