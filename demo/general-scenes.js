@@ -132,6 +132,25 @@ export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
   motion.impactVelocity = (motion.impactVelocity - impactFrequency * momentum * elapsed) * impactDecay;
   motion.time ??= renderer.elapsed ?? 0;
   motion.time += elapsed * (.8 + motion.signal.level * 1.8 + motion.impact * 2) * (renderer.reducedMotion ? .22 : 1);
+  const pigmentFlow = motion.pigmentFlow ??= new Float64Array(3);
+  const pigmentActivity = channels.length ? Math.max(0, Math.min(1, (motion.signal.level - .025) / .275)) : 0;
+  for (let index = 0; index < 3; index++) {
+    const balance = Math.max(0, motion.bands[index * 2] + motion.bands[index * 2 + 1]);
+    const energy = Math.max(0, motion.signal[signalKeys[index]]);
+    pigmentFlow[index] += elapsed * pigmentActivity * (.12 + balance * .9 + energy * .28 + motion.impact * .12)
+      * (renderer.reducedMotion ? .2 : 1);
+  }
+  const terrain = motion.terrain ??= { values: new Float64Array(4), velocities: new Float64Array(4) };
+  for (let index = 0; index < 4; index++) {
+    const frequency = renderer.reducedMotion ? 5 : index === 3 ? 20 : 12;
+    const decay = Math.exp(-frequency * elapsed);
+    const measured = index === 3 ? motion.impact : motion.targets[points * 2 + index];
+    const target = channels.length ? Math.max(0, Math.min(index === 3 ? 1.2 : 1, measured)) * (renderer.reducedMotion ? .2 : 1) : 0;
+    const offset = terrain.values[index] - target;
+    const velocity = terrain.velocities[index] + frequency * offset;
+    terrain.values[index] = target + (offset + velocity * elapsed) * decay;
+    terrain.velocities[index] = (terrain.velocities[index] - frequency * velocity * elapsed) * decay;
+  }
   const flight = motion.flight ??= { values: new Float64Array(4), velocities: new Float64Array(4) };
   let leftEnergy = 0;
   let rightEnergy = 0;
@@ -591,15 +610,24 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   } else {
     const blades = 12;
     const points = detail(30, 10);
-    const opening = scale * (.09 + low * .065 + impact * .075);
+    const response = renderer.reducedMotion ? .3 : 1;
+    const reach = Math.hypot(width, height);
+    const opening = scale * (.095 + response * (low * .1 + impact * .095));
     for (let layer = 0; layer < 2; layer++) {
       const direction = layer ? 1 : -1;
-      const outer = scale * (layer ? .43 : .49);
-      const inner = opening * (layer ? 1 : 1.18);
-      const rotation = time * .085 * direction + seed * TAU + layer * .24;
-      const twist = direction * (.78 + Math.sin(time * .19) * .2 + mid * .24 + impact * .18);
+      const energyData = motion?.energyChannels?.[layer];
+      const contourAt = position => {
+        const energy = energyData ? sample(energyData, position) : Math.abs(sample(layer ? right : left, position));
+        return energy * 4 / (1 + energy * 3);
+      };
+      const outer = reach * (layer ? .58 : .72);
+      const rotation = time * .085 * direction + seed * TAU + layer * .24
+        + direction * response * (mid * .18 + impact * .12);
+      const twist = direction * (.78 + response * (mid * .42 + impact * .3));
       for (let blade = 0; blade < blades; blade++) {
-        const energy = Math.min(1, bands[blade % 6] * 2 + high * .25);
+        const contour = contourAt((blade + .5) / blades);
+        const energy = Math.min(1, bands[blade % 6] * Math.min(1, level * 3) * 2 + contour * .6 + high * .25);
+        const inner = opening * (layer ? 1 : 1.18) + scale * contour * .075 * response;
         const start = blade / blades * TAU + rotation;
         const hue = blade % 4 === 0 ? palette[1] : palette[0] + layer * 12;
         const gradient = context.createLinearGradient(
@@ -609,15 +637,15 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
         gradient.addColorStop(.18, ink(hue, .75, 38 + energy * 14));
         gradient.addColorStop(.55, ink(hue + 12, .6, 14 + energy * 9));
         gradient.addColorStop(.82, ink(hue, .68, 32 + energy * 16));
-        gradient.addColorStop(1, ink(hue, .08, 12));
+        gradient.addColorStop(1, ink(hue, .42, 12 + energy * 12));
         curve.begin(true);
         for (let edge = 0; edge < 2; edge++) {
           for (let point = 0; point <= points; point++) {
             const position = edge ? 1 - point / points : point / points;
             const taper = Math.sin(position * Math.PI);
-            const ripple = audio(position, blade % 2) * scale * .025 * taper;
+            const ripple = (contourAt(position) * .09 + audio(position, layer) * .025) * scale * taper * response;
             const radius = inner + (outer - inner) * position + ripple;
-            const spread = (.32 + taper * .13) * (edge ? 1 : 0);
+            const spread = (.48 + taper * (.13 + energy * .08 * response)) * (edge ? 1 : 0);
             const angle = start + twist * position + spread;
             curve.point(Math.cos(angle) * radius, Math.sin(angle) * radius);
           }

@@ -1,5 +1,5 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=21";
-import { ShaderScenes } from "./shader-scenes.js?v=12";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=24";
+import { ShaderScenes } from "./shader-scenes.js?v=17";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
@@ -510,7 +510,7 @@ export class ImmersiveVisualizer {
     this.camera.gazeY = (randomUnit() - 0.5) * 0.02;
     this.camera.kick = Math.max(this.camera.kick, 0.016);
     this.sceneElapsed = 0;
-    this.sceneDuration = 20;
+    this.sceneDuration = this.scene === "voxel-flight" ? 60 : 20;
     this.transitionDuration = clamp(this.music.beatInterval * 2, 0.8, 1.2) * (this.reducedMotion ? 1.25 : 1);
     this.sceneTransition = 0;
     this.music.beatsSinceScene = 0;

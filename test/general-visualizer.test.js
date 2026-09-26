@@ -120,6 +120,70 @@ test("waveform inertia retains momentum and matches across 30, 60 and 240 Hz", (
   for (const result of results.slice(1)) result.forEach((value, index) => assert(Math.abs(value - results[0][index]) < 1e-10));
 });
 
+test("terrain pigment currents follow spectral balance, freeze in silence and respect reduced motion", () => {
+  const advance = (bands, rate, reducedMotion = false) => {
+    const view = Object.assign(renderer(), { reducedMotion });
+    view.tone.bands = bands;
+    const motion = updateGeneralMotion(view, 5);
+    motion.pigmentFlow.fill(0);
+    for (let frame = 0; frame < rate; frame++) updateGeneralMotion(view, 1 / rate);
+    return { view, motion, phases: [...motion.pigmentFlow] };
+  };
+  const bass = [1, 0, 0, 0, 0, 0];
+  const result = advance(bass, 60);
+  assert(result.phases[0] > result.phases[1] * 3);
+  const treble = advance([0, 0, 0, 0, 0, 1], 60);
+  assert(treble.phases[2] > treble.phases[0] * 3);
+  treble.view.tone.bands = bass;
+  updateGeneralMotion(treble.view, 0);
+  assert.deepEqual([...treble.motion.pigmentFlow], treble.phases, "Changing audio cannot jump the current positions");
+  updateGeneralMotion(treble.view, 1 / 60);
+  treble.motion.pigmentFlow.forEach((phase, index) => assert(phase > treble.phases[index] && phase - treble.phases[index] < .04));
+  for (const rate of [30, 144, 240]) {
+    advance(bass, rate).phases.forEach((phase, index) => assert(Math.abs(phase - result.phases[index]) < 1e-9));
+  }
+  advance(bass, 60, true).phases.forEach((phase, index) => assert(Math.abs(phase - result.phases[index] * .2) < 1e-9));
+  const storage = result.motion.pigmentFlow;
+  result.view.channels = [];
+  updateGeneralMotion(result.view, 1);
+  assert.equal(result.motion.pigmentFlow, storage);
+  assert.deepEqual([...storage], result.phases);
+  const quiet = renderer();
+  quiet.channels = [new Float32Array(256)];
+  quiet.signal = { low: 0, mid: 0, high: 0, level: 0 };
+  assert.deepEqual([...updateGeneralMotion(quiet, 1).pigmentFlow], [0, 0, 0]);
+});
+
+test("terrain shape envelopes follow audio smoothly across refresh rates and settle without input", () => {
+  const results = [];
+  for (const rate of [30, 60, 144, 240]) {
+    const view = renderer();
+    const motion = updateGeneralMotion(view, 0);
+    const storage = motion.terrain.values;
+    assert.deepEqual([...storage], [0, 0, 0, 0]);
+    updateGeneralMotion(view, 1 / rate);
+    assert(storage[0] > 0 && storage[0] < .05, "Mountain height must ease in instead of snapping");
+    for (let frame = 1; frame < rate; frame++) updateGeneralMotion(view, 1 / rate);
+    results.push([...storage]);
+    assert(storage[0] > .59 && storage[1] > .39 && storage[2] > .29);
+    const phases = [...motion.pigmentFlow];
+    updateGeneralMotion(view, 0);
+    assert.deepEqual([...motion.pigmentFlow], phases);
+    view.channels = [];
+    for (let frame = 0; frame < rate * 2; frame++) updateGeneralMotion(view, 1 / rate);
+    assert.equal(motion.terrain.values, storage);
+    assert(storage.every(value => Math.abs(value) < .001));
+  }
+  for (const result of results.slice(1)) result.forEach((value, index) => assert(Math.abs(value - results[0][index]) < 1e-10));
+  const reduced = Object.assign(renderer(), { reducedMotion: true });
+  const values = updateGeneralMotion(reduced, 4).terrain.values;
+  assert(values[0] < .121 && values[1] < .081 && values[2] < .061);
+  const view = renderer();
+  const motion = updateGeneralMotion(view, 0, { beat: true, strongBeat: true });
+  for (let frame = 0; frame < 9; frame++) updateGeneralMotion(view, 1 / 60);
+  assert(motion.terrain.values[3] > .3, "Beat momentum must drive a broad terrain swell");
+});
+
 test("camera audio eases independently of refresh rate and settles without a source", () => {
   const snapshots = [];
   for (const rate of [30, 60, 144, 240]) {
@@ -291,7 +355,7 @@ test("GPU scenes dispatch at native dimensions with shared motion and fall back 
   }
 });
 
-test("Aperture retains two complete iris layers and an open center at every detail level", () => {
+test("Aperture retains two full-bleed iris layers and an open center at every detail level", () => {
   for (const quality of [.25, 1]) {
     for (const impact of [0, 1.2]) {
       const view = Object.assign(renderer(), { quality });
@@ -314,11 +378,47 @@ test("Aperture retains two complete iris layers and an open center at every deta
       for (let index = 0; index < coordinates.length; index += 2) {
         const radius = Math.hypot(coordinates[index], coordinates[index + 1]);
         assert(radius > 900 * .06, "The central aperture must remain open");
-        assert(radius < 900 * .52, "Blades must remain inside the scene framing");
+        assert(radius < Math.hypot(1440, 900) * .75, "Blades must remain bounded beyond the viewport");
       }
+      assert(Math.max(...coordinates.map(Math.abs)) > 1440 * .5, "The iris must extend across the landscape viewport");
       assert.equal(drawing.result().depth, 0);
     }
   }
+});
+
+test("Aperture retains geometric audio response when signed PCM cancels between frames", () => {
+  const view = renderer();
+  view.channels = [new Float32Array(256), new Float32Array(256)];
+  view.signal = { low: 0, mid: 0, high: 0, level: 0 };
+  const motion = updateGeneralMotion(view, 1);
+  const fixedTime = motion.time;
+  const silent = render(view, "aperture");
+  for (let frame = 0; frame < 120; frame++) {
+    view.channels[0].fill(frame % 2 ? -.5 : .5);
+    view.channels[1].fill(frame % 2 ? .3 : -.3);
+    updateGeneralMotion(view, 1 / 240);
+  }
+  motion.time = fixedTime;
+  motion.channels.forEach(channel => channel.fill(0));
+  const active = render(view, "aperture");
+  assert(Math.max(...active.coordinates.map((value, index) => Math.abs(value - silent.coordinates[index]))) > 40);
+  assert.deepEqual(render(view, "aperture"), active, "Crossfade drawing must not advance audio or geometry");
+  view.channels.forEach(channel => channel.fill(0));
+  updateGeneralMotion(view, 2);
+  motion.time = fixedTime;
+  const settled = render(view, "aperture");
+  assert(Math.max(...settled.coordinates.map((value, index) => Math.abs(value - silent.coordinates[index]))) < .01);
+});
+
+test("Aperture moves on the first beat frame without waiting for free-running rotation", () => {
+  const view = renderer();
+  const motion = updateGeneralMotion(view, 1);
+  const fixedTime = motion.time;
+  const before = render(view, "aperture");
+  updateGeneralMotion(view, 1 / 60, { beat: true, strongBeat: true });
+  motion.time = fixedTime;
+  const after = render(view, "aperture");
+  assert(Math.max(...after.coordinates.map((value, index) => Math.abs(value - before.coordinates[index]))) > 40);
 });
 
 test("Copper uses one smooth gradient per bar at every detail level", () => {
@@ -372,7 +472,8 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
     },
     uniforms: {
       resolution: { value: { set() {} } }, clock: {}, flightClock: {}, seed: {}, terrainMap: {},
-      audio: { value: { set() {} } }, cameraAudio: { value: { set() {} } }, impact: {}, detail: {}, beaconPulse: {}
+      audio: { value: { set() {} } }, cameraAudio: { value: { set() {} } }, impact: {}, detail: {}, beaconPulse: {},
+      pigmentFlow: { value: { set() {} } }, pigmentSpectrum: { value: { set() {} } }, terrainAudio: { value: { set() {} } }
     }
   });
   const state = { time: 12, signal: renderer().signal, channels: [new Float32Array([.5, -.5])] };
@@ -403,6 +504,41 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
   assert.deepEqual([...flight.values], before, "Drawing cannot advance camera smoothing");
   gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1);
   assert.deepEqual(cameraUploads.at(-1), [0, 0, 0, 0]);
+  const colorUploads = [];
+  gpu.uniforms.audio.value.set = (...values) => colorUploads.push(values);
+  for (const values of [[.8, 0, 0, .7], [0, .8, 0, .7], [0, 0, .8, .7], [1, 1, 1, 1], [0, 0, 0, 0]]) {
+    const signal = Object.freeze(Object.fromEntries(["low", "mid", "high", "level"].map((key, index) => [key, values[index]])));
+    gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, { ...state, signal }, .4, 1);
+    assert.deepEqual(colorUploads.at(-1), values, "Terrain pigments must receive each current band and silence without stale values");
+    assert.equal(gpu.uniforms.flightClock.value, state.time, "Color changes cannot advance the flight clock");
+  }
+  const flowUploads = [];
+  const spectrumUploads = [];
+  gpu.uniforms.pigmentFlow.value.set = (...values) => flowUploads.push(values);
+  gpu.uniforms.pigmentSpectrum.value.set = (...values) => spectrumUploads.push(values);
+  const pigmentFlow = new Float64Array([1, 2, 3]);
+  const bands = Object.freeze([.125, .125, .25, .25, .125, .125]);
+  for (let draw = 0; draw < 2; draw++) {
+    gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, { ...state, pigmentFlow, bands }, .4, 1);
+    assert.deepEqual(flowUploads.at(-1), [1, 2, 3]);
+    assert.deepEqual(spectrumUploads.at(-1), [.25, .5, .25]);
+    assert.deepEqual([...pigmentFlow], [1, 2, 3], "Crossfade draws cannot advance color currents");
+  }
+  gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1);
+  assert.deepEqual(flowUploads.at(-1), [0, 0, 0]);
+  assert.deepEqual(spectrumUploads.at(-1), [state.signal.low, state.signal.mid, state.signal.high]);
+  const terrainUploads = [];
+  gpu.uniforms.terrainAudio.value.set = (...values) => terrainUploads.push(values);
+  const terrain = { values: new Float64Array([.4, .6, .2, .8]) };
+  for (let draw = 0; draw < 2; draw++) {
+    gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, { ...state, terrain }, .4, 1);
+    assert.deepEqual(terrainUploads.at(-1), [.4, .6, .2, .8]);
+    assert.deepEqual([...terrain.values], [.4, .6, .2, .8], "Rendering cannot advance terrain deformation");
+  }
+  gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, { ...state, terrain: { values: [-1, 3, 5, 4] } }, .4, 1);
+  assert.deepEqual(terrainUploads.at(-1), [0, 1, 1, 1.2], "Shape uploads must stay inside the camera-clearance bounds");
+  gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1);
+  assert.deepEqual(terrainUploads.at(-1), [state.signal.low, state.signal.mid, state.signal.high, 0]);
 });
 
 test("flight clearance map smooths peaks while conservatively covering terrain and wrapped edges", () => {
@@ -752,7 +888,7 @@ test("general director visits every replacement and never enters the retired sce
   view.directScene(0);
   const visited = new Set([view.scene]);
   for (let change = 0; change < GENERAL_SCENES.length - 1; change++) {
-    view.directScene(24);
+    view.directScene(view.sceneDuration + 4);
     assert(GENERAL_SCENES.includes(view.scene));
     visited.add(view.scene);
   }
@@ -769,13 +905,40 @@ test("all scene changes respect a persistent hold before musical transitions", (
       view.directScene(0, {}, sidState);
       for (let change = 0; change < 3; change++) {
         const previous = view.scene;
-        view.directScene(19.9, { [reason]: true }, sidState);
+        view.directScene(view.sceneDuration - .1, { [reason]: true }, sidState);
         assert.equal(view.scene, previous, reason);
         view.directScene(4.1, { [reason]: true }, sidState);
         assert.notEqual(view.scene, previous, reason);
-        assert.equal(view.sceneDuration, 20);
+        assert.equal(view.sceneDuration, view.scene === "voxel-flight" ? 60 : 20);
       }
     }
+  }
+});
+
+test("Voxel Flight stays featured for a full minute under continuous musical events", () => {
+  for (const rate of [30, 60, 144, 240]) {
+    const view = Object.assign(renderer(), {
+      canvas: { dataset: {} }, camera: { phase: 0 }, transitionDuration: 1,
+      music: { beatInterval: .5, toneFast: [], toneCentroidFast: .5 }
+    });
+    view.directScene(0);
+    view.sceneDeck = ["voxel-flight", "silk"];
+    view.directScene(24);
+    assert.equal(view.scene, "voxel-flight");
+    assert.equal(view.sceneElapsed, 0);
+    assert.equal(view.sceneDuration, 60);
+    const event = { beat: true, strongBeat: true, returnFromDrop: true, toneBoundary: true, phraseBoundary: true, sectionBoundary: true };
+    for (let frame = 0; frame < 59 * rate; frame++) view.directScene(1 / rate, event);
+    assert.equal(view.scene, "voxel-flight");
+    view.directScene(1.01, event);
+    assert.equal(view.scene, "silk");
+    assert.equal(view.sceneDuration, 20);
+    view.sceneDeck = ["voxel-flight", "silk"];
+    view.directScene(24);
+    view.directScene(63.9);
+    assert.equal(view.scene, "voxel-flight", "Without musical events the flight must wait for its maximum hold");
+    view.directScene(.2);
+    assert.equal(view.scene, "silk");
   }
 });
 

@@ -73,11 +73,15 @@ particles; changing scene names did not produce a strong enough visual change.
 ## Replacement deck
 
 - Aperture: two counter-rotating layers of twelve curved iris blades, with
-    continuous teal and warm metallic gradients. Bass and beat momentum open the
-    central aperture; mids sweep the blades and stereo PCM bends their edges.
-    Six spectral bands shape highlights, with treble lifting the inner rim.
+    continuous teal and warm metallic gradients extending beyond the viewport.
+    Bass and beat momentum open the center; mids and beats directly turn and
+    twist the blades, independently of the slow background rotation. Shared
+    stereo energy envelopes deform the inner rim and blade surfaces without
+    cancelling when PCM polarity alternates. Signed PCM adds finer edge motion.
+    Six level-gated spectral bands shape highlights, with treble lifting the rim.
     Adaptive detail reduces curve samples without removing blades or closing the
-    opening. It uses the shared inertial audio state and preserves the starfield.
+    opening. Reduced motion attenuates deformation. Drawing reads the shared
+    inertial state without advancing it and preserves the starfield behind the iris.
 - Silk: flowing stereo thread fields with warm and cool layers.
 - Contours: stacked topographic ridges and highlighted elevation lines.
 - Diffraction: opposing curved line fans without a central ornament.
@@ -139,18 +143,40 @@ Three.js shaders, composited into the existing Canvas scene transitions.
     inspired by Elevated's mountain-flight aesthetic rather than literal cubes.
     Three.js renders a raymarched heightfield with no grid snapping, block faces
     or tiled edges. A cached seamless 512-square half-float height map supplies
-    broad mountain masses and softly rolling relief. Voxel uses three noise
-    octaves instead of six, without the sharp ridge or fine crag layers;
-    other GPU scenes retain their original texture. Continuous surface
-    normals control directional shadows, lowland vegetation and slope-dependent
-    snow on upper slopes. Distant ranges fade into matching sky fog over a
+    broad mountain masses with five noise octaves and subtractive gullies for
+    broken ridgelines. Other GPU scenes retain their original texture.
+    Layered mineral shading exposes rock on steep faces, with green lowlands
+    and snow restricted to flatter high summits instead of covering the hills.
+    Continuous surface normals control longer directional shadows and cool
+    skylight on shaded slopes. Distant ranges fade into matching sky fog over a
     240-unit view distance; pixel-aware intersection tolerance and refinement
     prevent grazing rays from exposing sky through the terrain.
+    Audio colors the rock itself: bass spreads deep teal mineral fields, mids
+    reveal rose-colored seams, and treble adds restrained champagne strata.
+    World-space elevation and mineral patterns anchor these colors to the
+    mountains. Three separate color currents advance once per audio-motion
+    update, with speeds driven by smoothed band energy, six-band spectral
+    balance and beat momentum. Changing sound changes speed without jumping
+    the current positions; crossfade draws only read that shared state.
+    Spectral balance also reshapes the color distribution even at constant
+    overall volume. Band response remains sensitive above 0.7, and coverage
+    approaches its limit smoothly instead of clipping to a fixed mix. Pigments
+    preserve the base rock's luminance before sunlight, shadows and fog;
+    summit snow largely keeps its natural color. Luminous cyan wavefronts
+    sweep across the mountain surfaces with bass, rose elevation contours
+    travel with mids, and treble lights fine gold mineral seams. This separate
+    bounded radiance layer follows the shared currents and beat momentum,
+    retains directional shadow modulation, and fades into the terrain fog.
+    Fine strata and wavefronts are derivative-filtered and fade with distance.
+    Shared smoothed audio drives coverage,
+    with natural rock restored in silence and currents stopped without audio.
+    Reduced motion slows the currents to 20%. This adds no full-screen flash,
+    separate beat detector or additional camera motion.
     The perspective camera circles one fixed beacon along a varying-radius
     route, with climbs, descents and curvature-driven banking capped below
     18 degrees. Gentle independent yaw (2.6 degrees) and roll (2 degrees) add
     slow panning and rotation even in silence. The gaze eases around the beacon.
-    A separate 128-square clearance map is built once from the smoother terrain:
+    A separate 128-square clearance map is built once from the mountain terrain:
     a conservative neighborhood maximum followed by smoothing keeps the camera
     above peaks without following every small ridge. Convex cubic B-spline sampling
     avoids velocity changes at texture-cell boundaries. A slow 16-unit altitude
@@ -169,11 +195,20 @@ Three.js shaders, composited into the existing Canvas scene transitions.
     response to 20%. The strobe envelope does not drive camera jolts.
     Signed, inertial stereo PCM adds two continuous crossing spatial waves,
     sharing Raster Twist's 64-point buffer. Silence removes waveform relief and
-    mono feeds both directions. Bass and beats lift mountain masses, mids modulate
-    waveform relief and treble lifts highlights. This is an original procedural
+    mono feeds both directions. A separate critically damped shape envelope
+    drives the actual heightfield: bass lifts mountain masses and sends broad
+    swells across the ground, mids deepen gullies and fold valleys, beats add
+    a terrain surge, and treble strengthens the finer PCM relief. Shape controls
+    update once per frame at 12 radians/second (20 for beat momentum), rather
+    than during rendering. Reduced motion uses 5 radians/second and 20% strength.
+    Maximum uplift remains within the cached 93.2-unit mountain envelope;
+    additional valley and swell deformation is subtractive, and positive PCM
+    relief remains within the existing flight margin. Silence smoothly returns
+    the mountains to their resting shape. This is an original procedural
     landscape, not a recreation of the intro's code or assets. The Canvas Terrain
     fallback remains available when WebGL is unavailable.
     Exactly one world-anchored beacon stands at the center of the flight route.
+    Its base follows the deformed elevation so it stays attached to the ground.
     Its red-orange lamp casts a rotating volumetric cone. View-ray integration
     stops at nearer terrain or the tower, and samples toward the lamp reject
     light blocked by the landscape. No repeated or respawning towers remain.
@@ -201,10 +236,12 @@ The bars settle to their baseline while the decorative tile motion continues.
 
 Non-SID playback opens on Terrain. XMP telemetry includes the current scene name
 to distinguish the filled landscape from Wavegarden's separate line-wave effect.
-Both scene decks use a nonrepeating shuffle and a consistent 20-second minimum
-hold. Musical transition cues cannot shorten that hold. After 20 seconds, section,
-phrase, tone and strong-beat cues can select the next scene; after 22 seconds any
-beat can do so, with a guaranteed transition at 24 seconds even in silence.
+Both scene decks use a nonrepeating shuffle. Most effects have a 20-second minimum
+hold; Voxel Flight has a featured 60-second minimum. Musical transition cues cannot
+shorten those holds. After the minimum, section, phrase, tone and strong-beat cues
+can select the next scene; two seconds later any beat can do so. The guaranteed
+transition is at 24 seconds for other effects and 64 seconds for Voxel Flight,
+even in silence.
 Reduced motion slows this scene clock to 40%; paused SID playback freezes it.
 Effects crossfade over 0.8-1.2 seconds with smooth, balanced opacity;
 reduced motion lengthens the fade. Crossfades retain each scene's seed.

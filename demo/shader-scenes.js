@@ -168,18 +168,29 @@ uniform float beaconPulse;
 uniform sampler2D flightMap;
 uniform float flightClock;
 uniform vec4 cameraAudio;
+uniform vec3 pigmentFlow;
+uniform vec3 pigmentSpectrum;
+uniform vec4 terrainAudio;
 float mountainMass(vec2 position) {
   float coarse = texture2D(terrainMap, position / 190.0).r;
-  return pow(coarse, 2.2) * (90.0 + audio.x * 2.0 + impact);
+  return pow(coarse, 2.2) * (72.0 + terrainAudio.x * 20.0 + terrainAudio.w);
 }
 float baseElevation(vec2 position) {
   float rolling = texture2D(terrainMap, position / 100.0 + vec2(.31, .67)).r;
-  return mountainMass(position) + rolling * 3.0;
+  float mass = mountainMass(position);
+  float drainage = texture2D(terrainMap, position / 38.0 + vec2(.17, .43)).r;
+  float gullies = pow(1.0 - abs(drainage * 2.0 - 1.0), 3.0);
+  return mass + rolling * 3.0 - gullies * (6.0 + terrainAudio.y * 12.0) * smoothstep(5.0, 28.0, mass);
 }
 float elevation(vec2 position) {
   vec2 wave = waveAt(.5 + sin(position.x * .035 + position.y * .018) * .5);
   vec2 crossing = waveAt(.5 + sin(position.y * .027 - position.x * .016) * .5);
-  return baseElevation(position) + wave.x * .6 + crossing.y * (.4 + audio.y * .1);
+  float surge = .5 + .5 * sin(length(position) * .065 - pigmentFlow.x);
+  float fold = .5 + .5 * sin(position.x * .055 + position.y * .03 + pigmentFlow.y * .6);
+  float displacement = (1.0 - surge) * (terrainAudio.x * 5.0 + terrainAudio.w * 3.0)
+    + fold * terrainAudio.y * 5.0;
+  return baseElevation(position) - displacement + wave.x * (.6 + terrainAudio.z * .6)
+    + crossing.y * (.4 + terrainAudio.y * .1);
 }
 const float flightRange = 240.0;
 vec2 flightPath(float travel) {
@@ -205,6 +216,45 @@ float flightHeight(vec2 position, float time) {
     + texture2D(flightMap, vec2(lower.x, upper.y)).r * lowerWeight.x * upperWeight.y
     + texture2D(flightMap, upper).r * upperWeight.x * upperWeight.y;
   return ground + 9.0 + (sin(time * .24 + seed * PI * 2.0) * .5 + .5) * 16.0;
+}
+vec3 terrainPigment(vec3 point, vec3 normal, vec3 rock, float mineral, float strata, float snow, float distanceAlong, out vec3 radiance) {
+  vec3 pigmentBands = max(audio.xyz - .025, 0.0) / .975 * (.55 + pigmentSpectrum * 1.35);
+  float activity = smoothstep(.025, .3, audio.w);
+  float phase = point.y * .19 + point.x * .025 - point.z * .018
+    + mineral * 4.0 + pigmentFlow.y + pigmentSpectrum.y * .6 + impact * .12;
+  float current = sin(point.x * .045 + point.z * .02 + pigmentFlow.x);
+  float basin = smoothstep(.18, .8, mineral + normal.y * .18 + current * .16);
+  float seam = .5 + .5 * sin(phase + pigmentBands.y * .8);
+  float seamWidth = max(fwidth(phase), .025);
+  float veins = smoothstep(.6 - seamWidth, .94 + seamWidth, seam);
+  float finePhase = point.y * .65 + strata * 3.0 + mineral * 2.0 + pigmentFlow.z + pigmentBands.z * .35;
+  float fineWidth = max(fwidth(finePhase), .02);
+  float filaments = smoothstep(.65 - fineWidth, 1.0 + fineWidth, sin(finePhase));
+  filaments *= 1.0 - smoothstep(.5, 1.8, fineWidth);
+  filaments *= 1.0 - smoothstep(70.0, 180.0, distanceAlong);
+  vec3 weights = pigmentBands * vec3(.3 + basin * .7, veins * .8, filaments * .9);
+  float warmShare = smoothstep(.22, .58, weights.y / max(weights.x + weights.y, .001));
+  vec3 pigment = mix(vec3(.008, .32, .46), vec3(.62, .025, .095), warmShare);
+  float strength = dot(weights, vec3(1.0));
+  pigment = mix(pigment, vec3(.62, .48, .19), min(1.0, weights.z / max(strength, .001) * 1.6));
+  float luminance = dot(rock, vec3(.2126, .7152, .0722));
+  pigment *= luminance / max(dot(pigment, vec3(.2126, .7152, .0722)), .025);
+  float surgePhase = length(point.xz) * .14 + point.y * .11 + mineral * .8 - pigmentFlow.x * 2.3;
+  float surgeWidth = max(fwidth(surgePhase) * .5, .015);
+  float surge = smoothstep(.76 - surgeWidth, .98 + surgeWidth, sin(surgePhase));
+  surge *= 1.0 - smoothstep(.4, 1.2, surgeWidth);
+  float contourPhase = point.y * .42 + strata * .55 - pigmentFlow.y * 1.6;
+  float contourWidth = max(fwidth(contourPhase) * .5, .015);
+  float contours = smoothstep(.84 - contourWidth, 1.0 + contourWidth, sin(contourPhase));
+  contours *= 1.0 - smoothstep(.35, 1.1, contourWidth);
+  vec3 light = vec3(.015, .65, 1.0) * surge * pigmentBands.x
+    + vec3(1.0, .035, .16) * contours * pigmentBands.y
+    + vec3(1.0, .72, .22) * filaments * pigmentBands.z;
+  radiance = (1.0 - exp(-light * 2.0)) * activity * (.16 + min(impact, 1.2) * .07)
+    * (1.0 - snow * .8) * (.5 + normal.y * .5)
+    * (1.0 - smoothstep(120.0, 220.0, distanceAlong));
+  float coverage = activity * .94 * (1.0 - exp(-strength * 2.2)) * (1.0 - snow * .85);
+  return mix(rock, pigment, coverage);
 }
 vec3 sky(vec3 direction) {
   float altitude = max(direction.y, 0.0);
@@ -279,26 +329,32 @@ void main() {
     vec3 sun = normalize(vec3(-.65, .42, .7));
     float shade = 1.0;
     for (int shadowStep = 1; shadowStep <= 12; shadowStep++) {
-      float offset = float(shadowStep) * .9;
+      float offset = float(shadowStep) * (.7 + float(shadowStep) * .2);
       vec3 probe = point + normal * .12 + sun * offset;
-      shade = min(shade, smoothstep(-.25, .6, probe.y - elevation(probe.xz)));
+      shade = min(shade, smoothstep(-.2, .4 + offset * .035, probe.y - elevation(probe.xz)));
     }
     float mineral = texture2D(terrainMap, point.xz / 32.0).r;
-    vec3 rock = mix(vec3(.065, .075, .08), vec3(.24, .22, .19), mineral);
-    float meadow = (1.0 - smoothstep(10.0, 20.0, point.y)) * smoothstep(.45, .8, normal.y);
-    rock = mix(rock, vec3(.065, .13, .08), meadow * .7);
-    float snow = smoothstep(17.0, 29.0, point.y + mineral * 5.0)
-      * smoothstep(.35, .8, normal.y);
-    rock = mix(rock, vec3(.72, .79, .82), snow);
+    float strata = texture2D(terrainMap, vec2(point.x * .045 + point.z * .02, point.y * .14)).r;
+    vec3 rock = mix(vec3(.075, .065, .052), vec3(.26, .235, .19), mineral);
+    rock *= .72 + strata * .55;
+    float meadow = (1.0 - smoothstep(14.0, 30.0, point.y)) * smoothstep(.55, .9, normal.y);
+    rock = mix(rock, mix(vec3(.035, .065, .022), vec3(.11, .15, .045), mineral), meadow * .85);
+    float snow = smoothstep(38.0, 55.0, point.y + (mineral - .5) * 9.0)
+      * smoothstep(.65, .93, normal.y);
+    rock = mix(rock, vec3(.57, .64, .69), snow);
+    vec3 radiance;
+    rock = terrainPigment(point, normal, rock, mineral, strata, snow, distanceAlong, radiance);
     float diffuse = max(dot(normal, sun), 0.0);
-    color = rock * (vec3(.24, .30, .34) + vec3(1.1, .98, .8) * diffuse * (.4 + shade * .6));
+    float skyExposure = .35 + .65 * normal.y;
+    color = rock * (vec3(.12, .18, .25) * skyExposure + vec3(1.1, .98, .8) * diffuse * (.12 + shade * .88));
+    color += radiance * (.4 + shade * .6);
     color += vec3(.012, .026, .025) * pow(diffuse, 4.0) * (audio.z + impact * .2);
     float visibility = exp(-distanceAlong * .0035) * (1.0 - smoothstep(170.0, flightRange, distanceAlong));
     color = mix(sky(direction), color, visibility);
   }
   float visibleDistance = hit ? distanceAlong : flightRange;
   vec2 beaconLocation = vec2(0.0);
-  vec3 lamp = vec3(beaconLocation.x, baseElevation(beaconLocation) + 22.0, beaconLocation.y);
+  vec3 lamp = vec3(beaconLocation.x, elevation(beaconLocation) + 22.0, beaconLocation.y);
   {
     float towerDistance = beaconBox(origin, direction, lamp - vec3(0.0, 11.0, 0.0), vec3(.5, 11.0, .5));
     float visibility = 1.0 - smoothstep(110.0, flightRange, length(lamp - origin));
@@ -435,7 +491,7 @@ export class ShaderScenes {
     this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, depth: false, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(1);
     this.texture = heightTexture();
-    this.mountainTexture = heightTexture(3);
+    this.mountainTexture = heightTexture(5);
     this.flightTexture = createFlightHeightTexture(this.mountainTexture);
     this.geometry = new THREE.PlaneGeometry(2, 2);
     this.camera = new THREE.Camera();
@@ -446,7 +502,9 @@ export class ShaderScenes {
       audio: { value: new THREE.Vector4() }, impact: { value: 0 }, detail: { value: 1 },
       terrainMap: { value: this.texture }, flightMap: { value: this.flightTexture },
       waveform: { value: this.waveform }, beaconPulse: { value: 0 }, flightClock: { value: 0 },
-      cameraAudio: { value: new THREE.Vector4() }
+      cameraAudio: { value: new THREE.Vector4() },
+      pigmentFlow: { value: new THREE.Vector3() }, pigmentSpectrum: { value: new THREE.Vector3() },
+      terrainAudio: { value: new THREE.Vector4() }
     };
     this.materials = [tunnelShader, terrainShader, rasterShader].map(fragmentShader => new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false
@@ -489,6 +547,16 @@ export class ShaderScenes {
     const cameraAudio = state.flight?.values;
     this.uniforms.cameraAudio.value.set(cameraAudio?.[0] ?? 0, cameraAudio?.[1] ?? 0,
       cameraAudio?.[2] ?? 0, cameraAudio?.[3] ?? 0);
+    const pigmentFlow = state.pigmentFlow;
+    this.uniforms.pigmentFlow.value.set(pigmentFlow?.[0] ?? 0, pigmentFlow?.[1] ?? 0, pigmentFlow?.[2] ?? 0);
+    const spectrum = state.bands;
+    this.uniforms.pigmentSpectrum.value.set(spectrum ? spectrum[0] + spectrum[1] : signal.low,
+      spectrum ? spectrum[2] + spectrum[3] : signal.mid, spectrum ? spectrum[4] + spectrum[5] : signal.high);
+    const terrainAudio = state.terrain?.values;
+    this.uniforms.terrainAudio.value.set(THREE.MathUtils.clamp(terrainAudio?.[0] ?? signal.low, 0, 1),
+      THREE.MathUtils.clamp(terrainAudio?.[1] ?? signal.mid, 0, 1),
+      THREE.MathUtils.clamp(terrainAudio?.[2] ?? signal.high, 0, 1),
+      THREE.MathUtils.clamp(terrainAudio?.[3] ?? impact, 0, 1.2));
     this.uniforms.seed.value = seed;
     this.uniforms.audio.value.set(signal.low, signal.mid, signal.high, signal.level);
     this.uniforms.impact.value = impact;
