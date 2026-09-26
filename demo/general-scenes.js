@@ -29,17 +29,29 @@ class CurvedPath {
     this.context = context;
   }
 
-  begin() {
+  begin(closed = false) {
     this.context.beginPath();
     this.started = false;
+    this.closed = closed;
+    this.hasSegment = false;
   }
 
   point(horizontal, vertical) {
     if (this.started) {
-      this.context.quadraticCurveTo(this.horizontal, this.vertical,
-        (this.horizontal + horizontal) * .5, (this.vertical + vertical) * .5);
+      const midpointX = (this.horizontal + horizontal) * .5;
+      const midpointY = (this.vertical + vertical) * .5;
+      if (this.closed && !this.hasSegment) {
+        this.startX = midpointX;
+        this.startY = midpointY;
+        this.context.moveTo(midpointX, midpointY);
+      } else {
+        this.context.quadraticCurveTo(this.horizontal, this.vertical, midpointX, midpointY);
+      }
+      this.hasSegment = true;
     } else {
-      this.context.moveTo(horizontal, vertical);
+      this.firstX = horizontal;
+      this.firstY = vertical;
+      if (!this.closed) this.context.moveTo(horizontal, vertical);
       this.started = true;
     }
     this.horizontal = horizontal;
@@ -47,6 +59,13 @@ class CurvedPath {
   }
 
   end() {
+    if (this.closed && this.hasSegment) {
+      this.context.quadraticCurveTo(this.horizontal, this.vertical,
+        (this.horizontal + this.firstX) * .5, (this.vertical + this.firstY) * .5);
+      this.context.quadraticCurveTo(this.firstX, this.firstY, this.startX, this.startY);
+      this.context.closePath();
+      return;
+    }
     this.context.lineTo(this.horizontal, this.vertical);
   }
 }
@@ -400,8 +419,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
       for (let line = 0; line < lines; line++) {
         const depth = line / (lines - 1);
         const radius = scale * (.06 + depth * .42) * (1 + impact * .13);
-        curve.begin();
-        for (let point = 0; point <= points; point++) {
+        curve.begin(true);
+        for (let point = 0; point < points; point++) {
           const position = point / points;
           const angle = position * TAU;
           const wave = audio(position, family) * scale * .06 * (1 + high);
@@ -419,8 +438,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     for (let ribbon = 0; ribbon < ribbons; ribbon++) {
       const depth = ribbon / (ribbons - 1);
       const family = ribbon % 2;
-      curve.begin();
-      for (let point = 0; point <= points; point++) {
+      curve.begin(true);
+      for (let point = 0; point < points; point++) {
         const position = point / points;
         const angle = position * TAU;
         const phase = time * .16 + depth * .85 + impact * .5;

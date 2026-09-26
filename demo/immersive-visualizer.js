@@ -1,4 +1,4 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=12";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=13";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
@@ -463,14 +463,62 @@ export class ImmersiveVisualizer {
     this.camera.kick = Math.max(this.camera.kick, 0.016);
     this.sceneElapsed = 0;
     this.sceneDuration = sidMode ? 8 + randomUnit() * 3 : 14 + randomUnit() * 4;
-    this.transitionDuration = clamp(this.music.beatInterval * 1.6, 0.65, 1.2) * (this.reducedMotion ? 1.25 : 1);
-    this.sceneTransition = 0.08;
+    this.transitionDuration = clamp(this.music.beatInterval * 2, 0.8, 1.2) * (this.reducedMotion ? 1.25 : 1);
+    this.sceneTransition = 0;
     this.music.beatsSinceScene = 0;
     this.music.toneSlow = [...this.music.toneFast];
     this.music.toneCentroidSlow = this.music.toneCentroidFast;
     this.music.toneShiftDuration = 0;
     this.canvas.dataset.scene = this.scene;
     this.canvas.dataset.transitionReason = transitionReason;
+  }
+
+  updateStarfield(delta, sidState, musicalEvent = {}) {
+    this.starfield ??= {
+      time: 0, energy: 0, bass: 0, treble: 0, pulse: 0, accent: 0,
+      stars: Array.from({ length: 180 }, () => ({
+        angle: randomUnit() * TAU,
+        orbit: Math.sqrt(randomUnit()),
+        depth: randomUnit(),
+        size: .6 + randomUnit() * .8,
+        tint: randomUnit()
+      }))
+    };
+    if (sidState?.playing === false) return;
+    const field = this.starfield;
+    const motion = this.reducedMotion ? .15 : 1;
+    const energy = clamp(this.signal.level ?? 0);
+    const bass = clamp(this.signal.low ?? 0);
+    field.energy = mix(field.energy, energy, follow(delta, .18));
+    field.bass = mix(field.bass, bass, follow(delta, .24));
+    field.treble = mix(field.treble, clamp(this.signal.high ?? 0), follow(delta, .14));
+    if (musicalEvent.beat) field.pulse = Math.min(1, field.pulse + (musicalEvent.strongBeat ? .8 : .45));
+    field.pulse *= Math.exp(-delta / .45);
+    field.accent = mix(field.accent, field.pulse, follow(delta, .12));
+    field.time += delta * motion * (.075 + energy * .18 + bass * .1);
+  }
+
+  drawStarfield(context, width, height) {
+    if (!this.starfield) return;
+    const field = this.starfield;
+    const motion = this.reducedMotion ? .15 : 1;
+    const scale = Math.hypot(width, height) * .65;
+    const pixelRatio = this.pixelRatio ?? 1;
+    context.save();
+    context.globalCompositeOperation = "source-over";
+    for (const star of field.stars) {
+      const angle = star.angle + field.time * (.5 + (1 - star.depth) * .8);
+      const orbit = scale * star.orbit * (.85 + motion * (field.bass * .1 + field.accent * .05));
+      const horizontal = width * .5 + Math.cos(angle) * orbit;
+      const vertical = height * .5 + Math.sin(angle) * orbit;
+      const radius = star.size * (.65 + (1 - star.depth) * .65 + field.treble * .35) * pixelRatio;
+      context.globalAlpha = clamp(.2 + (1 - star.depth) * .3 + field.energy * .2 + motion * field.accent * .2);
+      context.fillStyle = star.tint < .2 ? "#f5d9b0" : star.tint > .8 ? "#9adbea" : "#e3edf2";
+      context.beginPath();
+      context.arc(horizontal, vertical, radius, 0, TAU);
+      context.fill();
+    }
+    context.restore();
   }
 
   draw(time) {
@@ -492,6 +540,7 @@ export class ImmersiveVisualizer {
     if (!sidState) updateGeneralMotion(this, delta, musicalEvent);
     this.updateCamera(delta, musicalEvent);
     this.directScene(delta, musicalEvent, sidState);
+    this.updateStarfield(delta, sidState, musicalEvent);
     if (this.resizePending || (this.pixelRatio !== undefined && this.pixelRatio !== (globalThis.devicePixelRatio || 1))) this.applyResize();
     this.paint(delta, sidState, sidFeedback);
     if (this.onFrame) {
@@ -522,7 +571,8 @@ export class ImmersiveVisualizer {
     const cameraY = this.camera.y + this.camera.microY;
     const backgroundX = centerX + cameraX * width * 0.28;
     const backgroundY = centerY + cameraY * height * 0.28;
-    const blend = 1 - Math.pow(1 - this.sceneTransition, 2.6);
+    const progress = clamp(this.sceneTransition);
+    const blend = progress * progress * (3 - 2 * progress);
     const visualSeed = mix(this.previousSceneSeed, this.sceneSeed, blend);
     const hue = 116 + visualSeed * 210 + Math.sin(this.elapsed * 0.08) * 28 + this.signal.high * 56;
     const background = context.createRadialGradient(backgroundX, backgroundY, 0, backgroundX, backgroundY, Math.hypot(width, height) * 0.72);
@@ -532,6 +582,7 @@ export class ImmersiveVisualizer {
     context.globalCompositeOperation = "source-over";
     context.fillStyle = background;
     context.fillRect(0, 0, width, height);
+    this.drawStarfield(context, width, height);
 
     context.save();
     context.translate(centerX + cameraX * width, centerY + cameraY * height);
@@ -550,7 +601,7 @@ export class ImmersiveVisualizer {
       this.drawSidScene(context, this.scene, width, height, sidState, sidFeedback);
       context.restore();
     } else if (this.sceneTransition < 1) {
-      if (blend < 0.98) {
+      if (blend < 1) {
         context.save();
         context.globalAlpha = 1 - blend;
         this.drawScene(context, this.previousScene, width, height, centerX, centerY, this.previousSceneSeed);

@@ -362,6 +362,47 @@ test("diffraction draws only flowing fans without a central polygon", () => {
   assert(drawing.result().curves > 0);
 });
 
+test("Interference and Weave close every spline with matching endpoints and tangents", () => {
+  for (const scene of ["interference", "weave"]) {
+    for (const quality of [.25, 1]) {
+      for (const [width, height] of [[1440, 900], [390, 844]]) {
+        const view = renderer();
+        view.quality = quality;
+        view.channels = [Float32Array.from({ length: 96 }, (_, index) => index / 95 * 2 - 1)];
+        const drawing = capture();
+        let start;
+        let firstCurve;
+        let lastCurve;
+        let closed = false;
+        let loops = 0;
+        const context = new Proxy(drawing.context, {
+          get: (target, name) => (...values) => {
+            if (name === "beginPath") { start = undefined; firstCurve = undefined; lastCurve = undefined; closed = false; }
+            if (name === "moveTo") { assert.equal(start, undefined); start = values; }
+            if (name === "quadraticCurveTo") { firstCurve ??= values; lastCurve = values; }
+            if (name === "lineTo") assert.fail(`${scene} must not close with a straight segment`);
+            if (name === "closePath") {
+              assert.deepEqual(lastCurve.slice(2), start);
+              for (let axis = 0; axis < 2; axis++) {
+                const outgoing = firstCurve[axis] - start[axis];
+                const incoming = start[axis] - lastCurve[axis];
+                assert(Math.abs(outgoing - incoming) < 1e-9, `${scene} tangent discontinuity`);
+              }
+              closed = true;
+              loops++;
+            }
+            if (name === "stroke") assert(closed, `${scene} must be closed before stroking`);
+            return target[name](...values);
+          }
+        });
+        view.drawScene(context, scene, width, height, width / 2, height / 2);
+        assert(loops >= 6);
+        assert.equal(drawing.result().depth, 0);
+      }
+    }
+  }
+});
+
 test("non-SID playback opens on the filled Terrain scene and keeps every other scene in rotation", () => {
   const originalObserver = globalThis.ResizeObserver;
   globalThis.ResizeObserver = class { observe() {} disconnect() {} };
@@ -397,10 +438,11 @@ test("general director visits every replacement and never enters the retired sce
   assert.equal(visited.size, GENERAL_SCENES.length);
 });
 
-test("general crossfade keeps the outgoing seed and renders both scenes past the midpoint", () => {
+test("general crossfade keeps the outgoing seed and balances both scenes around the midpoint", () => {
   const drawing = capture();
   drawing.context.createRadialGradient = () => ({ addColorStop() {} });
   const calls = [];
+  let starDraws = 0;
   const context = new Proxy(drawing.context, {
     get: (target, name) => name === "createRadialGradient" ? () => ({ addColorStop() {} }) : target[name]
   });
@@ -408,8 +450,103 @@ test("general crossfade keeps the outgoing seed and renders both scenes past the
     context, canvas: { width: 1440, height: 900 },
     pointer: { x: 0, y: 0 }, camera: { x: 0, y: 0, microX: 0, microY: 0, roll: 0, zoom: 1 },
     previousScene: "silk", scene: "aperture", previousSceneSeed: .8, sceneSeed: .2, sceneTransition: .5,
-    drawScene: (_, scene, width, height, centerX, centerY, seed) => calls.push([scene, seed]), drawVignette() {}
+    drawStarfield: () => { assert.equal(calls.length, 0); starDraws++; },
+    drawScene: (context, scene, width, height, centerX, centerY, seed) => calls.push([scene, seed, context.globalAlpha]), drawVignette() {}
   });
   view.paint(.016);
-  assert.deepEqual(calls, [["silk", .8], ["aperture", .2]]);
+  assert.deepEqual(calls, [["silk", .8, .5], ["aperture", .2, .5]]);
+  calls.length = 0;
+  view.sceneTransition = 0;
+  view.paint(.016);
+  assert.deepEqual(calls, [["silk", .8, 1], ["aperture", .2, 0]]);
+  calls.length = 0;
+  view.sceneTransition = .9;
+  view.paint(.016);
+  assert.equal(calls.length, 2);
+  assert(calls[0][2] > 0);
+  assert.equal(starDraws, 3);
+});
+
+test("starfield persists through scene changes and drawing never advances it", () => {
+  const view = Object.assign(renderer(), {
+    canvas: { dataset: {} }, camera: { phase: 0 }, transitionDuration: 1,
+    music: { beatInterval: .5, toneFast: [], toneCentroidFast: .5 }
+  });
+  view.updateStarfield(1);
+  const stars = view.starfield.stars;
+  const time = view.starfield.time;
+  view.directScene(0);
+  view.directScene(24);
+  assert.equal(view.sceneTransition, 0);
+  assert.equal(view.transitionDuration, 1);
+  assert.equal(view.starfield.stars, stars);
+  assert.equal(view.starfield.time, time);
+  for (const [width, height] of [[3840, 2160], [390, 844]]) {
+    const drawing = capture();
+    view.drawStarfield(drawing.context, width, height);
+    view.drawStarfield(drawing.context, width, height);
+    assert.equal(drawing.result().depth, 0);
+    assert.equal(view.starfield.time, time);
+  }
+  view.updateStarfield(1, { playing: false });
+  assert.equal(view.starfield.time, time);
+  view.updateStarfield(1, { playing: true });
+  assert(view.starfield.time > time);
+  assert.equal(view.starfield.stars, stars);
+  assert.equal(stars.length, 180);
+});
+
+test("starfield motion is refresh-rate independent and reduced motion is slower", () => {
+  const advance = (rate, reducedMotion) => {
+    const view = Object.assign(renderer(), { reducedMotion });
+    for (let frame = 0; frame < rate; frame++) view.updateStarfield(1 / rate);
+    return view.starfield.time;
+  };
+  assert(Math.abs(advance(30, false) - advance(240, false)) < 1e-12);
+  assert(advance(60, true) < advance(60, false) * .2);
+});
+
+test("starfield draws only points on circular orbits and reacts smoothly to sound", () => {
+  const view = renderer();
+  view.signal = { level: 0, low: 0, high: 0 };
+  view.updateStarfield(0);
+  view.starfield.stars = [{ angle: 0, orbit: 1, depth: .5, size: 1, tint: .5 }];
+  const geometry = (width, height) => {
+    const arcs = [];
+    const drawing = capture();
+    const context = new Proxy(drawing.context, {
+      get: (target, name) => name === "stroke" ? () => assert.fail("Stars must not draw trails")
+        : name === "arc" ? (...values) => { arcs.push(values); target.arc(...values); } : target[name]
+    });
+    view.drawStarfield(context, width, height);
+    assert.equal(arcs.length, 1);
+    const [head] = arcs;
+    assert.equal(head[3], 0);
+    assert.equal(head[4], Math.PI * 2);
+    const orbit = Math.hypot(head[0] - width / 2, head[1] - height / 2);
+    assert(orbit > Math.hypot(width, height) * .5, "outer orbit must extend beyond every viewport corner, even in silence");
+    assert.equal(drawing.result().depth, 0);
+    return { orbit, size: head[2], angle: Math.atan2(head[1] - height / 2, head[0] - width / 2) };
+  };
+  const quiet = geometry(1440, 900);
+  view.signal = { level: 1, low: 1, high: 1 };
+  view.updateStarfield(1 / 60, undefined, { beat: true, strongBeat: true });
+  assert(view.starfield.bass > 0 && view.starfield.bass < .1);
+  const active = geometry(1440, 900);
+  assert(active.orbit > quiet.orbit);
+  assert(active.size > quiet.size);
+  assert(active.angle > quiet.angle);
+  geometry(390, 844);
+  geometry(3840, 2160);
+  geometry(3440, 1440);
+  geometry(900, 900);
+  const state = structuredClone(view.starfield);
+  view.updateStarfield(1, { playing: false }, { beat: true });
+  assert.deepEqual(view.starfield, state);
+  for (let frame = 0; frame < 180; frame++) {
+    view.signal = { level: 0, low: 0, high: 0 };
+    view.updateStarfield(1 / 60);
+  }
+  assert(view.starfield.accent < .01);
+  assert(view.starfield.bass < .01);
 });

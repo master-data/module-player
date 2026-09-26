@@ -338,14 +338,15 @@ test("SID paint follows the selected scene and crossfades both renderers", () =>
     camera: { x: 0, y: 0, microX: 0, microY: 0, roll: 0, zoom: 1 },
     previousSceneSeed: .3, sceneTransition: .3, elapsed: 1,
     scene: "sid-crystal", previousScene: "sid-warp",
+    drawStarfield: () => calls.push("stars"),
     drawSidScene: (_, scene) => calls.push(scene), drawVignette() {}
   });
   renderer.paint(.016, snapshot(), {});
-  assert.deepEqual(calls, ["sid-warp", "sid-crystal"]);
+  assert.deepEqual(calls, ["stars", "sid-warp", "sid-crystal"]);
   calls.length = 0;
   renderer.sceneTransition = 1;
   renderer.paint(.016, snapshot(), {});
-  assert.deepEqual(calls, ["sid-crystal"]);
+  assert.deepEqual(calls, ["stars", "sid-crystal"]);
 });
 
 test("all eight SID effects reduce geometry under load without dropping any scene", () => {

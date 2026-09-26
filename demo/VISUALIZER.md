@@ -94,7 +94,20 @@ particles; changing scene names did not produce a strong enough visual change.
 Non-SID playback opens on Terrain. XMP telemetry includes the current scene name
 to distinguish the filled landscape from Wavegarden's separate line-wave effect.
 Scenes use a nonrepeating shuffled deck, musical transition cues and a bounded
-maximum hold. Crossfades retain each scene's seed. Geometry adapts to available
+maximum hold. Effects crossfade over 0.8-1.2 seconds with smooth, balanced opacity;
+reduced motion lengthens the fade. Crossfades retain each scene's seed.
+A persistent 180-star circular field runs behind both the general visualizer and
+MEGABOOST. Stars orbit the screen center with depth-dependent speeds, using the
+same radius scale on both axes for circular motion. The field extends beyond
+the viewport diagonal, including in silence, so the screen clips the outer
+orbits instead of showing a circular boundary.
+Energy drives rotation speed and brightness, bass gently expands the orbits,
+treble enlarges the stars, and smoothed beat accents brighten and expand the field.
+Stars render as clean points without trails and advance once per frame, independently of effect seeds and
+transitions. The field is drawn once beneath
+both crossfade layers, slows with reduced motion, and freezes with paused SID
+playback. Closing and reopening the view retains its star positions.
+Geometry adapts to available
 headroom, but the canvas always uses its full displayed size times the device
 pixel ratio, without a pixel-budget cap or quality-based downscaling. Fullscreen,
 window and display-density changes update that resolution before painting.
@@ -103,6 +116,11 @@ Animation still runs on every requestAnimationFrame
 callback. There is no FPS cap. Reduced motion slows time and reduces geometry.
 Canvas dimension changes are queued and applied immediately before painting;
 quality updates and resize notifications never clear a completed visible frame.
+
+Interference and Weave use closed quadratic splines with matching endpoints
+and tangents across the wraparound. Their final audio sample need not equal the
+first; the closing curve blends those control points without a gap or straight
+closing segment. Other effects retain their intentionally open paths.
 
 General scenes share a critically damped waveform and spectrum state, updated
 once per frame before either crossfade layer is drawn. Its exact spring step
