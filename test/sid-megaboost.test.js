@@ -87,13 +87,65 @@ test("adaptive resolution bounds high-DPI pixel cost and excludes startup timing
       frameBudget: { fastest: Infinity, skipFirst: true }
     });
     renderer.resize();
+    renderer.applyResize();
     assert(renderer.canvas.width * renderer.canvas.height < 1_630_000);
     renderer.adaptQuality(.1, .1);
     assert.equal(renderer.frameBudget.fastest, Infinity);
     renderer.quality = .25;
     renderer.resize();
+    renderer.applyResize();
     assert(renderer.canvas.width * renderer.canvas.height < 630_000);
   } finally {
+    if (originalDpr === undefined) delete globalThis.devicePixelRatio;
+    else globalThis.devicePixelRatio = originalDpr;
+  }
+});
+
+test("quality and observer resizes never clear a completed frame before the next paint", () => {
+  const originalRaf = globalThis.requestAnimationFrame;
+  const originalDpr = globalThis.devicePixelRatio;
+  let painted = true;
+  let width = 800;
+  let height = 450;
+  let boundsReads = 0;
+  let frames = 0;
+  const canvas = {
+    dataset: {},
+    get width() { return width; },
+    set width(value) { width = value; painted = false; },
+    get height() { return height; },
+    set height(value) { height = value; painted = false; },
+    getBoundingClientRect() { boundsReads++; return { width: 1920, height: 1080 }; }
+  };
+  const renderer = Object.assign(visualizer(), {
+    canvas, quality: .65, lastTime: 0, elapsed: 0,
+    pointer: { x: 0, y: 0, targetX: 0, targetY: 0 },
+    frameBudget: { fastest: 1000 / 240, elapsed: 990, frames: 59, stressed: 59, healthy: 0 },
+    readSignal() {}, analyzeMusic: () => ({}), updateCamera() {}, directScene() {},
+    paint() { frames++; painted = true; }
+  });
+  globalThis.devicePixelRatio = 1;
+  globalThis.requestAnimationFrame = () => { assert(painted, "frame must remain painted when yielded to the browser"); return frames; };
+  try {
+    renderer.draw(16);
+    assert(renderer.quality < .65);
+    assert.equal(renderer.resizePending, true);
+    assert.equal(width, 800);
+    assert.equal(boundsReads, 0);
+    renderer.draw(32);
+    assert(width > 800);
+    assert.equal(renderer.resizePending, false);
+    assert.equal(boundsReads, 1);
+    renderer.resize();
+    renderer.resize();
+    assert(painted, "observer notifications must not erase the visible frame");
+    assert.equal(boundsReads, 1);
+    renderer.draw(48);
+    assert.equal(boundsReads, 2);
+    assert.equal(frames, 3);
+    assert(painted);
+  } finally {
+    globalThis.requestAnimationFrame = originalRaf;
     if (originalDpr === undefined) delete globalThis.devicePixelRatio;
     else globalThis.devicePixelRatio = originalDpr;
   }

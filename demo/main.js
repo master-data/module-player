@@ -3,7 +3,7 @@ import { createXmpPlayer } from "../xmp/index.js?v=6";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=3";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=25";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=39";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
@@ -1761,7 +1761,7 @@ function renderMegaTracker(frame, tracker) {
   const channelStart = Math.min(bank * visibleChannels, tracker.channelCount - visibleChannels);
   const pattern = tracker.patterns[position.pattern];
   const patternKey = `${position.pattern}:${position.row}:${channelStart}:${visibleChannels}`;
-  $("mega-source").textContent = `${tracker.format} PATTERN STREAM`;
+  $("mega-source").textContent = `${tracker.format} PATTERN STREAM / ${frame.scene.toUpperCase()}`;
   $("mega-position").textContent = `ORDER ${String(position.order).padStart(2, "0")}  /  PATTERN ${String(position.pattern).padStart(2, "0")}  /  ROW ${String(position.row).padStart(2, "0")}`;
   renderMegaOrders(tracker, position);
   if (!pattern || patternKey === lastMegaPatternKey) return;
