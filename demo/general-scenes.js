@@ -396,7 +396,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     for (let column = 0; column < columns; column++) {
       const position = column / (columns - 1);
       const band = bands[Math.min(5, Math.floor(position * 6))];
-      const energy = Math.min(1, Math.abs(audio(position, column % 2)) * .55 + band * 1.8 + level * .18 + impact * .26);
+      const energy = Math.min(1, Math.abs(audio(position, column % 2)) * .55 + band * level * 1.8 + level * .18 + impact * .26);
       for (let row = 0; row < rows; row++) {
         const depth = row / rows;
         const phase = ((depth + position * .65 - travel) % 1 + 1) % 1;

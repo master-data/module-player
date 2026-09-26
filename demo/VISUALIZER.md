@@ -91,6 +91,10 @@ particles; changing scene names did not produce a strong enough visual change.
     traveling phase. Broad curved strands use inertial PCM and bass-driven amplitude;
     beats add a smooth amplitude accent and strand sampling adapts to rendering load.
 
+Cascade scales its normalized spectral contribution by the audio level, so
+low-frequency background noise cannot hold the left-hand bars up during silence.
+The bars settle to their baseline while the decorative tile motion continues.
+
 Non-SID playback opens on Terrain. XMP telemetry includes the current scene name
 to distinguish the filled landscape from Wavegarden's separate line-wave effect.
 Scenes use a nonrepeating shuffled deck, musical transition cues and a bounded

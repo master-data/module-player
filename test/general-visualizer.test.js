@@ -60,6 +60,39 @@ function render(view, scene, width = 1440, height = 900) {
   return drawing.result();
 }
 
+test("Cascade spectral bars settle to baseline regardless of silent spectral balance", () => {
+  const view = renderer();
+  view.channels = [new Float32Array(256)];
+  view.signal = { low: 0, mid: 0, high: 0, level: 0 };
+  view.tone.bands = [1, 0, 0, 0, 0, 0];
+  const heights = () => {
+    const rectangles = [];
+    const drawing = capture();
+    const context = new Proxy(drawing.context, {
+      get: (target, name) => name === "fillRect" ? (...values) => {
+        rectangles.push(values);
+        target.fillRect(...values);
+      } : target[name]
+    });
+    view.drawScene(context, "cascade", 1440, 900, 720, 450);
+    const stride = view.detailCount(28, 10) + 1;
+    return rectangles.filter((_, index) => (index + 1) % stride === 0).map(rectangle => rectangle[3]);
+  };
+  const silent = heights();
+  assert(silent.every(height => Math.abs(height - 7.2) < 1e-9));
+  view.tone.bands = [0, 0, 0, 0, 0, 1];
+  assert.deepEqual(heights(), silent);
+  view.tone.bands = [1, 0, 0, 0, 0, 0];
+  view.signal.level = .0001;
+  assert.deepEqual(heights(), silent, "Normalized low-level noise must not lift the bars");
+  view.signal.level = .5;
+  assert(heights()[0] > 100, "Audible bass should still raise the left bars");
+  updateGeneralMotion(view, 1);
+  view.signal.level = 0;
+  for (let frame = 0; frame < 120; frame++) updateGeneralMotion(view, 1 / 60);
+  assert.deepEqual(heights(), silent, "Bars must settle after playback stops");
+});
+
 test("waveform inertia retains momentum and matches across 30, 60 and 240 Hz", () => {
   const results = [];
   for (const rate of [30, 60, 240]) {
