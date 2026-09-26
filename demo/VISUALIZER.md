@@ -94,8 +94,12 @@ particles; changing scene names did not produce a strong enough visual change.
 Non-SID playback opens on Terrain. XMP telemetry includes the current scene name
 to distinguish the filled landscape from Wavegarden's separate line-wave effect.
 Scenes use a nonrepeating shuffled deck, musical transition cues and a bounded
-maximum hold. Crossfades retain each scene's seed. Geometry and backing resolution
-adapt to available headroom; animation still runs on every requestAnimationFrame
+maximum hold. Crossfades retain each scene's seed. Geometry adapts to available
+headroom, but the canvas always uses its full displayed size times the device
+pixel ratio, without a pixel-budget cap or quality-based downscaling. Fullscreen,
+window and display-density changes update that resolution before painting.
+Native resolution can increase GPU and memory costs on large or high-DPI displays.
+Animation still runs on every requestAnimationFrame
 callback. There is no FPS cap. Reduced motion slows time and reduces geometry.
 Canvas dimension changes are queued and applied immediately before painting;
 quality updates and resize notifications never clear a completed visible frame.
@@ -105,7 +109,7 @@ once per frame before either crossfade layer is drawn. Its exact spring step
 preserves velocity and has the same response at different refresh rates. Raw
 audio remains untouched for analysis and telemetry. Spatially filtered waveform
 samples feed rounded quadratic paths; strokes retain a broad CSS-pixel minimum
-even when backing resolution drops. Fewer overlapping traces keep those heavier
+across display pixel densities. Fewer overlapping traces keep those heavier
 curves readable.
 
 Waveform and envelope attacks are tuned separately: envelopes reach over 80%

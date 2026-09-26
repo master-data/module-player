@@ -171,6 +171,23 @@ test("closing and reopening the visualizer reuses live capture until explicitly 
   assert(setup.tracks.every(track => track.readyState === "ended" && track.stops === 1));
 });
 
+test("effect label follows scene changes in system audio and general module views", async () => {
+  const source = (await readFile(new URL("../demo/main.js", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  const label = { textContent: "" };
+  const runtime = vm.createContext({
+    visualizationInput: "system", immersiveMode: "visualizer",
+    $: name => { assert.equal(name, "immersive-effect"); return label; }
+  });
+  vm.runInContext(source.slice(source.indexOf("function renderMegaFrame("), source.indexOf("function setImmersiveMode(")), runtime);
+  runtime.renderMegaFrame({ scene: "terrain" });
+  assert.equal(label.textContent, "TERRAIN");
+  runtime.renderMegaFrame({ scene: "wavegarden" });
+  assert.equal(label.textContent, "WAVEGARDEN");
+  runtime.visualizationInput = "module";
+  runtime.renderMegaFrame({ scene: "sid-crystal" });
+  assert.equal(label.textContent, "CRYSTAL");
+});
+
 test("demo enables system visualization without a module or scopes and returns without autoplay", async () => {
   const source = (await readFile(new URL("../demo/main.js", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   const elements = new Map();

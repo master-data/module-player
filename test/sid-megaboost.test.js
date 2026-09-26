@@ -78,7 +78,7 @@ test("revision caching avoids repeated audio analysis without freezing frame smo
   assert.equal(analyses, 5);
 });
 
-test("adaptive resolution bounds high-DPI pixel cost and excludes startup timing", () => {
+test("canvas uses native display resolution regardless of adaptive quality and excludes startup timing", () => {
   const originalDpr = globalThis.devicePixelRatio;
   globalThis.devicePixelRatio = 2;
   try {
@@ -88,20 +88,26 @@ test("adaptive resolution bounds high-DPI pixel cost and excludes startup timing
     });
     renderer.resize();
     renderer.applyResize();
-    assert(renderer.canvas.width * renderer.canvas.height < 1_630_000);
+    assert.equal(renderer.canvas.width, 7680);
+    assert.equal(renderer.canvas.height, 4320);
     renderer.adaptQuality(.1, .1);
     assert.equal(renderer.frameBudget.fastest, Infinity);
     renderer.quality = .25;
     renderer.resize();
     renderer.applyResize();
-    assert(renderer.canvas.width * renderer.canvas.height < 630_000);
+    assert.equal(renderer.canvas.width, 7680);
+    assert.equal(renderer.canvas.height, 4320);
+    globalThis.devicePixelRatio = 3;
+    renderer.applyResize();
+    assert.equal(renderer.canvas.width, 11520);
+    assert.equal(renderer.canvas.height, 6480);
   } finally {
     if (originalDpr === undefined) delete globalThis.devicePixelRatio;
     else globalThis.devicePixelRatio = originalDpr;
   }
 });
 
-test("quality and observer resizes never clear a completed frame before the next paint", () => {
+test("quality never resizes the canvas and display changes resize only immediately before paint", () => {
   const originalRaf = globalThis.requestAnimationFrame;
   const originalDpr = globalThis.devicePixelRatio;
   let painted = true;
@@ -129,11 +135,13 @@ test("quality and observer resizes never clear a completed frame before the next
   try {
     renderer.draw(16);
     assert(renderer.quality < .65);
-    assert.equal(renderer.resizePending, true);
+    assert.notEqual(renderer.resizePending, true);
     assert.equal(width, 800);
     assert.equal(boundsReads, 0);
+    renderer.resize();
     renderer.draw(32);
-    assert(width > 800);
+    assert.equal(width, 1920);
+    assert.equal(height, 1080);
     assert.equal(renderer.resizePending, false);
     assert.equal(boundsReads, 1);
     renderer.resize();
@@ -143,6 +151,13 @@ test("quality and observer resizes never clear a completed frame before the next
     renderer.draw(48);
     assert.equal(boundsReads, 2);
     assert.equal(frames, 3);
+    assert(painted);
+    globalThis.devicePixelRatio = 2;
+    renderer.draw(64);
+    assert.equal(width, 3840);
+    assert.equal(height, 2160);
+    assert.equal(boundsReads, 3);
+    assert.equal(frames, 4);
     assert(painted);
   } finally {
     globalThis.requestAnimationFrame = originalRaf;

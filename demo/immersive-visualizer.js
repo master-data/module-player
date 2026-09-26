@@ -178,12 +178,9 @@ export class ImmersiveVisualizer {
   applyResize() {
     this.resizePending = false;
     const bounds = this.canvas.getBoundingClientRect();
-    const quality = this.quality ?? 1;
-    const pixelBudget = 2_500_000 * quality;
-    const pixelRatio = Math.min(devicePixelRatio || 1, 2) * (.5 + quality * .5);
-    const resolution = Math.min(pixelRatio, Math.sqrt(pixelBudget / Math.max(1, bounds.width * bounds.height)));
-    const width = Math.max(1, Math.round(bounds.width * resolution));
-    const height = Math.max(1, Math.round(bounds.height * resolution));
+    this.pixelRatio = globalThis.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(bounds.width * this.pixelRatio));
+    const height = Math.max(1, Math.round(bounds.height * this.pixelRatio));
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
       this.canvas.height = height;
@@ -217,7 +214,6 @@ export class ImmersiveVisualizer {
     if (quality !== this.quality) {
       this.quality = quality;
       this.canvas.dataset.quality = quality.toFixed(2);
-      this.resize();
     }
   }
 
@@ -496,7 +492,7 @@ export class ImmersiveVisualizer {
     if (!sidState) updateGeneralMotion(this, delta, musicalEvent);
     this.updateCamera(delta, musicalEvent);
     this.directScene(delta, musicalEvent, sidState);
-    if (this.resizePending) this.applyResize();
+    if (this.resizePending || (this.pixelRatio !== undefined && this.pixelRatio !== (globalThis.devicePixelRatio || 1))) this.applyResize();
     this.paint(delta, sidState, sidFeedback);
     if (this.onFrame) {
       this.onFrame({

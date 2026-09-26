@@ -4,7 +4,7 @@ import { createXmpPlayer } from "../xmp/index.js?v=7";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=4";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=39";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=40";
 import { SystemAudioCapture } from "./system-audio.js?v=1";
 
 const $ = (id) => document.getElementById(id);
@@ -1879,6 +1879,11 @@ function renderMegaSid(frame) {
   }
 }
 function renderMegaFrame(frame) {
+  if (frame.scene) {
+    const label = $("immersive-effect");
+    const name = frame.scene.replace(/^sid-/, "").replaceAll("-", " ").toUpperCase();
+    if (label.textContent !== name) label.textContent = name;
+  }
   if (visualizationInput === "system" || immersiveMode !== "mega" || !$("immersive-dialog").open) return;
   if (frame.time - lastMegaTelemetryAt < 80) return;
   lastMegaTelemetryAt = frame.time;
