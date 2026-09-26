@@ -5,6 +5,7 @@ import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=4";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
 import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=39";
+import { SystemAudioCapture } from "./system-audio.js?v=1";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
@@ -90,10 +91,12 @@ let selectedSidChip = 0;
 const sidEnvelopeStates = new Map();
 const sidNoiseStates = new Map();
 const sidOscillatorPhases = new Map();
+let visualizationInput = "module";
+const systemAudio = new SystemAudioCapture({ onChange: updateSystemAudio });
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
-  getSource: () => activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization,
+  getSource: () => visualizationInput === "system" ? systemAudio.readSource() : activeVisualizationSource(),
   getSidState: () => {
-    if (immersiveMode !== "mega" || activeEngine !== "sid") return undefined;
+    if (visualizationInput === "system" || immersiveMode !== "mega" || activeEngine !== "sid") return undefined;
     const revision = sidPlayer?.visualization?.revision;
     const playing = sidPlayer?.state === "playing";
     if (lastMegaSidPlayer === sidPlayer && lastMegaSidState?.chip === selectedSidChip && revision === lastMegaSidStateRevision && lastMegaSidState.playing === playing) return lastMegaSidState;
@@ -406,6 +409,7 @@ function selectSubsong(track) {
   return selectedSubsong;
 }
 async function restartWithSubsong(track) {
+  useModuleAudio();
   const selectedTrack = Number(selectSubsong(track));
   if (activeEngine === "sid" && sidPlayer?.state !== "disposed") {
     await sidPlayer.selectSong(selectedTrack);
@@ -1711,11 +1715,29 @@ function draw(now) {
   $("scope-readout").textContent = `Output ${formatNumber(outputMeter.decibels, 0)} dBFS`;
 }
 function activeVisualizationSource() {
+  if (visualizationInput === "system") return systemAudio.state === "active" ? systemAudio.session.source : undefined;
   return activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization;
 }
+function updateSystemAudio() {
+  if (systemAudio.state === "active") {
+    const activePlayer = activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player;
+    if (activePlayer?.state === "playing") activePlayer.pause();
+  } else if (visualizationInput === "system" && $("immersive-dialog").open) {
+    closeDialog($("immersive-dialog"));
+  }
+  updateControls();
+}
+function useModuleAudio() {
+  if (visualizationInput !== "system") return;
+  if ($("immersive-dialog").open) closeDialog($("immersive-dialog"));
+  visualizationInput = "module";
+  $("visualizer-source").value = "module";
+  systemAudio.stop();
+}
 function updateImmersiveLabels() {
-  const title = metadataState?.title || metadataState?.fileName || lastSelection?.filename || "No module loaded";
+  const title = visualizationInput === "system" ? "System Audio" : metadataState?.title || metadataState?.fileName || lastSelection?.filename || "No module loaded";
   $("immersive-title").textContent = title;
+  $("immersive-title").hidden = visualizationInput === "system";
 }
 function sampledChannelLevel(data) {
   if (!data?.length) return 0;
@@ -1857,7 +1879,7 @@ function renderMegaSid(frame) {
   }
 }
 function renderMegaFrame(frame) {
-  if (immersiveMode !== "mega" || !$("immersive-dialog").open) return;
+  if (visualizationInput === "system" || immersiveMode !== "mega" || !$("immersive-dialog").open) return;
   if (frame.time - lastMegaTelemetryAt < 80) return;
   lastMegaTelemetryAt = frame.time;
   const stage = $("immersive-stage");
@@ -1893,13 +1915,23 @@ function updateControls(state = player?.state) {
   $("pause").disabled = !ready || currentState !== "playing";
   $("stop").disabled = !ready || !["playing", "paused", "loading"].includes(currentState);
   $("open-tracker").disabled = !(sidActive || (xmpActive && xmpPlayer?.tracker?.available));
-  $("open-visualizer").disabled = !ready || !scopesEnabled || !activeVisualizationSource();
-  $("open-mega").disabled = !ready || !scopesEnabled || !activeVisualizationSource();
+  const external = visualizationInput === "system";
+  const capturing = systemAudio.state === "active" || systemAudio.state === "requesting";
+  $("open-visualizer").disabled = external ? systemAudio.state !== "active" : !ready || !scopesEnabled || !activeVisualizationSource();
+  $("open-mega").disabled = external || !ready || !scopesEnabled || !activeVisualizationSource();
+  $("capture-audio").hidden = !external;
+  $("capture-audio").disabled = !capturing && (!systemAudio.supported || initializing || currentState === "loading");
+  $("capture-audio").textContent = systemAudio.state === "requesting" ? "Cancel capture" : capturing ? "Stop capture" : "Start capture";
+  $("close-immersive-visualizer").hidden = !external;
+  $("capture-status").textContent = !external ? "" : !systemAudio.supported
+    ? "System audio unavailable in this browser or connection."
+    : systemAudio.error || ({ idle: "Capture stopped.", requesting: "Awaiting sharing permission...", active: "System audio active." })[systemAudio.state];
   $("songs").disabled = initializing || (!xmpActive && currentState === "disposed") || !songs.length;
   $("file").disabled = initializing || (!xmpActive && currentState === "disposed");
   updateImmersiveLabels();
 }
 async function loadBuffer(buffer, filename, forceUade = false) {
+  useModuleAudio();
   if (hasSidExtension(filename) || isSidFile(buffer)) {
     // A PSID/RSID signature is authoritative; malformed containers must not
     // fall through to UADE's extension-based Amiga SIDMon mapping. A SID
@@ -1935,6 +1967,7 @@ async function loadBuffer(buffer, filename, forceUade = false) {
 }
 
 async function playLastSelection(forceUade = false) {
+  useModuleAudio();
   if (!lastSelection) throw new Error("Select a bundled sample or open a local file first.");
   if (forceUade) configureAudioContext(Number($("audio-rate").value));
   else prepareSelectedPlayer(lastSelection.filename);
@@ -1948,6 +1981,7 @@ async function playLastSelection(forceUade = false) {
 }
 
 async function initializePlayer(forceUade = false) {
+  useModuleAudio();
   if (initializing) return;
   try {
     if (forceUade) configureAudioContext(Number($("audio-rate").value));
@@ -2042,7 +2076,7 @@ function hasDraggedFiles(event) {
 }
 
 $("initialize").addEventListener("click", () => initializePlayer());
-$("play").addEventListener("click", async () => { try { const activePlayer = activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player; if (activePlayer?.state === "paused") return activePlayer.resume(); await playLastSelection(); } catch (error) { showStatus(error.message); } });
+$("play").addEventListener("click", async () => { try { useModuleAudio(); const activePlayer = activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player; if (activePlayer?.state === "paused") return activePlayer.resume(); await playLastSelection(); } catch (error) { showStatus(error.message); } });
 $("pause").addEventListener("click", () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.pause());
 $("stop").addEventListener("click", () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.stop());
 $("volume").addEventListener("input", (event) => { updateRangeReadout(event.target); (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setVolume(Number(event.target.value)); });
@@ -2109,7 +2143,7 @@ $("visualizer").addEventListener("change", (event) => {
   scopesEnabled = event.target.checked;
   if (!scopesEnabled) {
     clearStagedRestart("scopes");
-    if ($("immersive-dialog").open) $("immersive-dialog").close();
+    if (visualizationInput !== "system" && $("immersive-dialog").open) $("immersive-dialog").close();
     draw(performance.now());
     updateControls();
     return;
@@ -2228,6 +2262,7 @@ function showImmersiveCursor() {
   }, 1800);
 }
 function openImmersive(mode, opener) {
+  if (visualizationInput === "system" && (mode !== "visualizer" || systemAudio.state !== "active")) return;
   setImmersiveMode(mode);
   updateImmersiveLabels();
   openDialog("immersive-dialog", opener);
@@ -2238,8 +2273,22 @@ function openImmersive(mode, opener) {
   if (!document.fullscreenElement) void $("immersive-stage").requestFullscreen().catch(() => {});
 }
 $("open-visualizer").addEventListener("click", (event) => openImmersive("visualizer", event.currentTarget));
+$("visualizer-source").addEventListener("change", (event) => {
+  if (event.target.value === "module") useModuleAudio();
+  else {
+    visualizationInput = "system";
+    updateControls();
+  }
+});
+$("capture-audio").addEventListener("click", () => {
+  if (systemAudio.state === "active" || systemAudio.state === "requesting") systemAudio.stop();
+  else void systemAudio.start();
+});
+$("close-immersive-visualizer").addEventListener("click", () => closeDialog($("immersive-dialog")));
 $("open-mega").addEventListener("click", (event) => openImmersive("mega", event.currentTarget));
 $("immersive-stage").addEventListener("pointermove", showImmersiveCursor, { passive: true });
+$("immersive-stage").addEventListener("pointerdown", showImmersiveCursor, { passive: true });
+$("immersive-stage").addEventListener("keydown", showImmersiveCursor);
 document.addEventListener("fullscreenchange", () => {
   const fullscreen = document.fullscreenElement === $("immersive-stage");
   if (fullscreen) immersiveOwnedFullscreen = true;
@@ -2283,6 +2332,7 @@ $("scopes").replaceChildren(...Array.from({ length: 4 }, (_, index) => makeScope
 for (const input of document.querySelectorAll('input[type="range"]')) updateRangeReadout(input);
 updateRawInspectors();
 renderMetadata();
+updateControls();
 prepareSongs().catch((error) => showStatus(error.message));
 diagnosticsTimer = window.setInterval(showDiagnostics, 1000);
 window.modulePlayerDemo = Object.freeze({
@@ -2292,4 +2342,5 @@ window.modulePlayerDemo = Object.freeze({
   stop: () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.stop(),
   dispose: () => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.dispose()
 });
-window.addEventListener("beforeunload", () => { stopScopeLoop(); stopTrackerAnimation(); immersiveVisualizer.dispose(); clearInterval(diagnosticsTimer); player?.dispose(); xmpPlayer?.dispose(); sidPlayer?.dispose(); });
+window.addEventListener("pagehide", () => systemAudio.stop());
+window.addEventListener("beforeunload", () => { systemAudio.stop(); stopScopeLoop(); stopTrackerAnimation(); immersiveVisualizer.dispose(); clearInterval(diagnosticsTimer); player?.dispose(); xmpPlayer?.dispose(); sidPlayer?.dispose(); });

@@ -1,5 +1,43 @@
 # General visualizer review
 
+## Windows system audio
+
+The demo can drive the general visualizer from Windows audio, including Spotify,
+without loading a module or initializing a playback engine.
+
+1. Open the demo over HTTPS or localhost in Chrome or Edge on Windows.
+2. Set **Visualizer source** to **System Audio** and select **Start capture**.
+3. In the browser picker, select **Entire Screen**, enable **Share system audio**,
+    and confirm sharing. The wording may vary with browser version.
+4. Play music in the other application and select **Visualizer view**.
+5. Select **Close visualizer** or press Escape to return to the player. Sharing
+    stays active; select **Visualizer view** to reopen without another prompt.
+6. Select **Stop capture** on the player, or stop sharing in the browser, to
+    release the capture. Starting a module also exits System Audio mode.
+
+Capture pauses any currently playing module. Returning to Module mode does not
+automatically resume playback. Module scope settings do not affect system audio.
+MEGABOOST is unavailable in System Audio mode because tracker and SID telemetry
+cannot be reconstructed from the mixed output.
+
+All analysis stays local: the demo does not record or upload audio or screen
+contents, and never routes captured sound back to the speakers. The browser API
+requires a video track and a fresh sharing prompt for every session; the demo
+does not display or process the video. All tracks are stopped on cleanup.
+System capture can include notifications and other applications, not just Spotify.
+
+System audio availability depends on the browser, operating system, selected
+sharing surface, and content restrictions. A successful screen share may contain
+no audio; the demo reports that instead of falling back to the microphone.
+Firefox/Safari and mobile are not supported targets for this capture mode.
+There is no Spotify API integration or audio-driver installation requirement.
+
+Run `node --test test/system-audio.test.js` for capture and integration checks.
+Mocks cover capture lifecycle and source selection; actual Windows system audio
+and protected-content behavior still need manual verification in the target browser.
+
+## Scene review
+
 Desktop and landscape are the visual design targets. Mobile portrait is not a
 target and should not drive composition or visual compromises.
 

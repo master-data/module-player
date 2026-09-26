@@ -126,6 +126,7 @@ test("demo prepares audio before fetching a selected module", async () => {
   const calls = [];
   const runtime = vm.createContext({
     lastSelection: { type: "bundled", filename: "song.mod" },
+    useModuleAudio: () => calls.push("module"),
     prepareSelectedPlayer: () => calls.push("prepare"),
     selectionUrl: () => "song.mod",
     fetch: async () => { calls.push("fetch"); return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) }; },
@@ -133,5 +134,5 @@ test("demo prepares audio before fetching a selected module", async () => {
   });
   vm.runInContext(source.slice(source.indexOf("async function playLastSelection("), source.indexOf("async function initializePlayer(")), runtime);
   await runtime.playLastSelection();
-  assert.deepEqual(calls, ["prepare", "fetch", "load"]);
+  assert.deepEqual(calls, ["module", "prepare", "fetch", "load"]);
 });

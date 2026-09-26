@@ -156,6 +156,7 @@ test("opening immersive playback suspends dashboard scopes and prevents restart 
   let stops = 0;
   let starts = 0;
   const runtime = vm.createContext({
+    visualizationInput: "module",
     setImmersiveMode() {}, updateImmersiveLabels() {}, openDialog() {}, updateSidWriteTracing() {}, showImmersiveCursor() {},
     stopScopeLoop: () => stops++, immersiveVisualizer: { start: () => starts++ }, document: { fullscreenElement: {} }
   });
@@ -169,6 +170,15 @@ test("opening immersive playback suspends dashboard scopes and prevents restart 
   vm.runInContext(source.slice(start, source.indexOf("\n}", start) + 2), runtime);
   runtime.startScopeLoop();
   assert.equal(stops, 2);
+  runtime.visualizationInput = "system";
+  runtime.systemAudio = { state: "idle" };
+  runtime.openImmersive("visualizer", {});
+  assert.equal(starts, 1);
+  runtime.systemAudio.state = "active";
+  runtime.openImmersive("mega", {});
+  assert.equal(starts, 1);
+  runtime.openImmersive("visualizer", {});
+  assert.equal(starts, 2);
 });
 
 test("SID megaboost follows envelope, pitch, duty and actual DAC swing", () => {
@@ -350,7 +360,7 @@ test("SID telemetry updates independently of the animation refresh rate", async 
   let updates = 0;
   const stage = { classList: { toggle() {} }, style: { setProperty() {} } };
   const runtime = vm.createContext({
-    immersiveMode: "mega", activeEngine: "sid", lastMegaTelemetryAt: -Infinity,
+    visualizationInput: "module", immersiveMode: "mega", activeEngine: "sid", lastMegaTelemetryAt: -Infinity,
     $: name => name === "immersive-dialog" ? { open: true } : stage,
     renderMegaSid: () => updates++, renderMegaChannels: () => assert.fail("Hidden meters must not update")
   });
@@ -359,6 +369,10 @@ test("SID telemetry updates independently of the animation refresh rate", async 
     time: frame * 1000 / 240, sidState: {}, signal: { level: 0, low: 0, high: 0 }, musicalEvent: {}
   });
   assert(updates >= 12 && updates <= 13);
+  const before = updates;
+  runtime.visualizationInput = "system";
+  runtime.renderMegaFrame({ time: 2000, sidState: {} });
+  assert.equal(updates, before);
 });
 
 test("megaboost snapshot exposes tracker data and caches only matching player, chip, revision and playback state", async () => {
@@ -377,7 +391,7 @@ test("megaboost snapshot exposes tracker data and caches only matching player, c
     readSidDigiTrace: () => new Float32Array([0, 1])
   };
   const runtime = vm.createContext({
-    immersiveMode: "mega", activeEngine: "sid", sidRegisterDetailEnabled: false,
+    visualizationInput: "module", immersiveMode: "mega", activeEngine: "sid", sidRegisterDetailEnabled: false,
     selectedSidChip: 0, lastMegaSidStateRevision: -1, lastMegaSidState: undefined,
     lastMegaSidPlayer: undefined, sidPlayer: player,
     updateSidEnvelope: (...args) => { envelopes.push(args); return { level: .7, phase: "decay" }; }
@@ -407,6 +421,10 @@ test("megaboost snapshot exposes tracker data and caches only matching player, c
   runtime.sidPlayer = { ...player };
   read();
   assert.equal(reads, 5);
+  runtime.visualizationInput = "system";
+  assert.equal(read(), undefined);
+  assert.equal(reads, 5);
+  runtime.visualizationInput = "module";
   runtime.immersiveMode = "visualizer";
   assert.equal(read(), undefined);
   runtime.immersiveMode = "mega";

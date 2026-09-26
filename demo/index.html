@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Module Player</title>
   <link rel="icon" href="favicon.ico">
-  <link rel="stylesheet" href="styles.css?v=52">
+  <link rel="stylesheet" href="styles.css?v=55">
 </head>
 <body>
   <main class="player-shell">
@@ -32,6 +32,12 @@
         <label id="songs-control">Demo module <select id="songs" disabled></select></label>
         <label class="file">Open local module <input id="file" type="file"></label>
       </div>
+    </section>
+
+    <section class="capture-controls" aria-label="Visualizer audio source">
+      <label>Visualizer source <select id="visualizer-source"><option value="module">Module</option><option value="system">System Audio</option></select></label>
+      <button id="capture-audio" class="command" type="button" hidden>Start capture</button>
+      <p id="capture-status" class="signal-readout" role="status"></p>
     </section>
 
     <section class="dashboard-grid" aria-label="Module player dashboard">
@@ -128,10 +134,11 @@
             <p id="immersive-kicker" class="immersive-kicker"><span aria-hidden="true"></span> #AFWD Chamber / Visualizer activated</p>
             <h2 id="immersive-title">No module loaded</h2>
           </div>
+          <button id="close-immersive-visualizer" class="command" type="button" hidden>Close visualizer</button>
         </header>
       </div>
     </div>
   </dialog>
-  <script type="module" src="main.js?v=128"></script>
+  <script type="module" src="main.js?v=132"></script>
 </body>
 </html>

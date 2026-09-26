@@ -63,14 +63,17 @@ test("cutoff history is bounded to eight seconds and clears unobserved gaps", ()
 test("cutoff history resets after switching SID subtunes", async () => {
   const canvas = { _sidFilterHistory: { samples: [{ cutoff: 1024 }] } };
   let selectedTrack;
+  let moduleSelected = false;
   const runtime = vm.createContext({
     activeEngine: "sid",
+    useModuleAudio: () => { moduleSelected = true; },
     selectSubsong: track => track,
     sidPlayer: { state: "playing", selectSong: async track => { selectedTrack = track; } },
     $: () => ({ querySelector: () => canvas })
   });
   vm.runInContext(source.slice(source.indexOf("async function restartWithSubsong("), source.indexOf("function setMetadata(")), runtime);
   await runtime.restartWithSubsong(2);
+  assert.equal(moduleSelected, true);
   assert.equal(selectedTrack, 2);
   assert.equal(canvas._sidFilterHistory, undefined);
 });
@@ -166,13 +169,13 @@ test("all three voice monitors refresh ADSR and voice facts when registers chang
     status[offset + 5] = 0x01;
     status[offset + 6] = 0xf7;
     view.update(view.card, voice, status, 0, { phase: "attack", level: 0.2 });
-    assert.deepEqual(view.settings.map(element => element.textContent), ["0", "1", "15", "7"]);
+    assert.deepEqual(view.settings.map(element => element.textContent), ["00", "01", "15", "07"]);
     status[offset] = 42;
     status[offset + 2] = 90;
     status[offset + 5] = 0xa3;
     status[offset + 6] = 0x58;
     view.update(view.card, voice, status, 7, { phase: "decay", level: 0.8 });
-    assert.deepEqual(view.settings.map(element => element.textContent), ["10", "3", "5", "8"]);
+    assert.deepEqual(view.settings.map(element => element.textContent), ["10", "03", "05", "08"]);
     assert.deepEqual(view.facts.map(element => element.textContent), ["42", "90", "7"]);
   }
 });

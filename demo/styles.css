@@ -183,6 +183,43 @@ h2 {
     min-width: min(100%, 250px);
 }
 
+.capture-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 12px;
+    margin: -8px 0 24px;
+}
+
+.capture-controls label {
+    width: 200px;
+    max-width: 100%;
+}
+
+.capture-controls .signal-readout {
+    flex: 1 1 220px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+#close-immersive-visualizer {
+    opacity: 0;
+    pointer-events: none;
+    flex-shrink: 0;
+    transition: opacity .2s ease;
+}
+
+.cursor-visible #close-immersive-visualizer,
+#close-immersive-visualizer:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+#capture-audio[hidden],
+#close-immersive-visualizer[hidden] {
+    display: none !important;
+}
+
 label {
     display: grid;
     gap: 6px;
