@@ -1,7 +1,8 @@
-import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js";
-import { createXmpPlayer } from "../xmp/index.js?v=6";
+import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js?v=2";
+import { configureAudioContext } from "../uade/runtime-loader.js?v=2";
+import { createXmpPlayer } from "../xmp/index.js?v=7";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
-import { createSidPlayer } from "../sid/sid-player.js?v=3";
+import { createSidPlayer } from "../sid/sid-player.js?v=4";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
 import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=39";
 
@@ -1419,8 +1420,10 @@ function prefersXmp(filename, formatScout) {
   return XMP_PREFERRED_EXTENSIONS.has(extension);
 }
 function prepareSelectedPlayer(filename) {
+  if (!filename) return;
   if (hasSidExtension(filename)) prepareSidPlayer();
   else if (prefersXmp(filename)) prepareXmpPlayer();
+  else configureAudioContext(Number($("audio-rate").value));
 }
 function renderSourceControl() {
   $("songs-control").hidden = false;
@@ -1933,6 +1936,8 @@ async function loadBuffer(buffer, filename, forceUade = false) {
 
 async function playLastSelection(forceUade = false) {
   if (!lastSelection) throw new Error("Select a bundled sample or open a local file first.");
+  if (forceUade) configureAudioContext(Number($("audio-rate").value));
+  else prepareSelectedPlayer(lastSelection.filename);
   if (lastSelection.type === "file") {
     await loadBuffer(lastSelection.buffer, lastSelection.filename, forceUade);
     return;
@@ -1945,6 +1950,8 @@ async function playLastSelection(forceUade = false) {
 async function initializePlayer(forceUade = false) {
   if (initializing) return;
   try {
+    if (forceUade) configureAudioContext(Number($("audio-rate").value));
+    else prepareSelectedPlayer(lastSelection?.filename);
     let defaultWarning;
     initializing = true;
     stopScopeLoop();
@@ -2025,6 +2032,7 @@ function hasActivePlayer() {
 }
 async function loadLocalFile(file) {
   if (!file) return;
+  prepareSelectedPlayer(file.name);
   selectFile({ type: "file", filename: file.name, buffer: await file.arrayBuffer() });
   if (!hasActivePlayer()) await initializePlayer();
   else await playLastSelection();

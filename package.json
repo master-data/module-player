@@ -15,6 +15,7 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "audio-context.js",
     "LICENCE.md",
     "NOTICE.md",
     "ACKNOWLEDGMENTS.md",
@@ -23,7 +24,7 @@
     "sid"
   ],
   "scripts": {
-    "check": "node --check index.js && node --check uade/uade-player.js && node --check xmp/xmp-player.js && node --check sid/sid-metadata.js && node --check sid/sid-player.js && node --check demo/main.js && node --check demo/immersive-visualizer.js && node --check demo/general-scenes.js",
+    "check": "node --check index.js && node --check audio-context.js && node --check uade/runtime-loader.js && node --check uade/uade-player.js && node --check xmp/xmp-player.js && node --check xmp/frame.js && node --check sid/sid-metadata.js && node --check sid/sid-player.js && node --check demo/main.js && node --check demo/immersive-visualizer.js && node --check demo/general-scenes.js",
     "pack:check": "npm pack --dry-run"
   },
   "exports": {

@@ -1,4 +1,5 @@
 import { parseTrackerData } from "./tracker-data.js";
+import { createPlaybackAudioContext } from "../audio-context.js";
 
 const PLAYER_OWNER = Symbol.for("webxmp-preview.owner");
 
@@ -97,8 +98,11 @@ export class XmpPlayer {
     this._frame.hidden = true;
     this._frame.tabIndex = -1;
     this._frame.setAttribute("aria-hidden", "true");
+    this._frame.setAttribute("allow", "autoplay");
+    this._audioContext = createPlaybackAudioContext(this._audioContextSampleRate);
+    this._frame.modulePlayerAudioContext = this._audioContext;
     const query = new URLSearchParams();
-    query.set("runtimeVersion", "4");
+    query.set("runtimeVersion", "5");
     if (this._audioContextSampleRate !== undefined) query.set("audioContextSampleRate", this._audioContextSampleRate);
     if (this._processorBufferSize !== undefined) query.set("processorBufferSize", this._processorBufferSize);
     this._frame.src = `${this._assetBaseUrl.replace(/\/$/, "")}/frame.html?${query}`;
@@ -198,6 +202,7 @@ export class XmpPlayer {
   async dispose() {
     if (this._state === "disposed") return;
     await this._api?.dispose();
+    if (this._audioContext.state !== "closed") await this._audioContext.close();
     window.removeEventListener("message", this._onMessage);
     this._frame.remove();
     if (globalThis[PLAYER_OWNER] === this) delete globalThis[PLAYER_OWNER];

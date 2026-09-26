@@ -1,4 +1,5 @@
 import { parseSidMetadata } from "./sid-metadata.js";
+import { createPlaybackAudioContext } from "../audio-context.js";
 
 const PLAYER_OWNER = Symbol.for("module-player.sid.owner");
 const CYCLES_PER_RENDER = 8_000;
@@ -168,20 +169,12 @@ export class SidPlayer {
 
   async _initialize() {
     if (globalThis[PLAYER_OWNER] && globalThis[PLAYER_OWNER] !== this) throw new Error("Only one SID player may be active per document.");
-    const AudioContextConstructor = globalThis.AudioContext ?? globalThis.webkitAudioContext;
-    if (!AudioContextConstructor) throw new Error("Web Audio is unavailable in this browser.");
-    const context = new AudioContextConstructor(this._audioContextSampleRate ? { sampleRate: this._audioContextSampleRate } : undefined);
-    if (this._audioContextSampleRate && context.sampleRate !== this._audioContextSampleRate) {
-      await context.close();
-      throw new Error(`The browser selected ${context.sampleRate} Hz instead of the requested ${this._audioContextSampleRate} Hz.`);
-    }
+    const context = createPlaybackAudioContext(this._audioContextSampleRate);
     if (!context.createScriptProcessor) {
       await context.close();
       throw new Error("This browser does not support the SID audio bridge.");
     }
     this._audioContext = context;
-    // This runs synchronously while the selection gesture is still active.
-    context.resume().catch(() => {});
     this._gain = context.createGain();
     this._gain.gain.value = this._volume;
     this._processor = context.createScriptProcessor(this._processorBufferSize, 0, 2);

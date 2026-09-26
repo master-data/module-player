@@ -1,1 +1,1 @@
-export { createXmpPlayer, XmpPlaybackError, XmpPlayer } from "./xmp-player.js?v=4";
+export { createXmpPlayer, XmpPlaybackError, XmpPlayer } from "./xmp-player.js?v=5";

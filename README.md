@@ -266,6 +266,8 @@ player.setUadePanning(0.7);        // UADE mapping: 0..2
 
 `audioContextSampleRate` requests an immutable Web Audio sample rate. The player rejects initialization if the browser selects a different rate. `processorBufferSize` configures the upstream `ScriptProcessorNode`; practical values are `2048`, `4096`, and `8192`. Smaller values reduce latency but give the main thread less time to generate audio. Start at `4096` and increase it when diagnostics show late callbacks.
 
+Create the player directly in a click or touch handler, before awaiting downloads, so iOS browsers can unlock its audio output. XMP creates its output context in the parent document before loading its iframe. All engines retry blocked activation on a subsequent touch, click, or key press, and retry interrupted audio on the next gesture without resuming an intentional pause. Where supported, the browser audio session uses the `playback` category. A programmatic call alone cannot bypass browser autoplay restrictions.
+
 ## Metadata and Format Detection
 
 UADE returns format-specific raw metadata. Pass it to `parseUadeSongInfo()` for stable display fields:

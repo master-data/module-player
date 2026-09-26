@@ -1,3 +1,5 @@
+import { createPlaybackAudioContext } from "../audio-context.js";
+
 const loadedScripts = new Map();
 
 function withTrailingSlash(value) {
@@ -43,22 +45,15 @@ export async function loadUadeRuntime(assetBaseUrl, visualization) {
   return base;
 }
 
-export async function configureAudioContext(sampleRate) {
-  if (sampleRate === undefined) return undefined;
-  if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
+export function configureAudioContext(sampleRate) {
+  if (sampleRate !== undefined && (!Number.isInteger(sampleRate) || sampleRate <= 0)) {
     throw new RangeError("AudioContext sample rate must be a positive integer.");
   }
 
   const existing = window._gPlayerAudioCtx;
-  if (existing?.sampleRate === sampleRate) return existing;
-  if (existing && existing.state !== "closed") await existing.close();
-
-  const AudioContextConstructor = window.AudioContext ?? window.webkitAudioContext;
-  if (!AudioContextConstructor) throw new Error("Web Audio API is not supported in this browser.");
-  const context = new AudioContextConstructor({ sampleRate });
+  if (existing && existing.state !== "closed" && (sampleRate === undefined || existing.sampleRate === sampleRate)) return existing;
+  const context = createPlaybackAudioContext(sampleRate);
   window._gPlayerAudioCtx = context;
-  if (context.sampleRate !== sampleRate) {
-    throw new Error(`The browser selected ${context.sampleRate} Hz instead of the requested ${sampleRate} Hz AudioContext.`);
-  }
+  if (existing && existing.state !== "closed") existing.close().catch(() => {});
   return context;
 }

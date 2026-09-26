@@ -1,4 +1,4 @@
-import { configureAudioContext, loadUadeRuntime } from "./runtime-loader.js";
+import { configureAudioContext, loadUadeRuntime } from "./runtime-loader.js?v=2";
 import { UadeVisualizationSource } from "./visualization.js";
 import { scoutFile } from "./vendor/format-scout/index.js";
 

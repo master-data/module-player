@@ -7,6 +7,11 @@ const requestedAudioContextSampleRate = Number(frameOptions.get("audioContextSam
 const processorBufferSize = Number(frameOptions.get("processorBufferSize")) || 2048;
 
 function configureAudioContext() {
+  const parentContext = window.frameElement?.modulePlayerAudioContext;
+  if (parentContext) {
+    window._gPlayerAudioCtx = parentContext;
+    return;
+  }
   if (!requestedAudioContextSampleRate) return;
   const AudioContextConstructor = window.AudioContext ?? window.webkitAudioContext;
   if (!AudioContextConstructor) throw new Error("Web Audio API is not supported in this browser.");
@@ -49,7 +54,7 @@ const ready = ScriptNodePlayer.initialize(backend, () => notify("xmp-ended"), []
 async function load(buffer, filename, options = {}) {
   await ready;
   const audioContext = ScriptNodePlayer.getWebAudioContext();
-  if (audioContext.state === "suspended") await audioContext.resume();
+  if (audioContext.state !== "running") await audioContext.resume();
   const file = new File([buffer], filename);
   file.xname = `/tmp/${filename}`;
   const [virtualName] = await ScriptNodePlayer.loadFileData([file]);
