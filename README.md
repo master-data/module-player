@@ -6,7 +6,7 @@ Browser and any web-compatible environment for tracker music. This repository co
 - **webXMP/libxmp** for PC tracker formats such as XM, IT, S3M, and MOD.
 - **libsidplayfp** for Commodore 64 PSID files and RSID files with caller-supplied C64 ROMs.
 
-It also includes a standalone browser demo at `demo/`. The project is intended for integrating music previews into an application; it does not provide a CLI, build pipeline, or a general-purpose music player UI.
+It also includes a browser player demo and a **standalone audio-reactive visualizer** in [demo/](demo/). The visualizer can use shared system audio without loading a module or initializing a playback engine. The library is intended for integrating music previews into an application; it does not provide a CLI or build pipeline.
 
 ## Background and Design
 
@@ -79,6 +79,22 @@ http://localhost:4173/demo/?moduleUrl=https%3A%2F%2Fexample.com%2Fmusic%2Fsong.m
 `selectDemo` is matched case-insensitively against `music-manifest.json`. `moduleUrl` accepts an HTTP(S) URL and fetches the module directly; a different origin must return an appropriate CORS header (for example, `Access-Control-Allow-Origin`). Browsers still require **Initialize** to be clicked before audio can start.
 
  The demo lists `Arkanoid.sid`, `VESURI - Major Release.mod`, `cust.hybris-title`, `di.partyland`, `elw-lock.xm`, `funky stars.xm`, `GSLINGER.MOD`, `Last_Ninja.sid`, `onward.xm`, `sainahi_circles.mod`, and `ghost battle (level 1).hipc` through `ghost battle (level 5).hipc` in [demo/music-manifest.json](demo/music-manifest.json). It routes PSID/RSID containers to the SID player, prefers XMP for PC tracker formats, and otherwise prefers UADE for Amiga formats including Custom (`CUST.*`) and Jochen Hippel CoSo (`.hipc`) files. A failed UADE or XMP single-file load is retried with the other engine. `Arkanoid.sid` is a strict RSID and automatically uses the authorized C64 KERNAL, BASIC, and CHARGEN images in `demo/assets/roms/`. Settings also accepts a per-session local ROM override. ROM source and integrity hashes are recorded in [uade/LICENSES.md](uade/LICENSES.md). **Use XMP for MOD files** is enabled by default to provide the tracker display. Disable it in Settings to send MOD files to UADE instead; the choice applies when the module is next loaded or the player is reinitialized.
+
+### Standalone Visualizer
+
+The demo can visualize music from another application or browser tab, independently of the module players. Serve and open the demo as described above; **Initialize** and a loaded module are not required.
+
+1. Set **Visualizer source** to **System Audio**.
+2. Select **Start capture**. In the browser's sharing dialog, choose an audio-capable source and enable audio sharing. For full system audio on Windows, choose **Entire Screen** and **Share system audio**.
+3. Play audio in the shared source, then select **Visualizer view** to open the immersive display.
+
+Use Chrome or Edge on Windows over **HTTPS or localhost** for system-audio capture. Available sources and audio-sharing options depend on the browser and operating system; sharing a screen without its audio will not work. The browser requires screen-sharing permission even though the visualizer only analyzes audio and does not display the captured video. Captured audio is not routed back to the speakers, avoiding duplicate playback.
+
+The visualizer cycles through audio-reactive Canvas and Three.js scenes, including smooth mountain flight, with stereo waveform response and native-resolution rendering. WebGL scenes have Canvas fallbacks. An optional **Strobe** control follows detected bass attacks; flashing lights can trigger seizures or discomfort. Reduced-motion preferences slow animation and disable the strobe.
+
+Press **Escape** or select **Close visualizer** to return to the demo. Closing the view leaves capture active for reopening; select **Stop capture** or stop sharing through the browser to release it. Select **Module** as the source to return to module visualization.
+
+This standalone mode is part of the repository demo, not an exported player API. See [demo/VISUALIZER.md](demo/VISUALIZER.md) for scene descriptions and rendering details.
 
 ## ESM APIs
 
