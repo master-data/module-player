@@ -55,7 +55,7 @@ particles; changing scene names did not produce a strong enough visual change.
 | Vortex | Repeated circles overlapped the tunnel/orbit family. Aperture owns the radial composition. |
 | Constellation | Sparse dots and connecting lines felt incidental. Removed. |
 | Prism | Nested wire polygons did not read as facets. Prism now uses translucent alternating facets. |
-| Helix | Original full-width DNA composition restored separately from Weave: opposing 2.35-turn strands and 26 connecting rungs. |
+| Helix | Full-width opposing stereo PCM strands and 26 connecting rungs; the preset 2.35-turn sine has been removed. |
 | Monolith | Original 19-column layout restored: tapered widths, central height profile, three-stop gradients and continuous floor reflections. No added sway or highlights. |
 | Bloom | Another radial line pattern without a distinct surface. Removed. |
 | Rainfall | Short random marks lacked compositional hierarchy. Removed. |
@@ -67,7 +67,7 @@ particles; changing scene names did not produce a strong enough visual change.
 | Infinity | One small looping figure lacked full-frame presence. Weave expands the braided silhouette. |
 | Kaleidoscope | Repeated strokes resembled the other radial effects. Removed. |
 | Quasar | A small repeated-ray center left too much unused space. Diffraction uses crossing full-frame fans. |
-| Wavegarden | Original ten-layer spacing, overlapping swell/cross motion and depth-based colors restored with thick smoothed paths. |
+| Wavegarden | Ten layers of current stereo PCM with gentle whole-layer drift, depth-based colors and thick curved paths. |
 | Dreamweb | Uniform web lines lacked focus. Interference uses two offset contour centers. |
 
 ## Replacement deck
@@ -82,7 +82,7 @@ particles; changing scene names did not produce a strong enough visual change.
     Adaptive detail reduces curve samples without removing blades or closing the
     opening. Reduced motion attenuates deformation. Drawing reads the shared
     inertial state without advancing it and preserves the starfield behind the iris.
-- Silk: flowing stereo thread fields with warm and cool layers.
+- Silk: current stereo PCM fans into warm and cool thread fields, with gentle whole-thread drift.
 - Contours: stacked topographic ridges and highlighted elevation lines.
 - Diffraction: opposing curved line fans without a central ornament.
 - Cascade: a moving spectral relief field with contrasting crest tips.
@@ -92,13 +92,15 @@ particles; changing scene names did not produce a strong enough visual change.
     colors and rotation. Bass, mids and highs replace SID voice energies; spectral
     bands control spread and reach, with smoothed PCM deforming the facets.
 - Monolith: original gradient columns and floor reflections, driven by inertial audio.
-- Wavegarden: original layered wave composition, with inertial audio and thick curves.
+- Wavegarden: ten layered stereo waveform traces with thick curves and inertial amplitude accents.
 - Terrain: original five-layer filled wave landscape with full-height gradient fades,
   music-driven swells and outward-traveling light streaks. Streak count adapts to load;
   their deterministic projection is independent of the number of crossfade draws.
 - Helix: original opposing stereo strands, 26 thin rungs, color progression and
-    traveling phase. Broad curved strands use inertial PCM and bass-driven amplitude;
-    beats add a smooth amplitude accent and strand sampling adapts to rendering load.
+    bass-driven amplitude. The strand ordinates come from current PCM; the second
+    channel is mirrored vertically, with rungs joining the matching sample positions.
+    Beats add a smooth amplitude accent and strand sampling adapts to rendering load.
+    There is no generated sine carrier; silent PCM produces flat strands.
 
 ### Demoscene-inspired additions
 
@@ -342,6 +344,14 @@ audio remains untouched for analysis and telemetry. Spatially filtered waveform
 samples feed rounded quadratic paths; strokes retain a broad CSS-pixel minimum
 across display pixel densities. Fewer overlapping traces keep those heavier
 curves readable.
+
+Helix, Wavegarden and Silk instead read a separate 256-point signed PCM snapshot,
+copied once per frame into reused stereo buffers. No temporal averaging is applied
+to these trace samples, so changing waveform phase cannot cancel the signal before
+it is drawn. Mono is duplicated, missing input clears the traces, and both crossfade
+layers read the same snapshot without touching source buffers. Quadratic paths still
+round the spatial samples. These three scenes retain inertial amplitude and layout
+motion, but no generated spatial sine waves replace the waveform's shape.
 
 Waveform and envelope attacks are tuned separately: envelopes reach over 80%
 of a step within 100 ms while waveforms retain more inertia. Detected beats

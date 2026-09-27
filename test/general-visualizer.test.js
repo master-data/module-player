@@ -120,6 +120,29 @@ test("waveform inertia retains momentum and matches across 30, 60 and 240 Hz", (
   for (const result of results.slice(1)) result.forEach((value, index) => assert(Math.abs(value - results[0][index]) < 1e-10));
 });
 
+test("waveform snapshots preserve fresh signed PCM without temporal cancellation or source mutation", () => {
+  const view = renderer();
+  const left = Float32Array.from({ length: 256 }, (_, index) => index < 80 ? -.4 : index < 160 ? .3 : .1);
+  const right = Float32Array.from(left, value => -value * .5);
+  view.channels = [left, right];
+  const original = [...left];
+  const motion = updateGeneralMotion(view, 1 / 240);
+  const storage = motion.traceChannels[0];
+  assert.deepEqual([...storage], original);
+  assert.deepEqual([...motion.traceChannels[1]], [...right]);
+  assert.deepEqual([...left], original);
+  left.forEach((value, index) => { left[index] = -value; });
+  updateGeneralMotion(view, 1 / 240);
+  assert.equal(motion.traceChannels[0], storage);
+  assert.deepEqual([...storage], [...left], "A new buffer must not be averaged with the previous waveform phase");
+  view.channels = [right];
+  updateGeneralMotion(view, 0);
+  assert.deepEqual([...storage], [...motion.traceChannels[1]], "Mono must feed both strands");
+  view.channels = [];
+  updateGeneralMotion(view, 0);
+  assert(motion.traceChannels.every(channel => channel.every(value => value === 0)));
+});
+
 test("terrain pigment currents follow spectral balance, freeze in silence and respect reduced motion", () => {
   const advance = (bands, rate, reducedMotion = false) => {
     const view = Object.assign(renderer(), { reducedMotion });
@@ -668,13 +691,47 @@ test("restored bars and thick vertically sweeping waves remain in the general de
   for (let index = 1; index < waves.coordinates.length; index += 2) {
     verticalTravel = Math.max(verticalTravel, Math.abs(moved.coordinates[index] - waves.coordinates[index]));
   }
-  assert(verticalTravel > 40);
+  assert(verticalTravel > 10);
 });
 
-test("helix restores the original opposing 2.35-turn strands and 26 full-width rungs", () => {
+test("waveform-led scenes draw flat PCM flat and expose a localized audio transient", () => {
+  for (const scene of ["helix", "wavegarden", "silk"]) {
+    const view = renderer();
+    view.channels = [new Float32Array(256), new Float32Array(256)];
+    view.signal = { low: 0, mid: 0, high: 0, level: 0 };
+    updateGeneralMotion(view, 1);
+    const pathRanges = () => {
+      const drawing = capture();
+      const ranges = [];
+      let ordinates = [];
+      const context = new Proxy(drawing.context, {
+        get: (target, name) => (...values) => {
+          if (name === "beginPath") ordinates = [];
+          if (["moveTo", "lineTo", "quadraticCurveTo"].includes(name)) {
+            for (let index = 1; index < values.length; index += 2) ordinates.push(values[index]);
+          }
+          if (name === "stroke") ranges.push(Math.max(...ordinates) - Math.min(...ordinates));
+          return target[name](...values);
+        }
+      });
+      view.drawScene(context, scene, 1440, 900, 720, 450);
+      return ranges;
+    };
+    assert(pathRanges().every(range => range < 1e-9), `${scene} must not invent sine waves for flat input`);
+    view.channels[0].fill(.8, 80, 100);
+    view.channels[1].fill(-.5, 140, 166);
+    updateGeneralMotion(view, 0);
+    assert(Math.max(...pathRanges()) > 40, `${scene} must display a real PCM transient immediately`);
+    const before = render(view, scene);
+    view.channels[0].fill(0);
+    assert.deepEqual(render(view, scene), before, "Drawing must read the shared snapshot, not mutable source buffers");
+  }
+});
+
+test("helix connects the actual opposing stereo waveforms with 26 full-width rungs", () => {
   assert(GENERAL_SCENES.includes("helix"));
   const view = renderer();
-  view.channels = [];
+  view.channels = [new Float32Array(256).fill(.4), new Float32Array(256).fill(-.2)];
   const drawing = capture();
   const paths = [];
   let path;
@@ -692,12 +749,11 @@ test("helix restores the original opposing 2.35-turn strands and 26 full-width r
   for (let rung = 0; rung <= 25; rung++) {
     const [first, second] = paths[rung + 2];
     const position = rung / 25;
-    const expected = Math.sin(position * Math.PI * 2 * 2.35 + view.elapsed * .34)
-      * 1080 * (.18 + view.signal.low * .08);
+    const amplitude = 1080 * (.3 + view.signal.low * .0675);
     assert.equal(first[0], position * 1920 - 960);
     assert.equal(second[0], first[0]);
-    assert(Math.abs(first[1] - expected) < 1e-8);
-    assert(Math.abs(second[1] + expected) < 1e-8);
+    assert(Math.abs(first[1] - view.channels[0][0] * amplitude) < 1e-8);
+    assert(Math.abs(second[1] + view.channels[1][0] * amplitude) < 1e-8);
   }
 });
 

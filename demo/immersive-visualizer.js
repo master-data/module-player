@@ -1,4 +1,4 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=24";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=25";
 import { ShaderScenes } from "./shader-scenes.js?v=17";
 
 const TAU = Math.PI * 2;

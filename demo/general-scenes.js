@@ -86,8 +86,13 @@ export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
     motion.energyChannels = [motion.values.subarray(energyOffset, energyOffset + points), motion.values.subarray(energyOffset + points)];
   }
   const channels = renderer.channels ?? [];
+  const traceChannels = motion.traceChannels ??= [new Float32Array(256), new Float32Array(256)];
   for (let side = 0; side < 2; side++) {
     const data = channels[side] ?? channels[0];
+    for (let index = 0; index < traceChannels[side].length; index++) {
+      const value = sample(data, index / (traceChannels[side].length - 1));
+      traceChannels[side][index] = Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
+    }
     for (let index = 0; index < points; index++) {
       const position = index / (points - 1);
       const spacing = 1 / (points - 1);
@@ -220,6 +225,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const channels = motion?.channels ?? renderer.channels;
   const left = channels[0];
   const right = channels[1] ?? left;
+  const traces = motion?.traceChannels ?? channels;
+  const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
     return value * 4 / (1 + Math.abs(value) * 3);
@@ -407,9 +414,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   } else if (scene === "helix") {
     const points = detail(150, 48);
     const hue = 116 + seed * 210 + Math.sin(time * .08) * 28 + high * 56;
-    const amplitude = height * (.18 + low * .08 + impact * .035);
-    const ordinate = (position, strand) => Math.sin(position * TAU * 2.35 + time * .34 + strand * Math.PI)
-      * amplitude + sample(strand ? right : left, position) * height * .055;
+    const amplitude = height * (.3 + low * .0675 + impact * .0525);
+    const ordinate = (position, strand) => trace(position, strand) * amplitude * (strand ? -1 : 1);
     context.globalCompositeOperation = "lighter";
     for (let strand = 0; strand < 2; strand++) {
       curve.begin();
@@ -463,13 +469,11 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
       const depth = layer / (layers - 1);
       const base = height * (.08 + depth * .82) - centerY;
       const amplitude = height * (.025 + (1 - depth) * .07 + low * .025 + impact * .025);
+      const drift = Math.sin(time * (.08 + depth * .03) + layer * .7) * amplitude * .55;
       curve.begin();
       for (let point = 0; point <= points; point++) {
         const position = point / points;
-        const swell = Math.sin(position * TAU * (1.1 + seed * 1.4) + time * (.08 + depth * .03) + layer * .7);
-        const cross = Math.sin(position * TAU * 3.2 - time * .05 + layer) * .25;
-        const vertical = base + (swell + cross) * amplitude
-          + sample(layer % 2 ? left : right, position) * amplitude * 1.4;
+        const vertical = base + drift + trace(position, layer % 2) * amplitude * 2.2;
         curve.point(position * width - centerX, vertical);
       }
       curve.end();
@@ -483,15 +487,14 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     for (let family = 0; family < 2; family++) {
       for (let strand = 0; strand < strands; strand++) {
         const depth = strand / (strands - 1);
+        const drift = Math.sin(time * .18 + family * 2.7 + depth * .7) * height * .035;
+        const amplitude = height * (.2 + low * .1 + impact * .11) * (.55 + depth * .45);
         curve.begin();
         for (let point = 0; point <= points; point++) {
           const position = point / points;
-          const phase = position * TAU * (.75 + seed * .35) + time * .18 + family * 2.7;
-          const taper = Math.sin(position * Math.PI);
           const horizontal = (position - .5) * width * 1.12;
-          const fold = Math.sin(phase + depth * 1.8 + impact * .24) * height * (.13 + low * .12 + impact * .09);
-          const vertical = fold + (depth - .5) * scale * .18 * Math.cos(phase * .7)
-            + audio(position, family) * scale * .09 * taper * (1 + mid);
+          const vertical = (depth - .5) * height * .55 + (family ? 1 : -1) * height * .06
+            + drift + trace(position, family) * amplitude;
           curve.point(horizontal, vertical);
         }
         curve.end();
