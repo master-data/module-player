@@ -72,3 +72,24 @@ test("small audio buffers receive fresh SID captures in sub-frame render batches
   assert.equal(player._scopeRevision, 2);
   assert.equal(player._diagnostics.underrunCount, 0);
 });
+
+test("filter tuning updates the active SID context without reloading the subtune", () => {
+  const player = new SidPlayer();
+  let appliedConfig;
+  player._state = "playing";
+  player._metadata = { currentSong: 2 };
+  player._sidContext = {
+    supportsFilterConfig: () => true,
+    setFilterConfig: config => {
+      appliedConfig = { ...config };
+      return true;
+    },
+    getLastError: () => ""
+  };
+  player._loadTrack = () => assert.fail("Live filter tuning must not reload the current subtune.");
+
+  player.setFilterConfig({ filter6581Curve: 0.6, combinedWaveforms: "STRONG" });
+
+  assert.equal(player.state, "playing");
+  assert.deepEqual(appliedConfig, { filter6581Curve: 0.6, combinedWaveforms: "STRONG" });
+});
