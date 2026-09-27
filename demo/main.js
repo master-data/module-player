@@ -4,7 +4,7 @@ import { createXmpPlayer } from "../xmp/index.js?v=7";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=4";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=80";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=81";
 import { SystemAudioCapture } from "./system-audio.js?v=6";
 
 const $ = (id) => document.getElementById(id);
@@ -77,6 +77,7 @@ let sidRegisterDetailEnabled = true;
 let sidPhosphorEnabled = readStoredBoolean(SID_PHOSPHOR_STORAGE_KEY, false);
 let sidPhosphorStay = readStoredNumber(SID_PHOSPHOR_STAY_STORAGE_KEY, .25);
 let sidFilterTuningCustomized = false;
+let sidFilterTuningPending = false;
 const sidSystemRoms = {};
 let demoSidRomsReady;
 let lastMegaSidState;
@@ -1378,7 +1379,7 @@ async function loadWithSid(buffer, filename) {
   const processorBufferSize = configuredProcessorBufferSize("sid");
   // Use the player created during selection, before fetching module bytes
   // deferred this work beyond the browser's user-activation window.
-  const replaceSidPlayer = !sidPlayer || sidPlayer.state === "disposed" || sidPlayer.getDiagnostics().processorBufferSize !== processorBufferSize;
+  const replaceSidPlayer = !sidPlayer || sidPlayer.state === "disposed" || sidPlayer.getDiagnostics().processorBufferSize !== processorBufferSize || sidFilterTuningPending;
   const newSidPlayer = pendingSidPlayer;
   pendingSidPlayer = undefined;
   await player?.dispose();
@@ -1399,6 +1400,7 @@ async function loadWithSid(buffer, filename) {
     updateSidWriteTracing();
   }
   const metadata = await sidPlayer.load(buffer, { ...options(filename), silenceTimeoutSeconds: Number($("silence").value) });
+  sidFilterTuningPending = false;
   loadFailure = undefined;
   setSidMetadata(metadata);
   showStatus("Player state: playing");
@@ -1549,6 +1551,11 @@ function sidFilterConfig() {
     ...(oldCaps ? { old6581Caps: oldCaps === "true" } : {}),
     ...(combinedWaveforms ? { combinedWaveforms } : {})
   };
+}
+function queueSidFilterTuning() {
+  sidFilterTuningCustomized = true;
+  sidFilterTuningPending = true;
+  showStatus("SID filter tuning will apply when the SID is next loaded.");
 }
 function hasCompleteSidSystemRoms() {
   return Object.keys(SID_ROM_SPECS).every((name) => sidSystemRoms[name]?.byteLength === SID_ROM_SPECS[name].size);
@@ -2122,13 +2129,7 @@ $("tracker-sid-phosphor-stay").addEventListener("change", (event) => {
 for (const control of [$("tracker-sid-filter-curve"), $("tracker-sid-filter-range"), $("tracker-sid-filter-caps"), $("tracker-sid-filter-waveforms")]) {
   control.addEventListener("change", () => {
     if (activeEngine !== "sid" || !sidPlayer) return;
-    try {
-      sidFilterTuningCustomized = true;
-      sidPlayer.setFilterConfig(sidFilterConfig());
-      showStatus("SID filter tuning updated.");
-    } catch (error) {
-      showStatus(error.message);
-    }
+    queueSidFilterTuning();
   });
 }
 $("silence").addEventListener("change", (event) => (activeEngine === "xmp" ? xmpPlayer : activeEngine === "sid" ? sidPlayer : player)?.setSilenceTimeout(Number(event.target.value)));

@@ -1,5 +1,5 @@
 import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=25";
-import { ShaderScenes } from "./shader-scenes.js?v=17";
+import { ShaderScenes } from "./shader-scenes.js?v=18";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];

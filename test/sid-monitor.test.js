@@ -7,6 +7,7 @@ const source = await readFile(new URL("../demo/main.js", import.meta.url), "utf8
 const updateSource = source.slice(source.indexOf("function updateSidVoiceMonitor("), source.indexOf("function renderSidTrackerView("));
 const flagsSource = source.slice(source.indexOf("function sidControlFlags("), source.indexOf("function sidVoiceMonitor("));
 const drawingSource = source.slice(source.indexOf("function drawSidEnvelopeReconstruction("), source.indexOf("function sidControlFlags("));
+const filterQueueSource = source.slice(source.indexOf("function queueSidFilterTuning("), source.indexOf("function hasCompleteSidSystemRoms("));
 
 function scopeCanvas() {
   const backgrounds = [];
@@ -76,6 +77,20 @@ test("cutoff history resets after switching SID subtunes", async () => {
   assert.equal(moduleSelected, true);
   assert.equal(selectedTrack, 2);
   assert.equal(canvas._sidFilterHistory, undefined);
+});
+
+test("SID filter tuning is queued until the next SID load", () => {
+  let status;
+  const runtime = vm.createContext({
+    sidFilterTuningCustomized: false,
+    sidFilterTuningPending: false,
+    showStatus: message => { status = message; }
+  });
+  vm.runInContext(filterQueueSource, runtime);
+  runtime.queueSidFilterTuning();
+  assert.equal(runtime.sidFilterTuningCustomized, true);
+  assert.equal(runtime.sidFilterTuningPending, true);
+  assert.equal(status, "SID filter tuning will apply when the SID is next loaded.");
 });
 
 test("cutoff drawing maps register endpoints to the plot bounds without interpolated values", () => {
