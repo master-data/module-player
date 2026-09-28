@@ -18,7 +18,7 @@ ignored. Automatic scene rotation remains shuffled.
 
 ## Metaball Foundry
 
-The general deck now has 25 effects. Metaball Foundry is a full-screen Three.js
+The general deck now has 27 effects. Metaball Foundry is a full-screen Three.js
 raymarched chrome sculpture: six smoothly joined forms, a neutral softbox, and
 two reflected stereo waveform ribbons with faint cool/warm separation. These
 are directional environment reflections, not painted surface stripes or a
@@ -164,6 +164,58 @@ in front of the camera. Projection buffers are reused, and drawing does not
 advance audio state. The standard 20-second hold and immediate manual selection
 remain unchanged; SID's separate deck is unaffected.
 
+## Phosphor Bobs
+
+Phosphor Bobs follows Echo Chamber: up to 16 shader bobs on intertwined sine paths
+form a ray-marched smooth-union surface. Nearby lobes melt together into liquid
+necks with shared surface normals, blended copper/petrol pigments, and restrained
+specular lighting. These are solid three-dimensional surfaces, not overlapping
+sprites or blurred discs. Empty shader pixels are transparent so the shared
+background stars remain visible, while solid surfaces occlude stars behind them.
+The swarm rotates slowly inside a gentle camera orbit, vertical drift and dolly;
+camera motion uses its own elapsed clock, not rapid beat kicks.
+
+Bass and beat momentum expand the swarm and increase body size and fusion;
+mids change its depth, treble lifts highlights, and eased stereo PCM reshapes
+the two transverse axes. Eight persistent bobs have individually varied radii.
+Each detected audio beat spawns one additional bob, or two on strong beats and
+returns from a drop, into an eight-slot pool. New bobs bloom over 0.22 seconds,
+then shrink away between 1.6 and 3.2 seconds; full pools preserve living bobs
+rather than replacing them abruptly. Missing audio and silence cannot spawn.
+The pool advances only in the update loop, survives outgoing crossfades, and
+resets on reentry. Reduced motion slows both its clock and the camera.
+Body uniforms and projection vectors are reused;
+drawing never integrates audio state. Rendering remains native-resolution and
+uncapped; adaptive quality changes raymarch iterations, not pixel density or
+the spawn pool capacity. Portrait-aware framing and the standard 20-second hold
+remain unchanged; SID's separate deck is unaffected.
+
+Without WebGL, the simpler Canvas fallback retains 16-40 depth-sorted shaded
+discs with four 120 ms history snapshots and 0.48-second afterimages. It does
+not simulate fused surfaces. Its history is independent of Orbit and Bloom,
+active only while visible or outgoing, and resets on entry.
+
+## Glenz Vector
+
+Glenz Vector follows Phosphor Bobs: two interlocking, counter-rotating translucent
+polyhedra recall classic demoscene glenz vectors. Petrol and antique-gold facets
+stay low-chroma, with fine straight edges and subdued directional shading.
+Stars remain visible through the faces and the empty background. This is
+stylized depth-sorted transparency, not physically accurate intersecting glass
+or refraction.
+
+Signed stereo PCM reshapes shared vertices without opening cracks. Bass and
+beat momentum expand the forms, mids alter their separation, and treble lifts
+facet lighting. A gentle perspective-camera drift accompanies the independent
+rotations. Shapes, vectors, face records and the sorting buffer are reused;
+drawing never advances audio or animation state.
+
+Vendored Three.js supplies the polyhedron geometry and perspective projection.
+The existing GPU triangle renderer draws 40 faces at full detail, or 16 at low
+detail, with the same Canvas fallback geometry. There is no new full-screen
+ray marcher, framebuffer feedback, or timer. Native output resolution, uncapped
+rendering, the 20-second hold and SID's separate deck remain unchanged.
+
 ## Audio and display updates
 
 Dashboard scopes default to **Display**, rendering on every animation callback.
@@ -303,21 +355,48 @@ Terrain shadows now march up to 24 adaptive samples toward the dominant visible
 Sun or Moon. This is bounded real-time shader ray marching, not hardware RTX or
 an unbiased multi-bounce path tracer. Native canvas resolution is unchanged.
 
-The sky uses a fixed 48-degree observer latitude, 23.44-degree axial tilt and a
-20-minute virtual solar day. A separate inclined lunar orbit and 29.53-day
-relative period set the Moon's position and illuminated phase. The same world
-directions control celestial discs, ground lighting and shadow rays. Warm low
-sunlight, twilight haze, moonlight and world-anchored stars replace the fixed
-sky light. Celestial discs use approximately real angular sizes, so they appear
+The sky is locked to early dawn, with the eastern sun about five degrees above
+the horizon, warm low-angle light and soft twilight haze. Sun and Moon directions
+and lunar phase are independent of elapsed time, scene seed, local time and
+timezone. The same fixed world directions control celestial discs, ground
+lighting and shadow rays. Celestial discs use approximately real angular sizes, so they appear
 only when the camera faces them. Terrain occludes them; terrain fog contains
 atmosphere only, never stars or discs shining through mountains.
 
 This is an Earth-inspired illustrative model, not an ephemeris for the user's
-location or current date. Atmospheric scattering, night exposure and soft
-shadows are artistic real-time approximations. The sky advances with elapsed
-flight time, not musical energy, and the existing beacon and camera clearance
-remain intact. GPU checks cover actual disc rendering, day/night views and
-terrain intersections; the Canvas fallback retains its existing appearance.
+location or current date. Atmospheric scattering and soft shadows are artistic
+real-time approximations. The camera still flies and the terrain still responds
+to music, so the view changes without a day/night cycle. The existing beacon,
+camera clearance and performance optimizations remain intact; the Canvas
+fallback retains its existing appearance.
+
+### Voxel Flight GPU workload
+
+The waveform-authored height field is evaluated once per draw into a reusable
+half-float GPU texture, instead of rebuilding its noise and waveform expression
+at every primary-ray, normal, shadow and beam sample. The field covers a fixed
+704-unit world square, preserving world anchoring during camera movement.
+High quality uses 1024-square terrain samples; stressed quality below 0.65 uses
+512-square samples. This changes geometric approximation, not canvas resolution.
+Samples outside the field retain the analytic expression. Platforms without
+float render-target support retain the analytic path throughout.
+
+Primary rays reject empty space above the terrain texture's conservative maximum
+height. The beacon volume is integrated only inside a conservative beam bound,
+with quality-dependent integration and occlusion budgets. Terrain shadows also
+respond to quality. The original camera-clearance map, signed stereo deformation,
+fixed dawn sky, terrain occlusion and strobe-controlled beacon remain in place.
+
+Where supported, a GPU timer samples one flight render in eight, including the
+height-field pass. Results are collected without waiting; the pending queue is
+bounded, disjoint results are discarded, and all queries and targets are disposed.
+Adaptive quality considers GPU time alongside CPU cost and observed frame pacing.
+Unsupported timer extensions simply retain the existing pacing-based feedback.
+
+Rendering remains uncapped and native-resolution. A 240 Hz display allows only
+4.17 ms for the entire frame, including audio processing, copies and presentation;
+shader timings alone cannot certify 240 fps on an untested GPU or at every output
+resolution. Consumer-hardware testing is still required for that claim.
 
 ## Windows system audio
 

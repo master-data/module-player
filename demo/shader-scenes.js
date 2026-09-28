@@ -1,6 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 
-export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom"];
+export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom", "phosphor-bobs"];
 export const WAVEFORM_POINTS = 256;
 const WAVEFORM_RADIUS = 16;
 const waveformKernel = Float64Array.from({ length: WAVEFORM_RADIUS * 2 + 1 }, (_, index) =>
@@ -21,12 +21,11 @@ function horizonDirection(longitude, latitude, rotation, target, offset) {
   target[offset + 2] = -Math.sin(observer) * meridian + Math.cos(observer) * polar;
 }
 
-export function flightSkyDirections(time, seed = 0, target = new Float64Array(6)) {
-  const days = Math.max(0, Number.isFinite(time) ? time : 0) / 1200;
-  const solarLongitude = Math.PI * 2 / 3 + days * Math.PI * 2 / 365.25;
+export function flightSkyDirections(_time, _seed = 0, target = new Float64Array(6)) {
+  const solarLongitude = Math.PI * 2 / 3;
   const ascension = Math.atan2(Math.sin(solarLongitude) * Math.cos(23.44 * Math.PI / 180), Math.cos(solarLongitude));
-  const rotation = ascension + 1.28 + (Number.isFinite(seed) ? seed : 0) * .1 + days * Math.PI * 2;
-  const lunarLongitude = solarLongitude + 2.35 + days * Math.PI * 2 / 29.53;
+  const rotation = ascension - 1.84;
+  const lunarLongitude = solarLongitude + 2.35;
   const lunarLatitude = Math.sin(lunarLongitude - .8) * 5.145 * Math.PI / 180;
   horizonDirection(solarLongitude, 0, rotation, target, 0);
   horizonDirection(lunarLongitude, lunarLatitude, rotation, target, 3);
@@ -197,16 +196,7 @@ void main() {
   gl_FragColor = vec4(finish(color) * coverage, coverage);
 }`;
 
-const terrainShader = common + waveformShader + `
-uniform float beaconPulse;
-uniform sampler2D flightMap;
-uniform float flightClock;
-uniform vec4 cameraAudio;
-uniform vec3 pigmentFlow;
-uniform vec3 pigmentSpectrum;
-uniform vec4 terrainAudio;
-uniform vec3 sunDirection;
-uniform vec3 moonDirection;
+const flightElevation = `
 float mountainMass(vec2 position) {
   float coarse = texture2D(terrainMap, position / 190.0).r;
   return pow(coarse, 2.2) * 93.2;
@@ -224,8 +214,34 @@ float baseElevation(vec2 position) {
   return ridges + rolling * 3.0 - gullies * 4.0 * smoothstep(5.0, 28.0, mass)
     - separation * 9.0;
 }
+`;
+
+const flightFieldShader = common + waveformShader + flightElevation + `
+uniform float flightFieldSize;
+void main() {
+  vec2 position = (gl_FragCoord.xy / flightFieldSize - .5) * 704.0;
+  gl_FragColor = vec4(baseElevation(position), 0.0, 0.0, 1.0);
+}`;
+
+const terrainShader = common + waveformShader + flightElevation + `
+uniform float beaconPulse;
+uniform sampler2D flightMap;
+uniform sampler2D elevationMap;
+uniform bool elevationCached;
+uniform float terrainCeiling;
+uniform float flightClock;
+uniform vec4 cameraAudio;
+uniform vec3 pigmentFlow;
+uniform vec3 pigmentSpectrum;
+uniform vec4 terrainAudio;
+uniform vec3 sunDirection;
+uniform vec3 moonDirection;
 float elevation(vec2 position) {
-  return baseElevation(position);
+  float height = 0.0;
+  if (elevationCached && max(abs(position.x), abs(position.y)) < 351.0)
+    height = texture2D(elevationMap, position / 704.0 + .5).r;
+  else height = baseElevation(position);
+  return height;
 }
 const float flightRange = 240.0;
 vec2 flightPath(float travel) {
@@ -334,6 +350,7 @@ float terrainShadow(vec3 point, vec3 normal, vec3 light) {
   float distanceAlong = .6;
   float visibility = 1.0;
   for (int shadowStep = 0; shadowStep < 24; shadowStep++) {
+    if (shadowStep >= int(mix(8.0, 24.0, detail))) break;
     vec3 probe = point + normal * .35 + light * distanceAlong;
     float gap = probe.y - elevation(probe.xz);
     if (gap < .025) return 0.0;
@@ -343,7 +360,7 @@ float terrainShadow(vec3 point, vec3 normal, vec3 light) {
   }
   return clamp(visibility, 0.0, 1.0);
 }
-float beaconBox(vec3 origin, vec3 direction, vec3 center, vec3 bounds) {
+vec2 beaconInterval(vec3 origin, vec3 direction, vec3 center, vec3 bounds) {
   vec3 inverse = (step(vec3(0.0), direction) * 2.0 - 1.0) / max(abs(direction), vec3(.000001));
   vec3 first = (center - bounds - origin) * inverse;
   vec3 second = (center + bounds - origin) * inverse;
@@ -351,7 +368,10 @@ float beaconBox(vec3 origin, vec3 direction, vec3 center, vec3 bounds) {
   vec3 exit = max(first, second);
   float nearDistance = max(entry.x, max(entry.y, entry.z));
   float farDistance = min(exit.x, min(exit.y, exit.z));
-  return farDistance >= max(nearDistance, 0.0) ? max(nearDistance, 0.0) : 10000.0;
+  return farDistance >= max(nearDistance, 0.0) ? vec2(max(nearDistance, 0.0), farDistance) : vec2(10000.0);
+}
+float beaconBox(vec3 origin, vec3 direction, vec3 center, vec3 bounds) {
+  return beaconInterval(origin, direction, center, bounds).x;
 }
 void main() {
   vec2 screen = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
@@ -381,12 +401,14 @@ void main() {
   vec3 horizontal = right * cos(bank) + up * sin(bank);
   vec3 vertical = up * cos(bank) - right * sin(bank);
   vec3 direction = normalize(forward * (1.45 - cameraAudio.z * .035) + horizontal * screen.x + vertical * screen.y);
-  float distanceAlong = 0.0;
-  float lastDistance = 0.0;
+  float distanceAlong = origin.y > terrainCeiling && direction.y < -.00001
+    ? (terrainCeiling - origin.y) / direction.y : 0.0;
+  float lastDistance = distanceAlong;
   bool hit = false;
   for (int stepIndex = 0; stepIndex < 1024; stepIndex++) {
     if (distanceAlong > flightRange) break;
     vec3 probe = origin + direction * distanceAlong;
+    if (probe.y > terrainCeiling && direction.y >= 0.0) break;
     float gap = probe.y - elevation(probe.xz);
     if (gap < max(.012, distanceAlong / resolution.y * .65)) { hit = true; break; }
     lastDistance = distanceAlong;
@@ -466,10 +488,16 @@ void main() {
   }
   vec3 beamDirection = normalize(vec3(sin(flightClock * .65), -.025, cos(flightClock * .65)));
   float beam = 0.0;
-  float beamStep = min(visibleDistance, 180.0) / 64.0;
+  vec2 beamRange = beaconInterval(origin, direction, lamp + beamDirection * 80.0,
+    abs(beamDirection) * 80.0 + vec3(7.6));
+  beamRange.y = min(beamRange.y, min(visibleDistance, 180.0));
+  float beamSamples = floor(mix(12.0, 40.0, detail));
+  float beamShadows = floor(mix(4.0, 12.0, detail));
+  float beamStep = max(0.0, beamRange.y - beamRange.x) / beamSamples;
   float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-  for (int beamIndex = 0; beamIndex < 64; beamIndex++) {
-    vec3 point = origin + direction * (float(beamIndex) + jitter) * beamStep;
+  for (int beamIndex = 0; beamIndex < 40; beamIndex++) {
+    if (beamStep <= 0.0 || beamIndex >= int(beamSamples)) break;
+    vec3 point = origin + direction * (beamRange.x + (float(beamIndex) + jitter) * beamStep);
     vec3 fromLamp = point - lamp;
     float along = dot(fromLamp, beamDirection);
     if (along <= 0.0 || along >= 160.0) continue;
@@ -477,14 +505,83 @@ void main() {
     float cone = 1.0 - smoothstep(along * .032 + .18, along * .045 + .3, radius);
     if (cone <= 0.0) continue;
     float clear = 1.0;
-    for (int shadowIndex = 1; shadowIndex <= 16; shadowIndex++) {
-      vec3 probe = mix(lamp, point, float(shadowIndex) / 16.0);
+    for (int shadowIndex = 1; shadowIndex <= 12; shadowIndex++) {
+      if (shadowIndex > int(beamShadows)) break;
+      vec3 probe = mix(lamp, point, float(shadowIndex) / beamShadows);
       if (probe.y < elevation(probe.xz)) { clear = 0.0; break; }
     }
     beam += cone * clear * exp(-along * .008) * beamStep;
   }
   color += vec3(1.0, .68, .3) * (1.0 - exp(-beam * .24)) * (.65 + beaconPulse);
   gl_FragColor = vec4(finish(color) + (jitter - .5) / 255.0, 1.0);
+}`;
+
+const bobsShader = common + `
+uniform vec4 bobBodies[16];
+uniform float bobBlend;
+uniform vec3 bobCamera;
+float bobDistance(vec3 point) {
+  float surface = 1000.0;
+  for (int body = 0; body < 16; body++) {
+    if (bobBodies[body].w <= 0.0) continue;
+    float nextSurface = length(point - bobBodies[body].xyz) - bobBodies[body].w;
+    float softness = max(.0001, bobBlend * min(1.0, bobBodies[body].w / .15));
+    float blend = clamp(.5 + .5 * (nextSurface - surface) / softness, 0.0, 1.0);
+    surface = mix(nextSurface, surface, blend) - softness * blend * (1.0 - blend);
+  }
+  return surface;
+}
+void main() {
+  vec2 screen = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
+  float aspect = resolution.x / resolution.y;
+  vec3 origin = bobCamera * max(1.0, .85 / aspect);
+  vec3 forward = normalize(-origin);
+  vec3 right = normalize(cross(forward, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(right, forward);
+  vec3 direction = normalize(forward + (right * screen.x + up * screen.y) * .44523);
+  vec3 color = vec3(0.0);
+  float coverage = 0.0;
+  float projection = dot(origin, direction);
+  float discriminant = projection * projection - dot(origin, origin) + 25.0;
+  if (discriminant > 0.0) {
+    float distanceAlong = max(0.0, -projection - sqrt(discriminant));
+    float farDistance = -projection + sqrt(discriminant);
+    bool hit = false;
+    vec3 point = origin;
+    for (int stepIndex = 0; stepIndex < 192; stepIndex++) {
+      if (stepIndex >= int(mix(128.0, 192.0, detail)) || distanceAlong > farDistance) break;
+      point = origin + direction * distanceAlong;
+      float gap = bobDistance(point);
+      if (gap < max(.001, distanceAlong / resolution.y * .4)) { hit = true; break; }
+      distanceAlong += max(.0005, gap * .9);
+    }
+    if (hit) {
+      coverage = 1.0;
+      float epsilon = max(.0015, distanceAlong / resolution.y * .25);
+      vec2 offset = vec2(1.0, -1.0) * .5773 * epsilon;
+      vec3 normal = normalize(offset.xyy * bobDistance(point + offset.xyy)
+        + offset.yyx * bobDistance(point + offset.yyx)
+        + offset.yxy * bobDistance(point + offset.yxy)
+        + offset.xxx * bobDistance(point + offset.xxx));
+      vec3 pigment = vec3(0.0);
+      float total = 0.0;
+      for (int body = 0; body < 16; body++) {
+        if (bobBodies[body].w <= 0.0) continue;
+        float weight = exp(-abs(length(point - bobBodies[body].xyz) - bobBodies[body].w) * 6.0);
+        vec3 tint = mod(float(body), 2.0) < .5 ? vec3(.055, .13, .14) : vec3(.17, .085, .05);
+        pigment += tint * weight;
+        total += weight;
+      }
+      pigment /= max(total, .0001);
+      vec3 light = normalize(vec3(-.5, .7, .8));
+      float diffuse = max(dot(normal, light), 0.0);
+      float specular = pow(max(dot(normal, normalize(light - direction)), 0.0), 36.0);
+      float rim = pow(1.0 - max(dot(normal, -direction), 0.0), 3.0);
+      color = pigment * (.3 + diffuse * .7) + specular * (.045 + clamp(audio.z, 0.0, 1.0) * .04)
+        + vec3(.012, .022, .024) * rim;
+    }
+  }
+  gl_FragColor = vec4(finish(color), coverage);
 }`;
 
 const loomShader = common + waveformShader + `
@@ -737,6 +834,9 @@ export class ShaderScenes {
     this.texture = heightTexture();
     this.mountainTexture = heightTexture(5);
     this.flightTexture = createFlightHeightTexture(this.mountainTexture);
+    let peak = 0;
+    for (let offset = 0; offset < this.mountainTexture.image.data.length; offset += 4)
+      peak = Math.max(peak, this.mountainTexture.image.data[offset]);
     this.geometry = new THREE.PlaneGeometry(2, 2);
     this.camera = new THREE.Camera();
     this.scene = new THREE.Scene();
@@ -747,15 +847,20 @@ export class ShaderScenes {
       resolution: { value: new THREE.Vector2() }, clock: { value: 0 }, seed: { value: 0 },
       audio: { value: new THREE.Vector4() }, impact: { value: 0 }, detail: { value: 1 },
       terrainMap: { value: this.texture }, flightMap: { value: this.flightTexture },
+      elevationMap: { value: null }, elevationCached: { value: false }, flightFieldSize: { value: 1024 },
+      terrainCeiling: { value: Math.pow(THREE.DataUtils.fromHalfFloat(peak), 2.2) * 93.2 + 3.05 },
       waveformMap: { value: this.waveformTexture }, beaconPulse: { value: 0 }, flightClock: { value: 0 },
       cameraAudio: { value: new THREE.Vector4() },
       composition: { value: new THREE.Vector4(1, 1, 0, 0) },
       foundryBodies: { value: Array.from({ length: 6 }, () => new THREE.Vector4()) },
+      bobBodies: { value: Array.from({ length: 16 }, () => new THREE.Vector4()) },
+      bobBlend: { value: .3 },
+      bobCamera: { value: new THREE.Vector3() },
       pigmentFlow: { value: new THREE.Vector3() }, pigmentSpectrum: { value: new THREE.Vector3() },
       terrainAudio: { value: new THREE.Vector4() },
       sunDirection: { value: new THREE.Vector3() }, moonDirection: { value: new THREE.Vector3() }
     };
-    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader, plasmaShader, mosaicShader, loomShader].map(fragmentShader => new THREE.ShaderMaterial({
+    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader, plasmaShader, mosaicShader, loomShader, bobsShader].map(fragmentShader => new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false
     }));
     this.mesh = new THREE.Mesh(this.geometry, this.materials[0]);
@@ -765,6 +870,60 @@ export class ShaderScenes {
       this.mesh.material = material;
       this.renderer.compile(this.scene, this.camera);
     }
+  }
+
+  beginFlightTiming() {
+    const gl = this.renderer.getContext();
+    const timer = this.flightTimer ??= gl.getExtension?.("EXT_disjoint_timer_query_webgl2") ?? false;
+    if (!timer) return null;
+    const pending = this.flightQueries ??= [];
+    if (gl.getParameter(timer.GPU_DISJOINT_EXT)) {
+      pending.forEach(query => gl.deleteQuery(query));
+      pending.length = 0;
+      this.flightGpuMilliseconds = undefined;
+      return null;
+    }
+    while (pending.length && gl.getQueryParameter(pending[0], gl.QUERY_RESULT_AVAILABLE)) {
+      const query = pending.shift();
+      const milliseconds = gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6;
+      if (Number.isFinite(milliseconds) && milliseconds >= 0)
+        this.flightGpuMilliseconds = this.flightGpuMilliseconds === undefined ? milliseconds
+          : this.flightGpuMilliseconds * .75 + milliseconds * .25;
+      gl.deleteQuery(query);
+    }
+    this.flightTimingFrame = (this.flightTimingFrame ?? 0) + 1;
+    if (this.flightTimingFrame % 8 || pending.length >= 3 || gl.getQuery(timer.TIME_ELAPSED_EXT, gl.CURRENT_QUERY)) return null;
+    const query = gl.createQuery();
+    if (query) gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
+    return query;
+  }
+
+  updateFlightField(quality) {
+    if (!this.renderer.getContext().getExtension?.("EXT_color_buffer_float")) return;
+    const size = quality < .65 ? 512 : 1024;
+    if (!this.flightField) {
+      this.flightField = new THREE.WebGLRenderTarget(size, size, {
+        type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+        depthBuffer: false, stencilBuffer: false
+      });
+      this.flightFieldMaterial = new THREE.ShaderMaterial({ uniforms: this.uniforms,
+        vertexShader, fragmentShader: flightFieldShader, depthTest: false, depthWrite: false });
+      this.flightFieldScene = new THREE.Scene();
+      const mesh = new THREE.Mesh(this.geometry, this.flightFieldMaterial);
+      mesh.frustumCulled = false;
+      this.flightFieldScene.add(mesh);
+    }
+    if (this.flightField.width !== size) this.flightField.setSize(size, size);
+    this.uniforms.flightFieldSize.value = size;
+    const target = this.renderer.getRenderTarget();
+    try {
+      this.renderer.setRenderTarget(this.flightField);
+      this.renderer.render(this.flightFieldScene, this.camera);
+    } finally {
+      this.renderer.setRenderTarget(target);
+    }
+    this.uniforms.elevationMap.value = this.flightField.texture;
+    this.uniforms.elevationCached.value = true;
   }
 
   updateWaveform(channels = []) {
@@ -796,6 +955,41 @@ export class ShaderScenes {
       }
     }
     this.waveformTexture.needsUpdate = true;
+  }
+
+  updateBobs(state, seed) {
+    const bass = THREE.MathUtils.clamp(state.signal.low, 0, 1);
+    const mids = THREE.MathUtils.clamp(state.signal.mid, 0, 1);
+    const beat = THREE.MathUtils.clamp(state.impact ?? 0, 0, 1.2);
+    const expansion = 1 + bass * .12 + beat * .24;
+    const point = this.bobPoint ??= new THREE.Vector3();
+    const axis = this.bobAxis ??= new THREE.Vector3(.25, .8, .3).normalize();
+    const bodies = this.uniforms.bobBodies.value;
+    const clock = state.bobs?.time ?? state.time;
+    const yaw = Math.sin(clock * .13 + seed * Math.PI * 2) * .38;
+    const pitch = Math.sin(clock * .09 + seed * 3) * .18;
+    const distance = 10.4 + Math.sin(clock * .17 + seed * 4) * .45;
+    this.uniforms.bobCamera.value.set(Math.sin(yaw) * Math.cos(pitch) * distance,
+      Math.sin(pitch) * distance, Math.cos(yaw) * Math.cos(pitch) * distance);
+    this.uniforms.bobBlend.value = .30 + bass * .12 + beat * .08;
+    for (let index = 0; index < bodies.length; index++) {
+      const slot = index >= 8 ? state.bobs?.slots[index - 8] : undefined;
+      const age = slot ? clock - slot.born : Infinity;
+      const growth = slot && age >= 0 && age < 3.2
+        ? THREE.MathUtils.smoothstep(age, 0, .22) * (1 - THREE.MathUtils.smoothstep(age, 1.6, 3.2)) : 0;
+      const variation = index < 8 ? .65 + (Math.sin(index * 2.39996 + seed * 3) * .5 + .5) * .5 : slot?.size ?? 1;
+      const phase = index < 8 ? index / 8 * Math.PI * 2 : slot?.phase ?? 0;
+      const angle = phase + state.time * .3;
+      const position = (1 - Math.cos(phase)) * .5 * (WAVEFORM_POINTS - 1);
+      const start = Math.floor(position);
+      const end = Math.min(start + 1, WAVEFORM_POINTS - 1);
+      const left = THREE.MathUtils.lerp(this.waveform[start * 2], this.waveform[end * 2], position - start);
+      const right = THREE.MathUtils.lerp(this.waveform[start * 2 + 1], this.waveform[end * 2 + 1], position - start);
+      point.set(Math.cos(angle * 2) * (1.75 + left * .45), Math.sin(angle * 3) * (1.15 + right * .4),
+        Math.sin(angle + state.time * .13) * (.7 + mids * .6));
+      point.multiplyScalar(expansion).applyAxisAngle(axis, state.time * .09 + seed * Math.PI * 2);
+      bodies[index].set(point.x, point.y, point.z, (.32 + bass * .10 + beat * .06) * variation * (index < 8 ? 1 : growth));
+    }
   }
 
   updateFoundry(state, seed, arc) {
@@ -850,14 +1044,28 @@ export class ShaderScenes {
     if (name === "metaball-foundry") this.updateFoundry(state, seed, arc);
     this.uniforms.terrainMap.value = name === "voxel-flight" ? this.mountainTexture : this.texture;
     this.uniforms.beaconPulse.value = Number.isFinite(beaconPulse) ? THREE.MathUtils.clamp(beaconPulse, 0, 1) : 0;
-    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry" || name === "polar-plasma" || name === "rotozoom-mosaic" || name === "ribbon-loom") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
-    this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
-    this.renderer.render(this.scene, this.camera);
+    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry" || name === "polar-plasma" || name === "rotozoom-mosaic" || name === "ribbon-loom" || name === "phosphor-bobs") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
+    if (name === "phosphor-bobs") this.updateBobs(state, seed);
+    const query = name === "voxel-flight" ? this.beginFlightTiming() : null;
+    try {
+      if (name === "voxel-flight") this.updateFlightField(quality);
+      this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
+      this.renderer.render(this.scene, this.camera);
+    } finally {
+      if (query) {
+        this.renderer.getContext().endQuery(this.flightTimer.TIME_ELAPSED_EXT);
+        this.flightQueries.push(query);
+      }
+    }
     context.drawImage(canvas, 0, 0, width, height);
     return true;
   }
 
   dispose() {
+    this.flightQueries?.forEach(query => this.renderer.getContext().deleteQuery(query));
+    this.flightQueries = [];
+    this.flightField?.dispose();
+    this.flightFieldMaterial?.dispose();
     this.materials.forEach(material => material.dispose());
     this.geometry.dispose();
     this.texture.dispose();

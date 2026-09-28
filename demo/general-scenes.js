@@ -1,6 +1,6 @@
-import { PerspectiveCamera, TorusKnotGeometry, Vector3 } from "./vendor/three/three.module.min.js";
+import { IcosahedronGeometry, OctahedronGeometry, PerspectiveCamera, TorusKnotGeometry, Vector3 } from "./vendor/three/three.module.min.js";
 
-export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber"];
+export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector"];
 
 const TAU = Math.PI * 2;
 const CURVE_KERNEL = Float64Array.from({ length: 33 }, (_, index) => Math.exp(-.5 * ((index - 16) / 7) ** 2));
@@ -292,6 +292,33 @@ export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
   } else {
     motion.orbitHistory = undefined;
   }
+  if (renderer.scene === "phosphor-bobs" || (renderer.previousScene === "phosphor-bobs" && renderer.sceneTransition < 1)) {
+    updateFeedbackHistory(motion, elapsed * (renderer.reducedMotion ? .22 : 1), channels.length > 0, "bobHistory", 4);
+    const bobs = motion.bobs ??= {
+      time: 0, serial: 0, cursor: 0,
+      slots: Array.from({ length: 8 }, () => ({ born: -Infinity, size: 1, phase: 0 }))
+    };
+    bobs.time += elapsed * (renderer.reducedMotion ? .22 : 1);
+    if (musicalEvent.beat && channels.length && ((renderer.measuredSignal ?? renderer.signal)?.level ?? 0) > .025) {
+      const births = musicalEvent.strongBeat || musicalEvent.returnFromDrop ? 2 : 1;
+      for (let birth = 0; birth < births; birth++) {
+        for (let offset = 0; offset < bobs.slots.length; offset++) {
+          const index = (bobs.cursor + offset) % bobs.slots.length;
+          const slot = bobs.slots[index];
+          if (bobs.time - slot.born < 3.2) continue;
+          bobs.serial++;
+          slot.born = bobs.time;
+          slot.size = .65 + (Math.sin(bobs.serial * 2.39996) * .5 + .5) * .5;
+          slot.phase = bobs.serial * 2.39996;
+          bobs.cursor = (index + 1) % bobs.slots.length;
+          break;
+        }
+      }
+    }
+  } else {
+    motion.bobHistory = undefined;
+    motion.bobs = undefined;
+  }
   return motion;
 }
 
@@ -327,7 +354,7 @@ export function drawCrystalFacets(context, scale, time, sectors, layers, cutoff,
 }
 
 export function drawGeneralScene(renderer, context, scene, width, height, centerX, centerY, seed = renderer.sceneSeed) {
-  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry" || scene === "polar-plasma" || scene === "rotozoom-mosaic" || scene === "ribbon-loom") {
+  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry" || scene === "polar-plasma" || scene === "rotozoom-mosaic" || scene === "ribbon-loom" || scene === "phosphor-bobs") {
     if (renderer.drawShaderScene?.(context, scene, width, height, seed)) return;
     if (scene === "voxel-flight") return drawGeneralScene(renderer, context, "terrain", width, height, centerX, centerY, seed + .37);
   }
@@ -344,7 +371,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const right = channels[1] ?? left;
   const traces = motion?.traceChannels ?? channels;
   const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
-  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber"].includes(scene)
+  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector"].includes(scene)
     ? filterCurveWaveform(renderer, motion?.shaderWaveform?.channels ?? traces) : undefined;
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
@@ -358,7 +385,141 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (scene === "echo-chamber") {
+  if (scene === "glenz-vector") {
+    if (!renderer.glenzProjection) {
+      const sources = [new IcosahedronGeometry(1.4, 0), new OctahedronGeometry(1.4, 0)].map(geometry => {
+        const positions = Float32Array.from(geometry.getAttribute("position").array);
+        geometry.dispose();
+        return positions;
+      });
+      renderer.glenzProjection = {
+        sources, camera: new PerspectiveCamera(48, 1, .1, 80),
+        axis: new Vector3(.3, .8, .4).normalize(), light: new Vector3(-.4, .7, 1).normalize(),
+        normal: new Vector3(), edge: new Vector3(), center: new Vector3(), gaze: new Vector3(),
+        faces: Array.from({ length: 40 }, () => ({ points: [new Vector3(), new Vector3(), new Vector3()],
+          depth: 0, hue: 0, brightness: 0, opacity: 0 })), ordered: []
+      };
+    }
+    const projection = renderer.glenzProjection;
+    const { camera, axis, light, normal, edge, center, gaze, faces, ordered } = projection;
+    camera.aspect = width / height;
+    camera.position.set(Math.sin(time * .06) * .8, Math.sin(time * .07) * .4, 8.6 * Math.max(1, .9 / camera.aspect));
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const bass = Math.max(0, Math.min(1, low));
+    const mids = Math.max(0, Math.min(1, mid));
+    const treble = Math.max(0, Math.min(1, high));
+    const source = projection.sources[detail(20, 8) < 14 ? 1 : 0];
+    const perForm = source.length / 9;
+    ordered.length = perForm * 2;
+    for (let form = 0; form < 2; form++) {
+      const orbit = time * .12 + form * Math.PI;
+      for (let index = 0; index < perForm; index++) {
+        const face = faces[form * perForm + index];
+        for (let vertex = 0; vertex < 3; vertex++) {
+          const point = face.points[vertex].fromArray(source, index * 9 + vertex * 3);
+          const leftWave = sample(smoothTraces[0], point.y / 2.8 + .5);
+          const rightWave = sample(smoothTraces[1], point.x / 2.8 + .5);
+          point.multiplyScalar(1 + bass * .12 + Math.max(0, impact) * .16 + leftWave * .12 + rightWave * .08);
+          point.applyAxisAngle(axis, time * (form ? -.19 : .16) + seed * TAU + form * 1.4);
+          point.x += Math.cos(orbit) * (.44 + mids * .2 + bass * .12);
+          point.y += Math.sin(time * .15 + form * Math.PI) * .18;
+          point.z += Math.sin(orbit) * .35;
+        }
+        normal.subVectors(face.points[1], face.points[0]);
+        edge.subVectors(face.points[2], face.points[0]);
+        normal.cross(edge).normalize();
+        center.copy(face.points[0]).add(face.points[1]).add(face.points[2]).multiplyScalar(1 / 3);
+        gaze.subVectors(camera.position, center);
+        face.depth = gaze.lengthSq();
+        face.hue = form ? 38 : 188;
+        face.brightness = 18 + Math.max(0, normal.dot(light)) * 17 + treble * 3;
+        face.opacity = normal.dot(gaze) > 0 ? .43 : .14;
+        for (const point of face.points) {
+          point.project(camera);
+          point.x *= width * .5;
+          point.y *= -height * .5;
+        }
+        ordered[form * perForm + index] = face;
+      }
+    }
+    ordered.sort((first, second) => second.depth - first.depth);
+    context.lineWidth = Math.max(.65 * pixelRatio, scale * .0012);
+    for (const face of ordered) {
+      context.beginPath();
+      context.moveTo(face.points[0].x, face.points[0].y);
+      context.lineTo(face.points[1].x, face.points[1].y);
+      context.lineTo(face.points[2].x, face.points[2].y);
+      context.closePath();
+      context.fillStyle = `hsla(${face.hue} 28% ${face.brightness}% / ${face.opacity})`;
+      context.fill();
+      context.strokeStyle = `hsla(${face.hue} 20% ${face.brightness + 5}% / .26)`;
+      context.stroke();
+    }
+  } else if (scene === "phosphor-bobs") {
+    const projection = renderer.bobProjection ??= { camera: new PerspectiveCamera(48, 1, .1, 80),
+      point: new Vector3(), axis: new Vector3(.25, .8, .3).normalize(),
+      spheres: Array.from({ length: 40 }, (_, index) => ({ index, horizontal: 0, vertical: 0, depth: 0, radius: 0 })) };
+    const { camera, point, axis, spheres } = projection;
+    camera.aspect = width / height;
+    camera.position.set(0, 0, 9.8 * Math.max(1, .85 / camera.aspect));
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const count = detail(40, 16);
+    const points = detail(16, 8);
+    const history = motion?.bobHistory;
+    const frames = history?.count ?? 0;
+    const live = { time: history?.time ?? 0, clock: time, low, mid, impact, level, channels: smoothTraces };
+    for (let trail = 0; trail <= frames; trail++) {
+      const frame = trail === frames ? live : history.frames[(history.head - frames + trail + history.frames.length) % history.frames.length];
+      const age = (history?.time ?? 0) - frame.time;
+      if (age > .48 || (trail < frames && (frame.level < .001 || age < .001))) continue;
+      const bass = Math.max(0, Math.min(1, frame.low));
+      const mids = Math.max(0, Math.min(1, frame.mid));
+      const expansion = 1 + bass * .12 + Math.max(0, Math.min(1.2, frame.impact)) * .24;
+      const opacity = trail === frames ? .92 : Math.exp(-age * 6) * .16;
+      for (let index = 0; index < count; index++) {
+        const sphere = spheres[index];
+        sphere.index = index;
+        const phase = index / count * TAU;
+        const angle = phase + frame.clock * .3;
+        const leftWave = sample(frame.channels[0], (1 - Math.cos(phase)) * .5);
+        const rightWave = sample(frame.channels[1], (1 - Math.cos(phase)) * .5);
+        point.set(Math.cos(angle * 2) * (1.75 + leftWave * .45),
+          Math.sin(angle * 3) * (1.15 + rightWave * .4),
+          Math.sin(angle + frame.clock * .13) * (.7 + mids * .6));
+        point.multiplyScalar(expansion).applyAxisAngle(axis, frame.clock * .09 + seed * TAU);
+        sphere.depth = point.z;
+        const distance = camera.position.z - point.z;
+        sphere.radius = height / (2 * Math.tan(24 * Math.PI / 180) * distance) * (.115 + bass * .025);
+        point.project(camera);
+        sphere.horizontal = point.x * width * .5;
+        sphere.vertical = -point.y * height * .5;
+      }
+      const ordered = projection.ordered ??= [];
+      ordered.length = count;
+      for (let index = 0; index < count; index++) ordered[index] = spheres[index];
+      ordered.sort((first, second) => first.depth - second.depth);
+      for (const sphere of ordered) {
+        for (let shade = 0; shade < 5; shade++) {
+          const radius = sphere.radius * (1 - shade * .18);
+          const offset = sphere.radius * shade * .065;
+          curve.begin(true);
+          for (let vertex = 0; vertex < points; vertex++) {
+            const angle = vertex / points * TAU;
+            curve.point(sphere.horizontal - offset + Math.cos(angle) * radius,
+              sphere.vertical - offset + Math.sin(angle) * radius);
+          }
+          curve.end();
+          const brightness = 10 + shade * 8 + (trail === frames ? Math.max(0, Math.min(1, high)) * shade : 0);
+          context.fillStyle = `hsla(${sphere.index % 2 ? 24 : 187} ${shade === 4 ? 12 : 26}% ${brightness}% / ${opacity})`;
+          context.fill();
+        }
+      }
+    }
+  } else if (scene === "echo-chamber") {
     const projection = renderer.chamberProjection ??= {
       camera: new PerspectiveCamera(58, 1, .1, 100), point: new Vector3(),
       yawAxis: new Vector3(0, 1, 0), rollAxis: new Vector3(0, 0, 1),

@@ -5,7 +5,7 @@ import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion } from "../demo/g
 import { CurveSceneGeometry, CurveScenes } from "../demo/curve-scenes.js";
 import { ImmersiveVisualizer } from "../demo/immersive-visualizer.js";
 import { SHADER_SCENES, ShaderScenes, WAVEFORM_POINTS, createFlightHeightTexture, flightSkyDirections } from "../demo/shader-scenes.js";
-import { AdditiveBlending, NormalBlending, DataUtils, RepeatWrapping, LinearFilter, Vector4 } from "../demo/vendor/three/three.module.min.js";
+import { AdditiveBlending, NormalBlending, DataUtils, RepeatWrapping, LinearFilter, HalfFloatType, PlaneGeometry, Vector3, Vector4 } from "../demo/vendor/three/three.module.min.js";
 
 function renderer() {
   return Object.assign(Object.create(ImmersiveVisualizer.prototype), {
@@ -372,7 +372,7 @@ test("every scene uses inertial audio and drawing never advances its shared cros
 });
 
 test("all general scenes are distinct, finite and adapt geometry at desktop and mobile sizes", () => {
-  assert.equal(GENERAL_SCENES.length, 25);
+  assert.equal(GENERAL_SCENES.length, 27);
   const view = renderer();
   for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     const signatures = new Set();
@@ -419,15 +419,15 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       const view = Object.assign(renderer(), { quality: .25, canvas: { clientWidth: width } });
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
-        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom", "oscilloscope-orbit"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
-        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic", "ribbon-loom", "echo-chamber"].includes(scene)) assert(result.curves > 0, scene);
+        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "glenz-vector"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
+        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic", "ribbon-loom", "echo-chamber", "glenz-vector"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
   }
 });
 
 test("GPU scenes dispatch at native dimensions with shared motion and fall back without WebGL", () => {
-  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom"]);
+  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom", "phosphor-bobs"]);
   const view = renderer();
   const motion = updateGeneralMotion(view, .1);
   const calls = [];
@@ -694,6 +694,174 @@ test("Orbit trails retain eight snapshots, expire in silence and survive crossfa
   }
 });
 
+test("Glenz Vector responds to bounded stereo and bands without advancing shared motion", () => {
+  const view = Object.assign(renderer(), { scene: "glenz-vector" });
+  const motion = updateGeneralMotion(view, .2);
+  motion.signal = { low: 0, mid: 0, high: 0, level: .5 };
+  motion.impact = 0;
+  motion.shaderWaveform.channels = [new Float64Array(256), new Float64Array(256)];
+  const baseline = render(view, view.scene).signature;
+  for (const band of ["low", "mid", "high"]) {
+    motion.signal[band] = 1;
+    const active = render(view, view.scene).signature;
+    assert.notEqual(active, baseline, band);
+    motion.signal[band] = 8;
+    assert.equal(render(view, view.scene).signature, active, `${band} stays bounded`);
+    motion.signal[band] = 0;
+  }
+  for (const channel of motion.shaderWaveform.channels) {
+    channel.fill(.5);
+    assert.notEqual(render(view, view.scene).signature, baseline, "Both stereo axes must shape the mesh");
+    channel.fill(0);
+  }
+  motion.impact = 1.2;
+  assert.notEqual(render(view, view.scene).signature, baseline);
+  motion.impact = 0;
+  const before = structuredClone(motion);
+  assert.equal(render(view, view.scene).signature, baseline);
+  assert.equal(render(view, view.scene).signature, baseline);
+  assert.deepEqual(motion, before);
+});
+
+test("Glenz Vector keeps crisp shared vertices, sorted mellow facets and bounded portrait framing", () => {
+  const view = Object.assign(renderer(), { scene: "glenz-vector" });
+  const motion = updateGeneralMotion(view, .2);
+  motion.signal = { low: 1, mid: 1, high: 1, level: 1 };
+  motion.impact = 1.2;
+  motion.shaderWaveform.channels = [new Float64Array(256).fill(1), new Float64Array(256).fill(-1)];
+  render(view, view.scene);
+  const projection = view.glenzProjection;
+  const faces = [...projection.faces];
+  const points = faces.flatMap(face => face.points);
+  for (const quality of [1, .25]) {
+    view.quality = quality;
+    for (const [width, height] of [[1440, 900], [390, 844], [3200, 900]]) {
+      for (const time of [0, 12, 80]) {
+        motion.time = time;
+        const result = render(view, view.scene, width, height);
+        assert.equal(result.curves, 0, "Facets must remain straight triangles");
+        assert.equal(projection.ordered.length, quality === 1 ? 40 : 16);
+        const vertices = new Set();
+        for (const [index, face] of projection.ordered.entries()) {
+          if (index) assert(face.depth <= projection.ordered[index - 1].depth);
+          assert([38, 188].includes(face.hue));
+          assert(face.brightness >= 18 && face.brightness <= 38);
+          assert([.14, .43].includes(face.opacity));
+          for (const point of face.points) {
+            assert(Math.abs(point.x) < width * .49 && Math.abs(point.y) < height * .49);
+            assert(point.z > -1 && point.z < 1);
+            vertices.add(point.toArray().map(value => value.toFixed(8)).join(","));
+          }
+        }
+        assert.equal(vertices.size, quality === 1 ? 24 : 12, "Adjacent faces must share deformed vertices without cracks");
+        assert.equal(view.glenzProjection, projection);
+        projection.faces.forEach((face, index) => assert.equal(face, faces[index]));
+        projection.faces.flatMap(face => face.points).forEach((point, index) => assert.equal(point, points[index]));
+      }
+    }
+  }
+});
+
+test("Phosphor Bobs Canvas fallback retains bounded stereo choreography, depth ordering and mellow shaded surfaces", () => {
+  const view = Object.assign(renderer(), { scene: "phosphor-bobs" });
+  const motion = updateGeneralMotion(view, .1);
+  motion.bobHistory = undefined;
+  motion.signal = { low: 0, mid: 0, high: 0, level: .5 };
+  motion.impact = 0;
+  motion.shaderWaveform.channels = [new Float64Array(256), new Float64Array(256)];
+  const baseline = render(view, view.scene).signature;
+  const projection = view.bobProjection;
+  const spheres = [...projection.spheres];
+  for (const band of ["low", "mid", "high"]) {
+    motion.signal[band] = 1;
+    const active = render(view, view.scene).signature;
+    assert.notEqual(active, baseline, band);
+    motion.signal[band] = 8;
+    assert.equal(render(view, view.scene).signature, active, `${band} must be bounded`);
+    motion.signal[band] = 0;
+  }
+  for (const side of [0, 1]) {
+    motion.shaderWaveform.channels[side].fill(.5);
+    assert.notEqual(render(view, view.scene).signature, baseline, `Stereo side ${side}`);
+    motion.shaderWaveform.channels[side].fill(0);
+  }
+  assert.equal(render(view, view.scene).signature, baseline);
+  motion.signal = { low: 1, mid: 1, high: 1, level: 1 };
+  motion.impact = 1.2;
+  motion.shaderWaveform.channels[0].fill(1);
+  motion.shaderWaveform.channels[1].fill(-1);
+  for (const [width, height] of [[1440, 900], [390, 844], [3200, 900]]) {
+    for (const time of [0, 12, 80]) {
+      motion.time = time;
+      const before = structuredClone(motion);
+      const drawing = capture();
+      let surfaces = 0;
+      const context = new Proxy(drawing.context, {
+        set: (target, name, value) => {
+          if (name === "fillStyle") {
+            const match = /^hsla\((?:24|187) (\d+)% ([\d.]+)% \/ ([\d.e+-]+)\)$/.exec(value);
+            assert(match, value);
+            assert(Number(match[1]) <= 26 && Number(match[2]) <= 46 && Number(match[3]) <= .92);
+            surfaces++;
+          }
+          target[name] = value;
+          return true;
+        }
+      });
+      drawGeneralScene(view, context, view.scene, width, height, width / 2, height / 2);
+      assert.equal(surfaces, 200);
+      const ordered = projection.ordered;
+      ordered.forEach((sphere, index) => {
+        if (index) assert(sphere.depth >= ordered[index - 1].depth);
+        assert(Math.abs(sphere.horizontal) + sphere.radius < width * .49);
+        assert(Math.abs(sphere.vertical) + sphere.radius < height * .49);
+      });
+      assert.equal(view.bobProjection, projection);
+      projection.spheres.forEach((sphere, index) => assert.equal(sphere, spheres[index]));
+      assert.deepEqual(motion, before);
+    }
+  }
+});
+
+test("Phosphor Bobs retain four snapshots and release history after silence or an outgoing crossfade", () => {
+  for (const rate of [30, 60, 120]) {
+    const view = Object.assign(renderer(), { scene: "phosphor-bobs" });
+    for (let frame = 0; frame < rate; frame++) updateGeneralMotion(view, 1 / rate);
+    const motion = view.generalMotion;
+    const history = motion.bobHistory;
+    assert.equal(history.count, 4);
+    assert.equal(history.frames.length, 4);
+    assert.equal(history.tick, 8);
+    const before = structuredClone(history);
+    const active = render(view, view.scene).signature;
+    assert.equal(render(view, view.scene).signature, active);
+    assert.deepEqual(history, before);
+    motion.bobHistory = undefined;
+    assert.notEqual(render(view, view.scene).signature, active);
+    motion.bobHistory = history;
+    const buffers = history.frames.map(frame => frame.channels);
+    view.channels = [];
+    view.signal = { low: 0, mid: 0, high: 0, level: 0 };
+    updateGeneralMotion(view, .6);
+    const expired = render(view, view.scene).signature;
+    motion.bobHistory = undefined;
+    assert.equal(render(view, view.scene).signature, expired);
+    motion.bobHistory = history;
+    history.frames.forEach((frame, index) => assert.equal(frame.channels, buffers[index]));
+    view.scene = "oscilloscope-orbit";
+    view.previousScene = "phosphor-bobs";
+    view.sceneTransition = .5;
+    updateGeneralMotion(view, .01);
+    assert.equal(motion.bobHistory, history);
+    assert.notEqual(motion.orbitHistory, history);
+    assert.equal(motion.orbitHistory.frames.length, 8);
+    view.sceneTransition = 1;
+    updateGeneralMotion(view, .01);
+    assert.equal(motion.bobHistory, undefined);
+    assert(motion.orbitHistory);
+  }
+});
+
 test("Echo Chamber responds to bounded bands and stereo while reusing its projection without advancing audio", () => {
   const view = Object.assign(renderer(), { scene: "echo-chamber" });
   const motion = updateGeneralMotion(view, .1);
@@ -917,7 +1085,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
   updateGeneralMotion(view, .2);
   const before = [...view.generalMotion.values];
   for (const [width, height] of [[1440, 900], [780, 1688]]) {
-    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "echo-chamber"]) {
+    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "echo-chamber", "phosphor-bobs", "glenz-vector"]) {
       paths.begin(transform, .37);
       drawGeneralScene(view, paths, scene, width, height, width / 2, height / 2);
       assert(paths.vertexCount > 100);
@@ -957,13 +1125,13 @@ test("GPU curves preserve crossfade alpha and bypass both raster allocation and 
   view.curveScenes = { draw: (...args) => { calls.push(args); return true; }, dispose() {} };
   const context = { globalAlpha: .37 };
   try {
-    for (const scene of ["aperture", "wavegarden", "helix", "terrain", "oscilloscope-orbit", "echo-chamber"]) {
+    for (const scene of ["aperture", "wavegarden", "helix", "terrain", "oscilloscope-orbit", "echo-chamber", "glenz-vector"]) {
       view.drawScene(context, scene, 3840, 2160, 1920, 1080, .4);
       assert.equal(calls.at(-1)[0], view);
       assert.equal(calls.at(-1)[1], context);
       assert.deepEqual(calls.at(-1).slice(2), [scene, 3840, 2160, 1920, 1080, .4]);
     }
-    assert.equal(calls.length, 6);
+    assert.equal(calls.length, 7);
     assert.equal(view.sceneCanvas, undefined);
     assert.equal(context.globalAlpha, .37);
   } finally {
@@ -1449,28 +1617,175 @@ test("fresh waveform textures preserve peaks between old sample points", () => {
   assert.equal(samples[513], Math.fround(-.8));
 });
 
-test("flight sky follows unit-length solar and lunar paths through day and night", () => {
+test("flight sky retains the same low dawn sun and moon regardless of time or scene seed", () => {
   const buffer = new Float64Array(6);
-  const heights = [];
-  for (let time = 0; time <= 1200; time += 60) {
-    assert.equal(flightSkyDirections(time, .4, buffer), buffer);
-    assert(Math.abs(Math.hypot(...buffer.subarray(0, 3)) - 1) < 1e-12);
-    assert(Math.abs(Math.hypot(...buffer.subarray(3)) - 1) < 1e-12);
-    heights.push(buffer[1]);
-    const previous = [...buffer];
-    flightSkyDirections(time + 1 / 120, .4, buffer);
-    assert(buffer.every((value, index) => Math.abs(value - previous[index]) < .0001));
+  const dawn = flightSkyDirections(0, 0);
+  for (const time of [0, 12, 300, 700, 1200, 86400, Date.now(), NaN]) {
+    for (const seed of [0, .4, 1, NaN]) {
+      assert.equal(flightSkyDirections(time, seed, buffer), buffer);
+      assert.deepEqual(buffer, dawn);
+      assert(Math.abs(Math.hypot(...buffer.subarray(0, 3)) - 1) < 1e-12);
+      assert(Math.abs(Math.hypot(...buffer.subarray(3)) - 1) < 1e-12);
+    }
   }
-  assert(Math.min(...heights) < -.3 && Math.max(...heights) > .8);
-  const first = flightSkyDirections(0, .4);
-  const later = flightSkyDirections(1200, .4);
-  assert(Math.hypot(...first.subarray(3).map((value, index) => value - later[index + 3])) > .1, "The Moon must have its own orbital motion");
-  assert.deepEqual(flightSkyDirections(12, .4), flightSkyDirections(12, .4));
+  const altitude = Math.asin(dawn[1]) * 180 / Math.PI;
+  assert(altitude > 4 && altitude < 6, "A low positive sun retains warm light and terrain shadows");
+  assert(dawn[0] > 0, "The sun belongs to the eastern dawn sky");
+});
+
+test("bobs spawn only on audio beats, reuse expired slots and release their pool after crossfades", () => {
+  const view = Object.assign(renderer(), { scene: "phosphor-bobs" });
+  const motion = updateGeneralMotion(view, 0);
+  const bobs = motion.bobs;
+  const slots = [...bobs.slots];
+  assert.equal(bobs.serial, 0);
+  updateGeneralMotion(view, .5);
+  assert.equal(bobs.serial, 0, "Steady loud audio must not spawn bobs");
+  updateGeneralMotion(view, 0, { beat: true });
+  assert.equal(bobs.serial, 1);
+  updateGeneralMotion(view, 0, { beat: true, strongBeat: true });
+  assert.equal(bobs.serial, 3);
+  const before = structuredClone(bobs);
+  render(view, view.scene);
+  render(view, view.scene);
+  assert.deepEqual(bobs, before, "Rendering must not age or spawn bobs");
+  for (let beat = 0; beat < 10; beat++) updateGeneralMotion(view, 0, { beat: true, strongBeat: true });
+  assert.equal(bobs.serial, 8);
+  const births = bobs.slots.map(slot => slot.born);
+  updateGeneralMotion(view, .1, { beat: true });
+  assert.deepEqual(bobs.slots.map(slot => slot.born), births, "A full pool must not pop out living bodies");
+  updateGeneralMotion(view, 3.2);
+  assert.equal(bobs.serial, 8, "Expiry must not synthesize a birth");
+  updateGeneralMotion(view, 0, { beat: true });
+  assert.equal(bobs.serial, 9);
+  bobs.slots.forEach((slot, index) => assert.equal(slot, slots[index]));
+  view.signal.level = 0;
+  updateGeneralMotion(view, 0, { beat: true });
+  assert.equal(bobs.serial, 9, "Silence cannot spawn");
+  view.signal.level = 1;
+  view.channels = [];
+  updateGeneralMotion(view, 0, { beat: true });
+  assert.equal(bobs.serial, 9, "Missing audio cannot spawn");
+  view.scene = "silk";
+  view.previousScene = "phosphor-bobs";
+  view.sceneTransition = .5;
+  updateGeneralMotion(view, .1);
+  assert.equal(motion.bobs, bobs);
+  view.sceneTransition = 1;
+  updateGeneralMotion(view, .1);
+  assert.equal(motion.bobs, undefined);
+  Object.assign(view, { canvas: { dataset: {} }, camera: { phase: 0 }, music: { beatInterval: .5, toneFast: [], toneCentroidFast: .5 } });
+  motion.bobs = bobs;
+  view.transitionScene("phosphor-bobs", "test");
+  assert.equal(motion.bobs, undefined, "Reentry must not resurrect an old spawn pool");
+});
+
+test("beat-born bobs grow and expire consistently across display rates without draw-time mutation", () => {
+  const states = [];
+  for (const rate of [30, 60, 120]) {
+    const view = Object.assign(renderer(), { scene: "phosphor-bobs" });
+    const motion = updateGeneralMotion(view, 0, { beat: true });
+    const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
+      waveform: new Float32Array(WAVEFORM_POINTS * 2),
+      uniforms: { bobBodies: { value: Array.from({ length: 16 }, () => new Vector4()) },
+        bobBlend: {}, bobCamera: { value: new Vector3() } }
+    });
+    const draw = () => { gpu.updateBobs(motion, .4); return gpu.uniforms.bobBodies.value.map(body => body.w); };
+    assert.equal(draw().filter(radius => radius > 0).length, 8, "Birth starts at zero radius");
+    updateGeneralMotion(view, .1);
+    const growing = draw()[8];
+    assert(growing > 0);
+    for (let frame = 0; frame < rate / 2; frame++) updateGeneralMotion(view, 1 / rate);
+    updateGeneralMotion(view, 0, { beat: true, strongBeat: true });
+    for (let frame = 0; frame < rate / 2; frame++) updateGeneralMotion(view, 1 / rate);
+    motion.signal = { low: .6, mid: .4, high: .3, level: .5 };
+    motion.impact = 0;
+    const before = structuredClone(motion.bobs);
+    const radii = draw();
+    assert.equal(radii.filter(radius => radius > 0).length, 11);
+    assert.deepEqual(draw(), radii);
+    assert.deepEqual(motion.bobs, before);
+    states.push({ time: motion.bobs.time, radii, camera: gpu.uniforms.bobCamera.value.toArray() });
+    updateGeneralMotion(view, 4);
+    assert.equal(draw().filter(radius => radius > 0).length, 8);
+  }
+  for (const state of states.slice(1)) {
+    assert(Math.abs(state.time - states[0].time) < 1e-12);
+    assert(state.radii.every((radius, index) => Math.abs(radius - states[0].radii[index]) < 1e-12));
+    assert(state.camera.every((value, index) => Math.abs(value - states[0].camera[index]) < 1e-12));
+  }
+  const reduced = Object.assign(renderer(), { scene: "phosphor-bobs", reducedMotion: true });
+  updateGeneralMotion(reduced, 1);
+  assert.equal(reduced.generalMotion.bobs.time, .22);
+});
+
+test("melting bobs reuse bounded stereo bodies without advancing choreography", () => {
+  const bodies = Array.from({ length: 16 }, () => new Vector4());
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
+    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {},
+    uniforms: { bobBodies: { value: bodies }, bobBlend: {}, bobCamera: { value: new Vector3() } }
+  });
+  const state = { time: 12, impact: .25, signal: { low: .6, mid: .4, high: .3, level: .65 } };
+  const snapshot = () => bodies.map(body => body.toArray());
+  gpu.updateBobs(state, .4);
+  const baseline = snapshot();
+  assert.equal(baseline.filter(body => body[3] > 0).length, 8);
+  const radii = baseline.slice(0, 8).map(body => body[3]);
+  assert(Math.max(...radii) / Math.min(...radii) > 1.5, "Base bobs must have visibly different sizes");
+  const camera = gpu.uniforms.bobCamera.value.toArray();
+  gpu.updateBobs({ ...state, time: state.time + 5 }, .4);
+  assert.notDeepEqual(gpu.uniforms.bobCamera.value.toArray(), camera, "Camera moves even without audio changes");
+  gpu.updateBobs(state, .4);
+  const before = structuredClone(state);
+  const point = gpu.bobPoint;
+  const axis = gpu.bobAxis;
+  gpu.updateBobs(state, .4);
+  assert.deepEqual(snapshot(), baseline);
+  assert.deepEqual(state, before);
+  assert.equal(gpu.bobPoint, point);
+  assert.equal(gpu.bobAxis, axis);
+  for (const band of ["low", "mid"]) {
+    gpu.updateBobs({ ...state, signal: { ...state.signal, [band]: 1 } }, .4);
+    assert.notDeepEqual(snapshot(), baseline, band);
+  }
+  for (const side of [0, 1]) {
+    const channels = [new Float64Array(256), new Float64Array(256)];
+    channels[side].fill(-.5);
+    gpu.updateWaveform(channels);
+    gpu.updateBobs(state, .4);
+    assert.notDeepEqual(snapshot(), baseline, `Stereo side ${side}`);
+  }
+  gpu.updateBobs({ ...state, impact: 0 }, .4);
+  const calmBlend = gpu.uniforms.bobBlend.value;
+  const calmRadius = bodies[0].w;
+  gpu.updateBobs({ ...state, impact: 1.2 }, .4);
+  assert(gpu.uniforms.bobBlend.value > calmBlend);
+  assert(bodies[0].w > calmRadius);
+  const peak = { ...state, impact: 1.2, signal: { low: 1, mid: 1, high: 1, level: 1 } };
+  gpu.updateBobs(peak, .4);
+  const bounded = snapshot();
+  gpu.updateBobs({ ...peak, impact: 8, signal: { low: 8, mid: 8, high: 8, level: 8 } }, .4);
+  assert.deepEqual(snapshot(), bounded);
+  for (const polarity of [-1, 1]) {
+    gpu.updateWaveform([new Float64Array(256).fill(polarity), new Float64Array(256).fill(-polarity)]);
+    for (let time = 0; time < 80; time += .5) {
+      gpu.updateBobs({ ...peak, time }, .4);
+      const position = gpu.uniforms.bobCamera.value;
+      const distance = Math.hypot(position.x, position.y, position.z);
+      assert(distance >= 9.95 && distance <= 10.85);
+      for (const [index, body] of bodies.entries()) {
+        assert.equal(gpu.uniforms.bobBodies.value[index], body);
+        assert(body.toArray().every(Number.isFinite));
+        assert(Math.hypot(body.x, body.y, body.z) + body.w + gpu.uniforms.bobBlend.value < 5,
+          "The raymarch bound must enclose bodies and their fused surface");
+      }
+    }
+  }
 });
 
 test("waveform shader scenes refresh waveform uniforms on each draw", () => {
   const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
-    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}, {}, {}, {}, {}],
+    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: Array.from({ length: SHADER_SCENES.length }, () => ({})),
     renderer: {
       domElement: { width: 1440, height: 900 },
       getContext: () => ({ isContextLost: () => false }), render() {}
@@ -1480,7 +1795,8 @@ test("waveform shader scenes refresh waveform uniforms on each draw", () => {
       audio: { value: { set() {} } }, cameraAudio: { value: { set() {} } }, impact: {}, detail: {}, beaconPulse: {},
       pigmentFlow: { value: { set() {} } }, pigmentSpectrum: { value: { set() {} } }, terrainAudio: { value: { set() {} } },
       sunDirection: { value: { set() {} } }, moonDirection: { value: { set() {} } },
-      composition: { value: new Vector4() }, foundryBodies: { value: Array.from({ length: 6 }, () => new Vector4()) }
+      composition: { value: new Vector4() }, foundryBodies: { value: Array.from({ length: 6 }, () => new Vector4()) },
+      bobBodies: { value: Array.from({ length: 16 }, () => new Vector4()) }, bobBlend: {}, bobCamera: { value: new Vector3() }
     }
   });
   const state = { time: 12, signal: renderer().signal, channels: [new Float32Array(96)], traceChannels: [new Float32Array([.5, -.5])] };
@@ -1488,9 +1804,10 @@ test("waveform shader scenes refresh waveform uniforms on each draw", () => {
   gpu.texture = { name: "original" };
   gpu.mountainTexture = { name: "smooth" };
   gpu.uniforms.cameraAudio.value.set = (...values) => cameraUploads.push(values);
-  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom"]) {
+  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom", "phosphor-bobs"]) {
     gpu.waveform.fill(0);
     assert.equal(gpu.draw({ drawImage() {} }, scene, 1440, 900, state, .4, 1), true);
+    assert.equal(gpu.mesh.material, gpu.materials[SHADER_SCENES.indexOf(scene)]);
     assert.equal(gpu.uniforms.terrainMap.value, scene === "voxel-flight" ? gpu.mountainTexture : gpu.texture);
     assert(gpu.waveform[0] > .5, scene);
     assert(gpu.waveform[(WAVEFORM_POINTS - 1) * 2] < -.5, scene);
@@ -1564,7 +1881,7 @@ test("waveform shader scenes refresh waveform uniforms on each draw", () => {
 
 test("Voxel Flight's terrain shape uses signed stereo rather than generic band-driven pulses", async () => {
   const source = await readFile(new URL("../demo/shader-scenes.js", import.meta.url), "utf8");
-  const geometry = source.slice(source.indexOf("float mountainMass("), source.indexOf("const float flightRange"));
+  const geometry = source.slice(source.indexOf("float mountainMass("), source.indexOf("const flightFieldShader"));
   assert.match(geometry, /return pow\(coarse, 2\.2\) \* 93\.2;/, "The noise field remains a static clearance envelope");
   assert.match(geometry, /vec2 along = waveAt\(/);
   assert.match(geometry, /vec2 across = waveAt\(/);
@@ -1580,6 +1897,114 @@ test("Voxel Flight's terrain shape uses signed stereo rather than generic band-d
   assert.match(source, /star \* \(\.22 \+ \.95 \* \(1.0 - daylight\)\)/, "Stylized stars remain visible during daylight");
   assert.match(source, /cone \* clear \* exp/, "The brighter beam must still respect terrain shadows");
   assert.match(source, /\(float\(beamIndex\) \+ jitter\)/, "Volume samples must not form coherent overlapping planes");
+});
+
+test("flight elevation cache reuses GPU resources, adapts geometry detail and restores render targets", () => {
+  const target = { name: "parent" };
+  const targets = [];
+  let renders = 0;
+  let fail = false;
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
+    geometry: new PlaneGeometry(2, 2), camera: {},
+    uniforms: { flightFieldSize: {}, elevationMap: {}, elevationCached: { value: false } },
+    renderer: {
+      getContext: () => ({ getExtension: name => name === "EXT_color_buffer_float" }),
+      getRenderTarget: () => target,
+      setRenderTarget: value => targets.push(value),
+      render: () => { renders++; if (fail) throw Error("render failure"); }
+    }
+  });
+  try {
+    gpu.updateFlightField(1);
+    const field = gpu.flightField;
+    const material = gpu.flightFieldMaterial;
+    assert.equal(field.width, 1024);
+    assert.equal(field.depthBuffer, false);
+    assert.equal(field.texture.type, HalfFloatType);
+    assert.equal(field.texture.minFilter, LinearFilter);
+    assert.equal(gpu.uniforms.elevationMap.value, field.texture);
+    assert.equal(gpu.uniforms.elevationCached.value, true);
+    gpu.updateFlightField(1);
+    assert.equal(gpu.flightField, field);
+    assert.equal(gpu.flightFieldMaterial, material);
+    assert.equal(renders, 2, "Fresh audio must refresh the field each draw");
+    gpu.updateFlightField(.25);
+    assert.equal(gpu.flightField, field);
+    assert.equal(field.width, 512);
+    assert.equal(gpu.uniforms.flightFieldSize.value, 512);
+    assert.equal(targets.at(-1), target);
+    fail = true;
+    assert.throws(() => gpu.updateFlightField(.25), /render failure/);
+    assert.equal(targets.at(-1), target, "A failed prepass must not leave a render target bound");
+  } finally {
+    gpu.flightField?.dispose();
+    gpu.flightFieldMaterial?.dispose();
+    gpu.geometry.dispose();
+  }
+  const fallback = Object.assign(Object.create(ShaderScenes.prototype), {
+    renderer: { getContext: () => ({ getExtension: () => null }) }
+  });
+  fallback.updateFlightField(1);
+  assert.equal(fallback.flightField, undefined, "Missing float targets retain analytic terrain");
+});
+
+test("flight GPU timing stays bounded, asynchronous and ignores disjoint or external measurements", () => {
+  let ready = false;
+  let disjoint = false;
+  let external = false;
+  let created = 0;
+  const deleted = [];
+  const timer = { TIME_ELAPSED_EXT: 1, GPU_DISJOINT_EXT: 2 };
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
+    renderer: { getContext: () => ({
+      QUERY_RESULT_AVAILABLE: 3, QUERY_RESULT: 4, CURRENT_QUERY: 5,
+      getExtension: () => timer, getParameter: () => disjoint, getQuery: () => external,
+      createQuery: () => ({ id: ++created }), beginQuery() {},
+      deleteQuery: query => deleted.push(query.id),
+      getQueryParameter: (_, key) => {
+        if (key === 3) return ready;
+        assert(ready, "Never read an unavailable GPU result");
+        return 6000000;
+      }
+    }) }
+  });
+  for (let frame = 0; frame < 80; frame++) {
+    const query = gpu.beginFlightTiming();
+    if (query) gpu.flightQueries.push(query);
+  }
+  assert.equal(created, 3);
+  assert.equal(gpu.flightGpuMilliseconds, undefined);
+  ready = true;
+  gpu.beginFlightTiming();
+  assert.equal(gpu.flightGpuMilliseconds, 6);
+  assert.deepEqual(deleted, [1, 2, 3]);
+  external = true;
+  for (let frame = 0; frame < 16; frame++) assert.equal(gpu.beginFlightTiming(), null);
+  external = false;
+  ready = false;
+  for (let frame = 0; frame < 8; frame++) {
+    const query = gpu.beginFlightTiming();
+    if (query) gpu.flightQueries.push(query);
+  }
+  disjoint = true;
+  assert.equal(gpu.beginFlightTiming(), null);
+  assert.equal(gpu.flightQueries.length, 0);
+  assert.equal(gpu.flightGpuMilliseconds, undefined);
+});
+
+test("flight quality responds to GPU pressure at high refresh without changing resolution or pacing", () => {
+  for (const scene of ["voxel-flight", "silk"]) {
+    const view = Object.assign(renderer(), {
+      scene, shaderScenes: { flightGpuMilliseconds: 6 },
+      canvas: { width: 1920, height: 1080, dataset: {} },
+      frameBudget: { fastest: Infinity, elapsed: 0, frames: 0, stressed: 0, healthy: 0, skipFirst: true }
+    });
+    for (let frame = 0; frame < 245; frame++) view.adaptQuality(1000 / 240, .1);
+    assert.equal(view.quality, scene === "voxel-flight" ? .88 : 1);
+    assert.equal(view.canvas.width, 1920);
+    assert.equal(view.canvas.height, 1080);
+    assert.equal(view.frameBudget.fastest, 1000 / 240);
+  }
 });
 
 test("flight clearance map smooths peaks while conservatively covering terrain and wrapped edges", () => {
@@ -1669,16 +2094,20 @@ test("GPU scene resources are released with the visualizer", () => {
   assert.equal(view.shaderScenes, undefined);
   const resources = [];
   const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
+    flightField: { dispose: () => resources.push("field") },
+    flightFieldMaterial: { dispose: () => resources.push("field-material") },
+    flightQueries: [{}],
     materials: [{ dispose: () => resources.push("material") }],
     geometry: { dispose: () => resources.push("geometry") },
     texture: { dispose: () => resources.push("terrain") },
     mountainTexture: { dispose: () => resources.push("mountain") },
     flightTexture: { dispose: () => resources.push("flight") },
     waveformTexture: { dispose: () => resources.push("waveform") },
-    renderer: { dispose: () => resources.push("renderer"), forceContextLoss: () => resources.push("context") }
+    renderer: { getContext: () => ({ deleteQuery: () => resources.push("query") }),
+      dispose: () => resources.push("renderer"), forceContextLoss: () => resources.push("context") }
   });
   gpu.dispose();
-  assert.deepEqual(resources, ["material", "geometry", "terrain", "mountain", "flight", "waveform", "renderer", "context"]);
+  assert.deepEqual(resources, ["query", "field", "field-material", "material", "geometry", "terrain", "mountain", "flight", "waveform", "renderer", "context"]);
 });
 
 test("Dot Vortex occupies the portrait height even at minimum detail", () => {
@@ -2241,7 +2670,7 @@ test("general crossfade keeps the outgoing seed and balances both scenes around 
   view.music = { beatInterval: .5, toneFast: [], toneCentroidFast: .5 };
   view.sidSceneMode = false;
   view.sceneDeck = [...GENERAL_SCENES];
-  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber"]) {
+  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector"]) {
     calls.length = 0;
     context.globalAlpha = 1;
     view.scene = GENERAL_SCENES[GENERAL_SCENES.indexOf(scene) - 1];

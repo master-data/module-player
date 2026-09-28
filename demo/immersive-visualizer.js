@@ -1,11 +1,11 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=51";
-import { ShaderScenes } from "./shader-scenes.js?v=32";
-import { CurveScenes } from "./curve-scenes.js?v=29";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=55";
+import { ShaderScenes } from "./shader-scenes.js?v=37";
+import { CurveScenes } from "./curve-scenes.js?v=33";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
 const SCENES = GENERAL_SCENES;
-const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "echo-chamber"]);
+const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "echo-chamber", "glenz-vector"]);
 const SPECTRAL_POINTS = 256;
 const SPECTRAL_BINS = [2, 3, 5, 7, 10, 14, 20, 28, 39, 54, 72, 96];
 let spectralKernels;
@@ -210,7 +210,8 @@ export class ImmersiveVisualizer {
     budget.elapsed += interval;
     budget.frames++;
     const cpuBudget = budget.fastest * .8;
-    if (cost > cpuBudget || interval > budget.fastest * 1.45) budget.stressed++;
+    const gpuCost = this.scene === "voxel-flight" ? this.shaderScenes?.flightGpuMilliseconds ?? 0 : 0;
+    if (cost > cpuBudget || gpuCost > cpuBudget || interval > budget.fastest * 1.45) budget.stressed++;
     if (budget.elapsed < 1000) return;
     let quality = this.quality;
     if (budget.stressed / budget.frames > .15) {
@@ -574,6 +575,10 @@ export class ImmersiveVisualizer {
     this.scene = nextScene;
     if (nextScene === "feedback-bloom" && this.generalMotion) this.generalMotion.feedback = undefined;
     if (nextScene === "oscilloscope-orbit" && this.generalMotion) this.generalMotion.orbitHistory = undefined;
+    if (nextScene === "phosphor-bobs" && this.generalMotion) {
+      this.generalMotion.bobHistory = undefined;
+      this.generalMotion.bobs = undefined;
+    }
     this.sceneSeed = randomUnit();
     this.camera.phase = (this.camera.phase + 0.9 + this.sceneSeed * 2.2) % TAU;
     this.camera.gazeX = (randomUnit() - 0.5) * 0.026;
