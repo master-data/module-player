@@ -5,7 +5,7 @@ import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion } from "../demo/g
 import { CurveSceneGeometry, CurveScenes } from "../demo/curve-scenes.js";
 import { ImmersiveVisualizer } from "../demo/immersive-visualizer.js";
 import { SHADER_SCENES, ShaderScenes, WAVEFORM_POINTS, createFlightHeightTexture, flightSkyDirections } from "../demo/shader-scenes.js";
-import { DataUtils, RepeatWrapping, LinearFilter } from "../demo/vendor/three/three.module.min.js";
+import { AdditiveBlending, NormalBlending, DataUtils, RepeatWrapping, LinearFilter } from "../demo/vendor/three/three.module.min.js";
 
 function renderer() {
   return Object.assign(Object.create(ImmersiveVisualizer.prototype), {
@@ -79,7 +79,7 @@ test("Cascade spectral bars settle to baseline regardless of silent spectral bal
       } : target[name]
     });
     view.drawScene(context, "cascade", 1440, 900, 720, 450);
-    const stride = view.detailCount(28, 10) + 1;
+    const stride = 29;
     return rectangles.filter((_, index) => (index + 1) % stride === 0).map(rectangle => rectangle[3]);
   };
   const silent = heights();
@@ -95,6 +95,22 @@ test("Cascade spectral bars settle to baseline regardless of silent spectral bal
   view.signal.level = 0;
   for (let frame = 0; frame < 120; frame++) updateGeneralMotion(view, 1 / 60);
   assert.deepEqual(heights(), silent, "Bars must settle after playback stops");
+});
+
+test("Cascade keeps its grid fixed through transitions and adaptive quality changes", () => {
+  for (const [width, height, columns] of [[1440, 900, 60], [390, 844, 36], [780, 1688, 36]]) {
+    const view = renderer();
+    const initial = render(view, "cascade", width, height);
+    assert.equal(initial.points, columns * 29);
+    for (const quality of [.25, .64, .88, 1]) {
+      for (const sceneTransition of [0, .5, .999, 1]) {
+        Object.assign(view, { quality, sceneTransition });
+        const result = render(view, "cascade", width, height);
+        assert.equal(result.points, initial.points);
+        assert.deepEqual(result.coordinates, initial.coordinates, "Grid positions and audio sampling cannot jump with detail level");
+      }
+    }
+  }
 });
 
 test("waveform inertia retains momentum and matches across 30, 60 and 240 Hz", () => {
@@ -367,6 +383,7 @@ test("all general scenes are distinct, finite and adapt geometry at desktop and 
       assert.equal(low.depth, 0, scene);
       if (scene === "monolith") assert.equal(low.points, 38);
       else if (scene === "aperture") assert.equal(low.points, full.points, "Rigid iris leaves retain their corners at every detail level");
+      else if (scene === "cascade") assert.equal(low.points, full.points, "Cascade retains its grid at every detail level");
       else assert(low.points > 30 && low.points < full.points * .7, scene);
     }
     assert.equal(signatures.size, GENERAL_SCENES.length);
@@ -398,7 +415,7 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       const view = Object.assign(renderer(), { quality: .25, canvas: { clientWidth: width } });
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
-        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
+        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
         if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
@@ -440,7 +457,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
   updateGeneralMotion(view, .2);
   const before = [...view.generalMotion.values];
   for (const [width, height] of [[1440, 900], [780, 1688]]) {
-    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave"]) {
+    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain"]) {
       paths.begin(transform, .37);
       drawGeneralScene(view, paths, scene, width, height, width / 2, height / 2);
       assert(paths.vertexCount > 100);
@@ -448,7 +465,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
       assert(paths.indexCount > paths.vertexCount * 2, "Triangle vertices should be shared");
       assert(paths.indices.subarray(0, paths.indexCount).every(index => index < paths.vertexCount));
       assert.equal(paths.stack.length, 0);
-      assert.equal(paths.paintCount, scene === "aperture" ? 24 : 0);
+      assert.equal(paths.paintCount, scene === "aperture" ? 24 : scene === "terrain" ? 5 : 0);
       for (let offset = 0; offset < paths.vertexCount * 9; offset += 9) {
         for (let component = 0; component < 9; component++) assert(Number.isFinite(paths.vertices[offset + component]));
         assert(paths.vertices[offset + 5] <= .37 + 1e-7);
@@ -480,17 +497,75 @@ test("GPU curves preserve crossfade alpha and bypass both raster allocation and 
   view.curveScenes = { draw: (...args) => { calls.push(args); return true; }, dispose() {} };
   const context = { globalAlpha: .37 };
   try {
-    view.drawScene(context, "aperture", 3840, 2160, 1920, 1080, .4);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0][0], view);
-    assert.equal(calls[0][1], context);
-    assert.deepEqual(calls[0].slice(2), ["aperture", 3840, 2160, 1920, 1080, .4]);
+    for (const scene of ["aperture", "wavegarden", "helix", "terrain"]) {
+      view.drawScene(context, scene, 3840, 2160, 1920, 1080, .4);
+      assert.equal(calls.at(-1)[0], view);
+      assert.equal(calls.at(-1)[1], context);
+      assert.deepEqual(calls.at(-1).slice(2), [scene, 3840, 2160, 1920, 1080, .4]);
+    }
+    assert.equal(calls.length, 4);
     assert.equal(view.sceneCanvas, undefined);
     assert.equal(context.globalAlpha, .37);
   } finally {
     if (original) Object.defineProperty(globalThis, "document", original);
     else delete globalThis.document;
   }
+});
+
+test("additive GPU scenes preserve parent alpha and restore blending when switching scenes", () => {
+  const paths = new CurveSceneGeometry();
+  const buffer = array => ({ array, clearUpdateRanges() {}, addUpdateRange() {} });
+  const composites = [];
+  const blends = [];
+  const gpu = Object.assign(Object.create(CurveScenes.prototype), {
+    paths, buffer: buffer(paths.vertices), indexBuffer: buffer(paths.indices), texture: {},
+    geometry: { setDrawRange() {} },
+    material: { uniforms: { resolution: { value: { set() {} } } } },
+    renderer: {
+      domElement: { width: 1440, height: 900 },
+      getContext: () => ({ isContextLost: () => false }),
+      render: () => blends.push(gpu.material.blending)
+    }
+  });
+  const stack = [];
+  const context = {
+    globalAlpha: .37, globalCompositeOperation: "source-over",
+    getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+    resetTransform() {},
+    save() { stack.push([this.globalAlpha, this.globalCompositeOperation]); },
+    restore() { [this.globalAlpha, this.globalCompositeOperation] = stack.pop(); },
+    drawImage() { composites.push([this.globalAlpha, this.globalCompositeOperation]); }
+  };
+  const view = renderer();
+  updateGeneralMotion(view, .5);
+  for (const scene of ["wavegarden", "helix", "terrain", "aperture"]) {
+    assert(gpu.draw(view, context, scene, 1440, 900, 720, 450, .4));
+    assert.equal(context.globalAlpha, .37);
+    assert.equal(context.globalCompositeOperation, "source-over");
+    for (let offset = 5; offset < paths.vertexCount * 9; offset += 9) assert(paths.vertices[offset] <= .37 + 1e-7);
+  }
+  assert.deepEqual(blends, [AdditiveBlending, AdditiveBlending, AdditiveBlending, NormalBlending]);
+  assert.deepEqual(composites, [[1, "lighter"], [1, "lighter"], [1, "lighter"], [1, "source-over"]]);
+});
+
+test("two-stop terrain gradients interpolate straight colors before fragment premultiplication", () => {
+  const paths = new CurveSceneGeometry();
+  paths.begin({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, .4);
+  const gradient = paths.createLinearGradient(0, 0, 0, 100);
+  gradient.addColorStop(0, "hsla(180 100% 50% / .5)");
+  gradient.addColorStop(1, "hsla(0 100% 50% / .1)");
+  assert.deepEqual(paths.paint(gradient).shade, [1, 0, 0, 0]);
+  assert.equal(paths.paints[1], 1);
+  assert.equal(paths.paints[16], 1);
+  assert.deepEqual([...paths.paints.slice(20, 24)], [.25, .5, .75, 1]);
+  for (let stop = 0; stop < 5; stop++) {
+    for (let component = 0; component < 4; component++) {
+      const expected = paths.paints[component] + (paths.paints[16 + component] - paths.paints[component]) * stop / 4;
+      assert(Math.abs(paths.paints[stop * 4 + component] - expected) < 1e-7);
+    }
+  }
+  assert(Math.abs(paths.paints[3] - .2) < 1e-7);
+  assert(Math.abs(paths.paints[19] - .04) < 1e-7);
 });
 
 test("GPU curve resources are released and context loss requests the raster fallback", () => {
@@ -1203,11 +1278,63 @@ test("waveform-led scenes draw flat PCM flat and expose a localized audio transi
     assert(pathRanges().every(range => range < 1e-9), `${scene} must not invent sine waves for flat input`);
     view.channels[0].fill(.8, 80, 100);
     view.channels[1].fill(-.5, 140, 166);
-    updateGeneralMotion(view, 0);
-    assert(Math.max(...pathRanges()) > 40, `${scene} must display a real PCM transient immediately`);
+    updateGeneralMotion(view, .5);
+    assert(Math.max(...pathRanges()) > 40, `${scene} must display a real PCM transient after easing`);
     const before = render(view, scene);
     view.channels[0].fill(0);
     assert.deepEqual(render(view, scene), before, "Drawing must read the shared snapshot, not mutable source buffers");
+  }
+});
+
+test("Silk filters dense detail, preserves stereo and reads eased snapshots without advancing them", () => {
+  const view = renderer();
+  view.channels = [Float32Array.from({ length: 256 }, (_, index) => Math.sin(index * .025) * .5 + Math.sin(index * 1.9) * .15)];
+  view.channels.push(Float32Array.from(view.channels[0], value => -value * .5));
+  updateGeneralMotion(view, 1);
+  const state = view.generalMotion.shaderWaveform;
+  const original = state.channels.map(channel => [...channel]);
+  const before = render(view, "silk");
+  const storage = view.curveWaveform[0];
+  for (let index = 16; index < 240; index++) {
+    assert(Math.abs(storage[index] - Math.sin(index * .025) * .5) < .012);
+    assert(Math.abs(view.curveWaveform[1][index] + storage[index] * .5) < 1e-10);
+  }
+  view.generalMotion.traceChannels.forEach(channel => channel.fill(1));
+  assert.deepEqual(render(view, "silk"), before, "Raw phase jumps cannot change Silk between motion updates");
+  assert.equal(view.curveWaveform[0], storage);
+  assert.deepEqual(state.channels.map(channel => [...channel]), original);
+  view.channels = [];
+  updateGeneralMotion(view, 2);
+  render(view, "silk");
+  assert(view.curveWaveform.every(channel => channel.every(value => Math.abs(value) < .001)));
+});
+
+test("Wavegarden, Helix and Terrain read eased stereo without raw phase jumps or draw-time integration", () => {
+  for (const scene of ["wavegarden", "helix", "terrain"]) {
+    const view = renderer();
+    updateGeneralMotion(view, .5);
+    const state = view.generalMotion.shaderWaveform;
+    const original = state.channels.map(channel => [...channel]);
+    const before = render(view, scene);
+    view.generalMotion.traceChannels.forEach(channel => channel.fill(1));
+    assert.deepEqual(render(view, scene), before, scene);
+    assert.deepEqual(state.channels.map(channel => [...channel]), original);
+    state.channels[0].fill(.7);
+    assert.notDeepEqual(render(view, scene).coordinates, before.coordinates, `${scene} retains signed stereo response`);
+  }
+});
+
+test("Silk strand thickness stays below sample spacing at desktop, portrait and high DPI", () => {
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    for (const resolution of [1, 2, 3]) {
+      for (const quality of [.25, 1]) {
+        const view = Object.assign(renderer(), { quality, canvas: { clientWidth: width } });
+        const result = render(view, "silk", width * resolution, height * resolution);
+        assert(result.minimumWidth > 0);
+        assert(result.minimumWidth <= width * resolution * 1.12 / 160 * .45 + 1e-9);
+        assert(result.curves > 0);
+      }
+    }
   }
 });
 

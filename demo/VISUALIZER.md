@@ -246,7 +246,7 @@ particles; changing scene names did not produce a strong enough visual change.
     Adaptive detail reduces curve samples without removing blades or closing the
     opening. Reduced motion attenuates deformation. Drawing reads the shared
     inertial state without advancing it and preserves the starfield behind the iris.
-- Silk: current stereo PCM fans into warm and cool thread fields, with gentle whole-thread drift.
+- Silk: phase-aligned, eased stereo PCM fans into spatially smoothed warm and cool thread fields, with gentle whole-thread drift and spacing-bounded strokes.
 - Contours: stacked topographic ridges and highlighted elevation lines.
 - Diffraction: opposing curved line fans without a central ornament.
 - Cascade: a moving spectral relief field with contrasting crest tips.
@@ -434,13 +434,16 @@ callback. There is no FPS cap. Reduced motion slows time and reduces geometry.
 Canvas dimension changes are queued and applied immediately before painting;
 quality updates and resize notifications never clear a completed visible frame.
 
-Aperture, Diffraction, Silk, Contours, Interference and Weave use a shared
+Aperture, Diffraction, Silk, Contours, Interference, Weave, Wavegarden, Helix and Terrain use a shared
 Three.js indexed curve renderer. It consumes the original scene paths, samples
 quadratic/cubic curves with subpixel error bounds, and uses Three.js triangulation
-for filled blades. Solid colors and Aperture's five-stop gradients retain
+for filled blades and terrain layers. Solid colors, Aperture's five-stop gradients
+and Terrain's two-stop gradients retain
 premultiplied transparency. Anti-aliased triangle edges and round open caps retain
-the broad curves; gradients, audio deformation and both 12-blade iris layers
-remain intact. Camera transforms and per-path crossfade opacity are applied before
+the broad curves. Wavegarden, Helix and Terrain use additive blending both within
+their geometry and when composited, preserving their overlapping glow. Wavegarden's
+ten broad layers, Helix's two strands and 26 rungs, and Terrain's five filled layers
+and traveling streaks remain intact. Camera transforms and per-path crossfade opacity are applied before
 compositing at native resolution. Vertex/index storage is reused and only active
 ranges are uploaded. Programs compile when the visualizer opens, not on the first
 scene switch. Missing/lost WebGL falls back to one reusable native-resolution
@@ -562,17 +565,24 @@ General scenes share a critically damped waveform and spectrum state, updated
 once per frame before either crossfade layer is drawn. Its exact spring step
 preserves velocity and has the same response at different refresh rates. Raw
 audio remains untouched for analysis and telemetry. Spatially filtered waveform
-samples feed rounded quadratic paths; strokes retain a broad CSS-pixel minimum
+samples feed rounded quadratic paths; strokes other than Silk retain a broad CSS-pixel minimum
 across display pixel densities. Fewer overlapping traces keep those heavier
 curves readable.
 
-Helix, Wavegarden and Silk instead read a separate 256-point signed PCM snapshot,
-copied once per frame into reused stereo buffers. No temporal averaging is applied
-to these trace samples, so changing waveform phase cannot cancel the signal before
-it is drawn. Mono is duplicated, missing input clears the traces, and both crossfade
-layers read the same snapshot without touching source buffers. Quadratic paths still
-round the spatial samples. These three scenes retain inertial amplitude and layout
-motion, but no generated spatial sine waves replace the waveform's shape.
+Cascade keeps a fixed grid of 60 columns in landscape or 36 in portrait, with
+28 rows. Scene transitions and adaptive quality do not change its bar count,
+spacing or audio sample positions. Resizing across orientations changes the layout.
+
+Silk, Wavegarden, Helix and Terrain's signed detail read the shared phase-aligned
+stereo waveform with its 160 ms target hold
+and critically damped temporal easing. A 33-tap Gaussian filter (sigma 7 samples)
+removes fine serrations while preserving broad signed stereo shapes. Reused output
+buffers are derived at draw time without advancing the shared motion state. Mono
+feeds both channels and missing audio eases to zero. Terrain also retains its
+separate smoothed energy contours; Helix's beat amplitude compensates for filtering.
+Silk's stroke width is bounded by horizontal sample spacing and vertical strand spacing,
+including in portrait layouts, to limit dense translucent stroke overlap. Silence
+eases to flat threads. Native resolution and requestAnimationFrame cadence are unchanged.
 
 Waveform and envelope attacks are tuned separately: envelopes reach over 80%
 of a step within 100 ms while waveforms retain more inertia. Detected beats

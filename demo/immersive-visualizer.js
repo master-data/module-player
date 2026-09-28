@@ -1,11 +1,11 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=34";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=37";
 import { ShaderScenes } from "./shader-scenes.js?v=23";
-import { CurveScenes } from "./curve-scenes.js?v=10";
+import { CurveScenes } from "./curve-scenes.js?v=14";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
 const SCENES = GENERAL_SCENES;
-const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave"]);
+const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain"]);
 const SPECTRAL_POINTS = 256;
 const SPECTRAL_BINS = [2, 3, 5, 7, 10, 14, 20, 28, 39, 54, 72, 96];
 let spectralKernels;
@@ -1217,6 +1217,7 @@ export class ImmersiveVisualizer {
     context.save();
     context.resetTransform();
     context.globalAlpha = 1;
+    if (["wavegarden", "helix", "terrain"].includes(scene)) context.globalCompositeOperation = "lighter";
     context.drawImage(this.sceneCanvas, 0, 0);
     context.restore();
   }

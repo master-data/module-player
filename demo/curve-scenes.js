@@ -1,15 +1,16 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { drawGeneralScene } from "./general-scenes.js?v=34";
+import { drawGeneralScene } from "./general-scenes.js?v=37";
 
 const STRIDE = 9;
 const PAINTS = 32;
 const PAINT_WIDTH = 6;
 
-function color(value, opacity) {
+function color(value, opacity, premultiply = true) {
   const components = value.match(/[-+]?(?:\d*\.)?\d+/g).map(Number);
   const shade = new THREE.Color().setHSL(components[0] / 360, components[1] / 100, components[2] / 100);
   const alpha = (components[3] ?? 1) * opacity;
-  return [shade.r * alpha, shade.g * alpha, shade.b * alpha, alpha];
+  const factor = premultiply ? alpha : 1;
+  return [shade.r * factor, shade.g * factor, shade.b * factor, alpha];
 }
 
 export class CurveSceneGeometry {
@@ -133,9 +134,21 @@ export class CurveSceneGeometry {
 
   paint(style) {
     if (typeof style === "string") return { shade: color(style, this.globalAlpha), index: -1, axis: [0, 0, 0] };
-    if (style.stops.length !== 5 || this.paintCount >= PAINTS) throw new Error("Unsupported curve gradient");
+    if (![2, 5].includes(style.stops.length) || this.paintCount >= PAINTS) throw new Error("Unsupported curve gradient");
     const index = this.paintCount++;
     const offset = index * PAINT_WIDTH * 4;
+    if (style.stops.length === 2) {
+      const first = color(style.stops[0][1], this.globalAlpha, false);
+      const last = color(style.stops[1][1], this.globalAlpha, false);
+      for (let stop = 0; stop < 5; stop++) {
+        const position = stop / 4;
+        for (let component = 0; component < 4; component++) {
+          this.paints[offset + stop * 4 + component] = first[component] + (last[component] - first[component]) * position;
+        }
+        if (stop > 0) this.paints[offset + 20 + stop - 1] = position;
+      }
+      return { shade: [1, 0, 0, 0], index, axis: style.axis };
+    }
     style.stops.forEach(([position, value], stop) => {
       this.paints.set(color(value, this.globalAlpha), offset + stop * 4);
       if (stop > 0) this.paints[offset + 20 + stop - 1] = position;
@@ -314,6 +327,7 @@ export class CurveScenes {
             else if (position < stops.y) shade = mix(stopColor(1.0, row), stopColor(2.0, row), (position - stops.x) / (stops.y - stops.x));
             else if (position < stops.z) shade = mix(stopColor(2.0, row), stopColor(3.0, row), (position - stops.y) / (stops.z - stops.y));
             else shade = mix(stopColor(3.0, row), stopColor(4.0, row), (position - stops.z) / (stops.w - stops.z));
+            if (pixelShade.r > .5) shade.rgb *= shade.a;
           }
           gl_FragColor = shade * clamp(pixelCoverage, 0.0, 1.0);
         }`
@@ -339,6 +353,8 @@ export class CurveScenes {
 
   draw(view, context, name, width, height, centerX, centerY, seed) {
     if (this.renderer.getContext().isContextLost()) return false;
+    const additive = ["wavegarden", "helix", "terrain"].includes(name);
+    this.material.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
     const canvas = this.renderer.domElement;
     if (canvas.width !== width || canvas.height !== height) this.renderer.setSize(width, height, false);
     this.paths.begin(context.getTransform(), context.globalAlpha);
@@ -360,6 +376,7 @@ export class CurveScenes {
     context.save();
     context.resetTransform();
     context.globalAlpha = 1;
+    if (additive) context.globalCompositeOperation = "lighter";
     context.drawImage(canvas, 0, 0);
     context.restore();
     return true;

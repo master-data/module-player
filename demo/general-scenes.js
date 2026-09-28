@@ -1,6 +1,8 @@
 export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight"];
 
 const TAU = Math.PI * 2;
+const CURVE_KERNEL = Float64Array.from({ length: 33 }, (_, index) => Math.exp(-.5 * ((index - 16) / 7) ** 2));
+const CURVE_WEIGHT = CURVE_KERNEL.reduce((sum, weight) => sum + weight, 0);
 const PALETTES = {
   aperture: [188, 205, 188, 28, 205, 188], silk: [12, 183], contours: [162, 44], diffraction: [38, 200],
   cascade: [195, 16], interference: [176, 342], weave: [40, 186], prism: [188, 38],
@@ -17,6 +19,21 @@ function sample(data, position) {
   const offset = Math.max(0, Math.min(data.length - 1, position * (data.length - 1)));
   const index = Math.floor(offset);
   return (data[index] || 0) + ((data[Math.min(index + 1, data.length - 1)] || 0) - (data[index] || 0)) * (offset - index);
+}
+
+function filterCurveWaveform(renderer, channels) {
+  const filtered = renderer.curveWaveform ??= [new Float64Array(256), new Float64Array(256)];
+  for (let side = 0; side < 2; side++) {
+    const source = channels[side] ?? channels[0];
+    for (let index = 0; index < filtered[side].length; index++) {
+      let value = 0;
+      for (let tap = 0; tap < CURVE_KERNEL.length; tap++) {
+        value += sample(source, (index + tap - 16) / 255) * CURVE_KERNEL[tap];
+      }
+      filtered[side][index] = value / CURVE_WEIGHT;
+    }
+  }
+  return filtered;
 }
 
 function stroke(context, hue, alpha, width) {
@@ -286,6 +303,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const right = channels[1] ?? left;
   const traces = motion?.traceChannels ?? channels;
   const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
+  const smoothTraces = ["silk", "wavegarden", "helix", "terrain"].includes(scene)
+    ? filterCurveWaveform(renderer, motion?.shaderWaveform?.channels ?? traces) : undefined;
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
     return value * 4 / (1 + Math.abs(value) * 3);
@@ -414,7 +433,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     for (let layer = 0; layer < layers; layer++) {
       const depth = layer / (layers - 1);
       const side = layer % 2 ? 0 : 1;
-      const data = side ? right : left;
+      const data = smoothTraces[side];
       const energyData = motion?.energyChannels?.[side];
       const band = Math.min(1, bands[layer] * 2.5);
       const base = height * (.28 + depth * .64) - centerY
@@ -473,8 +492,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   } else if (scene === "helix") {
     const points = detail(150, 48);
     const hue = 116 + seed * 210 + Math.sin(time * .08) * 28 + high * 56;
-    const amplitude = height * (.3 + low * .0675 + impact * .0525);
-    const ordinate = (position, strand) => trace(position, strand) * amplitude * (strand ? -1 : 1);
+    const amplitude = height * (.3 + low * .0675 + impact * .11);
+    const ordinate = (position, strand) => sample(smoothTraces[strand], position) * amplitude * (strand ? -1 : 1);
     context.globalCompositeOperation = "lighter";
     for (let strand = 0; strand < 2; strand++) {
       curve.begin();
@@ -532,7 +551,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
       curve.begin();
       for (let point = 0; point <= points; point++) {
         const position = point / points;
-        const vertical = base + drift + trace(position, layer % 2) * amplitude * 2.2;
+        const vertical = base + drift + sample(smoothTraces[layer % 2], position) * amplitude * 2.2;
         curve.point(position * width - centerX, vertical);
       }
       curve.end();
@@ -543,6 +562,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   } else if (scene === "silk") {
     const strands = detail(18, 7);
     const points = detail(160, 60);
+    const strandWidth = Math.min(lineWidth * .45, width * 1.12 / 160 * .45, height * .55 / (strands - 1) * .22);
     for (let family = 0; family < 2; family++) {
       for (let strand = 0; strand < strands; strand++) {
         const depth = strand / (strands - 1);
@@ -553,11 +573,11 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
           const position = point / points;
           const horizontal = (position - .5) * width * 1.12;
           const vertical = (depth - .5) * height * .55 + (family ? 1 : -1) * height * .06
-            + drift + trace(position, family) * amplitude;
+            + drift + sample(smoothTraces[family], position) * amplitude;
           curve.point(horizontal, vertical);
         }
         curve.end();
-        stroke(context, palette[family] + depth * 15, .16 + depth * .34 + level * .12, lineWidth);
+        stroke(context, palette[family] + depth * 15, .16 + depth * .34 + level * .12, strandWidth);
       }
     }
   } else if (scene === "contours") {
@@ -598,8 +618,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
       context.restore();
     }
   } else if (scene === "cascade") {
-    const columns = detail(width > height ? 60 : 36, 18);
-    const rows = detail(28, 10);
+    const columns = width > height ? 60 : 36;
+    const rows = 28;
     const cellWidth = width * .88 / columns;
     const cellHeight = height * .65 / rows;
     const travel = time * .17;
