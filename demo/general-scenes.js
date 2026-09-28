@@ -1,6 +1,6 @@
 import { PerspectiveCamera, TorusKnotGeometry, Vector3 } from "./vendor/three/three.module.min.js";
 
-export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit"];
+export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom"];
 
 const TAU = Math.PI * 2;
 const CURVE_KERNEL = Float64Array.from({ length: 33 }, (_, index) => Math.exp(-.5 * ((index - 16) / 7) ** 2));
@@ -327,7 +327,7 @@ export function drawCrystalFacets(context, scale, time, sectors, layers, cutoff,
 }
 
 export function drawGeneralScene(renderer, context, scene, width, height, centerX, centerY, seed = renderer.sceneSeed) {
-  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry" || scene === "polar-plasma" || scene === "rotozoom-mosaic") {
+  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry" || scene === "polar-plasma" || scene === "rotozoom-mosaic" || scene === "ribbon-loom") {
     if (renderer.drawShaderScene?.(context, scene, width, height, seed)) return;
     if (scene === "voxel-flight") return drawGeneralScene(renderer, context, "terrain", width, height, centerX, centerY, seed + .37);
   }
@@ -344,7 +344,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const right = channels[1] ?? left;
   const traces = motion?.traceChannels ?? channels;
   const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
-  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit"].includes(scene)
+  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom"].includes(scene)
     ? filterCurveWaveform(renderer, motion?.shaderWaveform?.channels ?? traces) : undefined;
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
@@ -358,7 +358,51 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (scene === "rotozoom-mosaic") {
+  if (scene === "ribbon-loom") {
+    const columns = detail(56, 16);
+    const rows = Math.ceil(columns * height / width);
+    const cellWidth = width / columns;
+    const cellHeight = height / rows;
+    const bass = Math.max(0, Math.min(1, low));
+    const mids = Math.max(0, Math.min(1, mid));
+    const treble = Math.max(0, Math.min(1, high));
+    const angle = .3 + Math.sin(time * .07) * .3 + seed * 1.4;
+    const ribbonWidth = .18 + bass * .055 + impact * .035;
+    const shade = (across, shadow, base) => {
+      const normalized = Math.max(-1, Math.min(1, across / ribbonWidth));
+      const crown = Math.sqrt(Math.max(0, 1 - normalized * normalized));
+      const glint = Math.max(0, 1 - Math.abs(normalized - .28)) ** 16 * (.18 + treble * .22);
+      return base.map(value => (value * (.30 + crown * .55) + glint * .24) * (1 - shadow * .55));
+    };
+    const shadowAt = value => {
+      const distance = Math.max(0, Math.min(1, (Math.abs(value) - ribbonWidth) / .09));
+      return 1 - distance * distance * (3 - 2 * distance);
+    };
+    for (let row = -1; row <= rows; row++) {
+      for (let column = -1; column <= columns; column++) {
+        const horizontal = ((column + .5) * cellWidth * 2 - width) / scale;
+        const vertical = (height - (row + .5) * cellHeight * 2) / scale;
+        let across = (Math.cos(angle) * horizontal + Math.sin(angle) * vertical) * 2.2;
+        let down = (-Math.sin(angle) * horizontal + Math.cos(angle) * vertical) * 2.2;
+        const leftWave = sample(smoothTraces[0], .5 + .45 * down / Math.sqrt(1 + down * down));
+        const rightWave = sample(smoothTraces[1], .5 + .45 * across / Math.sqrt(1 + across * across));
+        across += Math.sin(down * 1.4 + time * .24) * (.18 + mids * .16) + leftWave * .28;
+        down += Math.sin(across * 1.25 - time * .20) * (.16 + mids * .14) + rightWave * .28;
+        const cellX = Math.floor(across + .5);
+        const cellY = Math.floor(down + .5);
+        const localX = across - cellX;
+        const localY = down - cellY;
+        const over = ((cellX + cellY) % 2 + 2) % 2 === 0;
+        const onVertical = Math.abs(localX) < ribbonWidth;
+        const onHorizontal = Math.abs(localY) < ribbonWidth;
+        let color = [.008, .011, .014];
+        if (onVertical && (over || !onHorizontal)) color = shade(localX, over ? 0 : shadowAt(localY), [.14, .18, .19]);
+        else if (onHorizontal) color = shade(localY, over ? shadowAt(localX) : 0, [.16, .055, .065]);
+        context.fillStyle = `rgb(${color.map(value => Math.round(value ** .4545 * 255)).join(" ")})`;
+        context.fillRect(column * cellWidth - centerX, row * cellHeight - centerY, cellWidth + 1, cellHeight + 1);
+      }
+    }
+  } else if (scene === "rotozoom-mosaic") {
     const extent = detail(9, 4);
     const density = extent / 9;
     const bass = Math.max(0, Math.min(1, low));
@@ -401,7 +445,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
           diamond(column, row, outer);
           diamond(column, row, inner);
           const pigment = ((column + row * 2 + layer) % 3 + 3) % 3;
-          const color = [[.68, .74, .025], [.035, .24, .65], [.64, .70, .75]][pigment];
+          const color = [[.20, .145, .07], [.055, .105, .16], [.18, .20, .21]][pigment];
           context.fillStyle = `rgb(${color.map(value => Math.round((value * (1 - layer * .48) * .76) ** .4545 * 255)).join(" ")})`;
           context.fill("evenodd");
         }
@@ -440,8 +484,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
         const ink = [.008, .009, .012];
         const color = [...ink];
         const edgeWidth = .006;
-        for (const [target, threshold] of [[[.015, .48, .65], .24], [ink, .38],
-          [[.48, .018, .38], .50], [ink, .64], [[.65, .72, .78], .76], [ink, .83]]) {
+        for (const [target, threshold] of [[[.035, .12, .14], .24], [ink, .38],
+          [[.15, .055, .085], .50], [ink, .64], [[.17, .19, .20], .76], [ink, .83]]) {
           const blend = ease(threshold - edgeWidth, threshold + edgeWidth, field);
           for (let component = 0; component < 3; component++) color[component] += (target[component] - color[component]) * blend;
         }

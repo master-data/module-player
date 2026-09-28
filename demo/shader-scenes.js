@@ -1,6 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 
-export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic"];
+export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom"];
 export const WAVEFORM_POINTS = 256;
 const WAVEFORM_RADIUS = 16;
 const waveformKernel = Float64Array.from({ length: WAVEFORM_RADIUS * 2 + 1 }, (_, index) =>
@@ -487,6 +487,36 @@ void main() {
   gl_FragColor = vec4(finish(color) + (jitter - .5) / 255.0, 1.0);
 }`;
 
+const loomShader = common + waveformShader + `
+void main() {
+  vec3 bands = clamp(audio.xyz, 0.0, 1.0);
+  vec2 screen = (gl_FragCoord.xy * 2.0 - resolution) / min(resolution.x, resolution.y);
+  float angle = .3 + sin(clock * .07) * .3 + seed * 1.4;
+  vec2 point = mat2(cos(angle), -sin(angle), sin(angle), cos(angle)) * screen * 2.2;
+  vec2 positions = .5 + .45 * point / sqrt(vec2(1.0) + point * point);
+  vec2 wave = vec2(waveAt(positions.y).x, waveAt(positions.x).y);
+  point.x += sin(point.y * 1.4 + clock * .24) * (.18 + bands.y * .16) + wave.x * .28;
+  point.y += sin(point.x * 1.25 - clock * .20) * (.16 + bands.y * .14) + wave.y * .28;
+  vec2 cell = floor(point + .5);
+  vec2 local = point - cell;
+  float width = .18 + bands.x * .055 + clamp(impact, 0.0, 1.2) * .035;
+  vec2 edge = max(fwidth(point), vec2(.0008));
+  vec2 coverage = 1.0 - smoothstep(vec2(width) - edge, vec2(width) + edge, abs(local));
+  vec2 shadow = 1.0 - smoothstep(vec2(width), vec2(width + .09), abs(local));
+  float over = 1.0 - mod(cell.x + cell.y, 2.0);
+  vec2 across = clamp(local / width, -1.0, 1.0);
+  vec2 crown = sqrt(max(vec2(0.0), 1.0 - across * across));
+  vec2 glint = pow(max(vec2(0.0), 1.0 - abs(across - .28)), vec2(16.0)) * (.18 + bands.z * .22);
+  vec3 vertical = vec3(.14, .18, .19) * (.30 + crown.x * .55) + glint.x * vec3(.24);
+  vec3 horizontal = vec3(.16, .055, .065) * (.30 + crown.y * .55) + glint.y * vec3(.24);
+  vertical *= 1.0 - shadow.y * (1.0 - over) * .55;
+  horizontal *= 1.0 - shadow.x * over * .55;
+  vec3 color = vec3(.008, .011, .014);
+  color = mix(color, mix(vertical, horizontal, over), mix(coverage.x, coverage.y, over));
+  color = mix(color, mix(horizontal, vertical, over), mix(coverage.y, coverage.x, over));
+  gl_FragColor = vec4(finish(color), 1.0);
+}`;
+
 const mosaicShader = common + waveformShader + `
 void main() {
   vec3 bands = clamp(audio.xyz, 0.0, 1.0);
@@ -511,7 +541,7 @@ void main() {
     float shadow = 1.0 - smoothstep(outer - edge, outer + edge, abs(shadowPoint.x) + abs(shadowPoint.y));
     color *= 1.0 - shadow * .35;
     float pigment = mod(cell.x + cell.y * 2.0 + depth, 3.0);
-    vec3 tile = pigment < .5 ? vec3(.68, .74, .025) : pigment < 1.5 ? vec3(.035, .24, .65) : vec3(.64, .70, .75);
+    vec3 tile = pigment < .5 ? vec3(.20, .145, .07) : pigment < 1.5 ? vec3(.055, .105, .16) : vec3(.18, .20, .21);
     float bevel = smoothstep(outer - .055, outer - .012, distanceToTile);
     tile *= (1.0 - depth * .48) * (.76 + bevel * local.y / outer * .35);
     color = mix(color, tile, mask);
@@ -540,11 +570,11 @@ void main() {
     + (.06 + bands.z * .04) * cos(radius * 6.1 + harmonic.y * 1.4 + phase * .5);
   float edgeWidth = max(fwidth(field), .0008);
   vec3 ink = vec3(.008, .009, .012);
-  vec3 color = mix(ink, vec3(.015, .48, .65), smoothstep(.24 - edgeWidth, .24 + edgeWidth, field));
+  vec3 color = mix(ink, vec3(.035, .12, .14), smoothstep(.24 - edgeWidth, .24 + edgeWidth, field));
   color = mix(color, ink, smoothstep(.38 - edgeWidth, .38 + edgeWidth, field));
-  color = mix(color, vec3(.48, .018, .38), smoothstep(.50 - edgeWidth, .50 + edgeWidth, field));
+  color = mix(color, vec3(.15, .055, .085), smoothstep(.50 - edgeWidth, .50 + edgeWidth, field));
   color = mix(color, ink, smoothstep(.64 - edgeWidth, .64 + edgeWidth, field));
-  color = mix(color, vec3(.65, .72, .78), smoothstep(.76 - edgeWidth, .76 + edgeWidth, field));
+  color = mix(color, vec3(.17, .19, .20), smoothstep(.76 - edgeWidth, .76 + edgeWidth, field));
   color = mix(color, ink, smoothstep(.83 - edgeWidth, .83 + edgeWidth, field));
   color *= .72 + clamp(audio.w, 0.0, 1.0) * .12 + .1 * cos(radius * 1.8 + phase * .3);
   gl_FragColor = vec4(finish(color), 1.0);
@@ -725,7 +755,7 @@ export class ShaderScenes {
       terrainAudio: { value: new THREE.Vector4() },
       sunDirection: { value: new THREE.Vector3() }, moonDirection: { value: new THREE.Vector3() }
     };
-    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader, plasmaShader, mosaicShader].map(fragmentShader => new THREE.ShaderMaterial({
+    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader, plasmaShader, mosaicShader, loomShader].map(fragmentShader => new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false
     }));
     this.mesh = new THREE.Mesh(this.geometry, this.materials[0]);
@@ -820,7 +850,7 @@ export class ShaderScenes {
     if (name === "metaball-foundry") this.updateFoundry(state, seed, arc);
     this.uniforms.terrainMap.value = name === "voxel-flight" ? this.mountainTexture : this.texture;
     this.uniforms.beaconPulse.value = Number.isFinite(beaconPulse) ? THREE.MathUtils.clamp(beaconPulse, 0, 1) : 0;
-    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry" || name === "polar-plasma" || name === "rotozoom-mosaic") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
+    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry" || name === "polar-plasma" || name === "rotozoom-mosaic" || name === "ribbon-loom") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
     this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
     this.renderer.render(this.scene, this.camera);
     context.drawImage(canvas, 0, 0, width, height);

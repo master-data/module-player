@@ -18,7 +18,7 @@ ignored. Automatic scene rotation remains shuffled.
 
 ## Metaball Foundry
 
-The general deck now has 23 effects. Metaball Foundry is a full-screen Three.js
+The general deck now has 24 effects. Metaball Foundry is a full-screen Three.js
 raymarched chrome sculpture: six smoothly joined forms, a neutral softbox, and
 two reflected stereo waveform ribbons with faint cool/warm separation. These
 are directional environment reflections, not painted surface stripes or a
@@ -81,7 +81,7 @@ It retains the standard 20-second hold and immediate manual navigation.
 
 ## Polar Plasma
 
-Polar Plasma follows Feedback Bloom: crisp cyan, magenta and silver bands
+Polar Plasma follows Feedback Bloom: crisp muted petrol, dusty rose and pewter bands
 separated by charcoal, with pixel-aware antialiasing instead of broad color
 blends. Bass changes broad radial spacing, mids alter the twist,
 treble adds restrained secondary ripples, and eased stereo waveforms bend the
@@ -99,7 +99,7 @@ crossfades and immediate manual selection. SID's separate deck is unchanged.
 
 Rotozoom Mosaic follows Polar Plasma. Two counter-rotating tiled planes combine
 bounded zoom, beveled diamond rims and offset shadows for an illustrative sense
-of depth. Lemon-yellow, blue and silver tiles sit over charcoal; the rear plane
+of depth. Muted ochre, blue and pewter tiles sit over charcoal; the rear plane
 is darker. Native-resolution derivative antialiasing keeps the edges crisp.
 
 Bass and beat momentum change scale, mids shift the lattice, treble opens the
@@ -126,6 +126,27 @@ idle orbit. Orbit and Feedback Bloom have separate buffers, retained only while
 active or outgoing in a crossfade. Drawing does not update either history.
 Canvas fallback uses the same projected curves. Portrait framing, the standard
 20-second hold, immediate manual selection and the separate SID deck remain.
+
+## Ribbon Loom
+
+Ribbon Loom follows Oscilloscope Orbit. Broad gunmetal and oxblood ribbons fill
+the screen, alternating over and under at each crossing. Rounded cross-section
+shading, restrained highlights and local contact shadows suggest woven depth;
+this is an analytical full-screen shader, not a cloth simulation or ray tracer.
+Derivative antialiasing keeps the silhouette crisp at native resolution.
+
+These three full-screen scenes use restrained material brightness and chroma
+to sit alongside the darker effects. Loom's white specular contribution is
+reduced as well. This changes only their palettes and highlight intensity:
+geometry, edge widths, audio deformation and scene timing are unchanged.
+
+Bass and beat momentum widen the ribbons, mids bend the weave, and treble
+strengthens the narrow highlights. The two eased stereo waveforms independently
+warp the crossing directions. All controls are bounded, and slow bending and
+rotation continue during silence without advancing audio state during drawing.
+Without WebGL, an adaptive coarse Canvas grid approximates the same shading and
+crossings. The standard 20-second hold, immediate manual navigation and separate
+SID deck are unchanged.
 
 ## Audio and display updates
 

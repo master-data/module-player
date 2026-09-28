@@ -339,14 +339,14 @@ test("music has a fast attack and beat momentum decays consistently without a fl
   assert(reduced.generalMotion.impact < normal.generalMotion.impact * .3);
 });
 
-test("every scene responds to beats through geometry or its full-screen plasma field", () => {
+test("every scene responds to beats through geometry or its full-screen color field", () => {
   for (const scene of GENERAL_SCENES) {
     const view = renderer();
     updateGeneralMotion(view, .2);
     const resting = render(view, scene);
     view.generalMotion.impact = 1;
     const hit = render(view, scene);
-    if (scene === "polar-plasma") {
+    if (["polar-plasma", "ribbon-loom"].includes(scene)) {
       assert.notEqual(hit.signature, resting.signature);
       continue;
     }
@@ -372,7 +372,7 @@ test("every scene uses inertial audio and drawing never advances its shared cros
 });
 
 test("all general scenes are distinct, finite and adapt geometry at desktop and mobile sizes", () => {
-  assert.equal(GENERAL_SCENES.length, 23);
+  assert.equal(GENERAL_SCENES.length, 24);
   const view = renderer();
   for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     const signatures = new Set();
@@ -420,14 +420,14 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
         if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom", "oscilloscope-orbit"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
-        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic"].includes(scene)) assert(result.curves > 0, scene);
+        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic", "ribbon-loom"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
   }
 });
 
 test("GPU scenes dispatch at native dimensions with shared motion and fall back without WebGL", () => {
-  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic"]);
+  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom"]);
   const view = renderer();
   const motion = updateGeneralMotion(view, .1);
   const calls = [];
@@ -692,6 +692,76 @@ test("Orbit trails retain eight snapshots, expire in silence and survive crossfa
     assert.equal(motion.orbitHistory, undefined);
     assert(motion.feedback);
   }
+});
+
+test("Plasma, Mosaic and Loom keep their large color surfaces mellow at peak audio", () => {
+  const view = renderer();
+  const motion = updateGeneralMotion(view, .2);
+  motion.signal = { low: 1, mid: 1, high: 1, level: 1 };
+  motion.impact = 1.2;
+  for (const scene of ["polar-plasma", "rotozoom-mosaic", "ribbon-loom"]) {
+    for (const [width, height] of [[1440, 900], [390, 844]]) {
+      for (const time of [12, 75]) {
+        motion.time = time;
+        let brightest = 0;
+        let chroma = 0;
+        let colors = 0;
+        const drawing = capture();
+        const context = new Proxy(drawing.context, {
+          set: (target, name, value) => {
+            if (name === "fillStyle") {
+              const match = /^rgb\((\d+) (\d+) (\d+)/.exec(value);
+              if (match) {
+                const channels = match.slice(1).map(Number);
+                brightest = Math.max(brightest, ...channels);
+                chroma = Math.max(chroma, Math.max(...channels) - Math.min(...channels));
+                colors++;
+              }
+            }
+            target[name] = value;
+            return true;
+          }
+        });
+        drawGeneralScene(view, context, scene, width, height, width / 2, height / 2);
+        assert(colors > 100, scene);
+        assert(brightest > 80 && brightest <= 150, `${scene}: peak channel ${brightest}`);
+        assert(chroma <= 60, `${scene}: channel spread ${chroma}`);
+      }
+    }
+  }
+});
+
+test("Ribbon Loom uses bounded audio, independent stereo warps and antialiased alternating crossings", async () => {
+  const view = Object.assign(renderer(), { scene: "ribbon-loom" });
+  const motion = updateGeneralMotion(view, .1);
+  const signal = { low: 0, mid: 0, high: 0, level: .5 };
+  motion.signal = signal;
+  motion.impact = 0;
+  motion.shaderWaveform.channels = [new Float64Array(256), new Float64Array(256)];
+  const baseline = render(view, view.scene).signature;
+  for (const band of ["low", "mid", "high"]) {
+    motion.signal = { ...signal, [band]: 1 };
+    const active = render(view, view.scene).signature;
+    assert.notEqual(active, baseline, band);
+    motion.signal = { ...signal, [band]: 8 };
+    assert.equal(render(view, view.scene).signature, active, `${band} must be bounded`);
+  }
+  motion.signal = signal;
+  for (const side of [0, 1]) {
+    motion.shaderWaveform.channels[side].fill(.5);
+    assert.notEqual(render(view, view.scene).signature, baseline, `Stereo side ${side}`);
+    motion.shaderWaveform.channels[side].fill(0);
+  }
+  const before = structuredClone(motion);
+  assert.equal(render(view, view.scene).signature, baseline);
+  assert.deepEqual(motion, before);
+  const source = await readFile(new URL("../demo/shader-scenes.js", import.meta.url), "utf8");
+  const loom = source.slice(source.indexOf("const loomShader"), source.indexOf("const mosaicShader"));
+  assert.match(loom, /max\(fwidth\(point\), vec2\(\.0008\)\)/);
+  assert.match(loom, /over = 1\.0 - mod\(cell\.x \+ cell\.y, 2\.0\)/);
+  assert.match(loom, /sqrt\(max\(vec2\(0\.0\), 1\.0 - across \* across\)\)/);
+  assert.match(loom, /shadow\.y \* \(1\.0 - over\)/);
+  assert.match(loom, /shadow\.x \* over/);
 });
 
 test("Rotozoom Mosaic responds to bounded bands and both eased stereo channels without draw-time integration", async () => {
@@ -1317,9 +1387,9 @@ test("flight sky follows unit-length solar and lunar paths through day and night
   assert.deepEqual(flightSkyDirections(12, .4), flightSkyDirections(12, .4));
 });
 
-test("terrain, twister, Foundry, plasma and mosaic refresh waveform uniforms on each draw", () => {
+test("waveform shader scenes refresh waveform uniforms on each draw", () => {
   const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
-    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}, {}, {}, {}],
+    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}, {}, {}, {}, {}],
     renderer: {
       domElement: { width: 1440, height: 900 },
       getContext: () => ({ isContextLost: () => false }), render() {}
@@ -1337,7 +1407,7 @@ test("terrain, twister, Foundry, plasma and mosaic refresh waveform uniforms on 
   gpu.texture = { name: "original" };
   gpu.mountainTexture = { name: "smooth" };
   gpu.uniforms.cameraAudio.value.set = (...values) => cameraUploads.push(values);
-  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry", "polar-plasma", "rotozoom-mosaic"]) {
+  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry", "polar-plasma", "rotozoom-mosaic", "ribbon-loom"]) {
     gpu.waveform.fill(0);
     assert.equal(gpu.draw({ drawImage() {} }, scene, 1440, 900, state, .4, 1), true);
     assert.equal(gpu.uniforms.terrainMap.value, scene === "voxel-flight" ? gpu.mountainTexture : gpu.texture);
@@ -2090,7 +2160,7 @@ test("general crossfade keeps the outgoing seed and balances both scenes around 
   view.music = { beatInterval: .5, toneFast: [], toneCentroidFast: .5 };
   view.sidSceneMode = false;
   view.sceneDeck = [...GENERAL_SCENES];
-  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit"]) {
+  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom"]) {
     calls.length = 0;
     context.globalAlpha = 1;
     view.scene = GENERAL_SCENES[GENERAL_SCENES.indexOf(scene) - 1];
