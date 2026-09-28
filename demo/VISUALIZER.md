@@ -18,7 +18,7 @@ ignored. Automatic scene rotation remains shuffled.
 
 ## Metaball Foundry
 
-The general deck now has 27 effects. Metaball Foundry is a full-screen Three.js
+The general deck now has 28 effects. Metaball Foundry is a full-screen Three.js
 raymarched chrome sculpture: six smoothly joined forms, a neutral softbox, and
 two reflected stereo waveform ribbons with faint cool/warm separation. These
 are directional environment reflections, not painted surface stripes or a
@@ -215,6 +215,28 @@ The existing GPU triangle renderer draws 40 faces at full detail, or 16 at low
 detail, with the same Canvas fallback geometry. There is no new full-screen
 ray marcher, framebuffer feedback, or timer. Native output resolution, uncapped
 rendering, the 20-second hold and SID's separate deck remain unchanged.
+
+## Copper Ribbons
+
+Copper Ribbons follows Glenz Vector: six twisting horizontal ribbons reinterpret
+classic raster bars as interleaving, waveform-shaped strips. Each ribbon has
+five hard-edged metallic bands in muted copper, petrol or dusty rose. Unlike
+the existing Copper effect, these are bent, locally depth-sorted surfaces rather
+than full-width gradient rectangles; unlike Ribbon Loom, there is no woven grid.
+The shared starfield remains visible between ribbons.
+
+Eased signed stereo PCM bends the ribbon paths independently. Bass controls
+thickness, beat momentum opens the bands, mids change their twist and excursion,
+and treble lifts the narrow central highlight. All controls are bounded. Six
+reusable sample buffers feed a reused ordering array; rendering does not advance
+audio or animation state.
+
+The existing native-resolution GPU triangle renderer and Canvas fallback share
+the same geometry. Quality changes longitudinal tessellation from 48 strips per
+ribbon to 12 at the current minimum quality, keeping all six ribbons and five
+bands. Depth order is evaluated per strip, a stylized raster approximation rather
+than a physical ribbon simulation. There are no new ray marchers, texture passes,
+history buffers or timers. The normal 20-second hold and SID deck are unchanged.
 
 ## Audio and display updates
 

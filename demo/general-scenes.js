@@ -1,6 +1,6 @@
 import { IcosahedronGeometry, OctahedronGeometry, PerspectiveCamera, TorusKnotGeometry, Vector3 } from "./vendor/three/three.module.min.js";
 
-export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector"];
+export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector", "copper-ribbons"];
 
 const TAU = Math.PI * 2;
 const CURVE_KERNEL = Float64Array.from({ length: 33 }, (_, index) => Math.exp(-.5 * ((index - 16) / 7) ** 2));
@@ -371,7 +371,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const right = channels[1] ?? left;
   const traces = motion?.traceChannels ?? channels;
   const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
-  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector"].includes(scene)
+  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector", "copper-ribbons"].includes(scene)
     ? filterCurveWaveform(renderer, motion?.shaderWaveform?.channels ?? traces) : undefined;
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
@@ -385,7 +385,59 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (scene === "glenz-vector") {
+  if (scene === "copper-ribbons") {
+    const copper = renderer.copperRibbons ??= {
+      ribbons: Array.from({ length: 6 }, (_, index) => ({ index, samples: new Float64Array(49 * 3), depth: 0 })),
+      ordered: [], shades: [10, 22, 36, 27, 13], hues: [24, 188, 348], segments: 0
+    };
+    const segments = copper.segments = detail(48, 12);
+    const bass = Math.max(0, Math.min(1, low));
+    const mids = Math.max(0, Math.min(1, mid));
+    const treble = Math.max(0, Math.min(1, high));
+    const thickness = height * (.018 + bass * .012 + Math.max(0, impact) * .024);
+    for (const ribbon of copper.ribbons) {
+      const phase = ribbon.index / 6 * TAU + seed * TAU;
+      for (let point = 0; point <= segments; point++) {
+        const position = point / segments;
+        const angle = position * TAU * .55 + time * .24 + phase;
+        const twist = position * TAU * (.65 + mids * .25) - time * .18 + phase;
+        const leftWave = sample(smoothTraces[0], position);
+        const rightWave = sample(smoothTraces[1], position);
+        const offset = point * 3;
+        ribbon.samples[offset] = Math.sin(angle) * height * (.23 + mids * .025)
+          + height * .055 * (leftWave * Math.cos(phase) + rightWave * Math.sin(phase));
+        ribbon.samples[offset + 1] = thickness * (.2 + .8 * Math.abs(Math.cos(twist)));
+        ribbon.samples[offset + 2] = Math.cos(angle) * .8 + Math.sin(twist) * .2;
+      }
+    }
+    for (let segment = 0; segment < segments; segment++) {
+      const start = segment * 3;
+      const end = start + 3;
+      const leftEdge = (segment / segments - .5) * width * .96;
+      const rightEdge = ((segment + 1) / segments - .5) * width * .96;
+      for (const [index, ribbon] of copper.ribbons.entries()) {
+        ribbon.depth = (ribbon.samples[start + 2] + ribbon.samples[end + 2]) * .5;
+        copper.ordered[index] = ribbon;
+      }
+      copper.ordered.sort((first, second) => first.depth - second.depth);
+      for (const ribbon of copper.ordered) {
+        const points = ribbon.samples;
+        for (let band = 0; band < copper.shades.length; band++) {
+          const top = band / copper.shades.length * 2 - 1;
+          const bottom = (band + 1) / copper.shades.length * 2 - 1;
+          context.beginPath();
+          context.moveTo(leftEdge, points[start] + points[start + 1] * top);
+          context.lineTo(rightEdge, points[end] + points[end + 1] * top);
+          context.lineTo(rightEdge, points[end] + points[end + 1] * bottom);
+          context.lineTo(leftEdge, points[start] + points[start + 1] * bottom);
+          context.closePath();
+          const brightness = copper.shades[band] + (ribbon.depth + 1) * 1.5 + (band === 2 ? treble * 3 : 0);
+          context.fillStyle = `hsla(${copper.hues[ribbon.index % 3]} 26% ${brightness}% / 1)`;
+          context.fill();
+        }
+      }
+    }
+  } else if (scene === "glenz-vector") {
     if (!renderer.glenzProjection) {
       const sources = [new IcosahedronGeometry(1.4, 0), new OctahedronGeometry(1.4, 0)].map(geometry => {
         const positions = Float32Array.from(geometry.getAttribute("position").array);
@@ -743,11 +795,16 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     }
   } else if (scene === "oscilloscope-orbit") {
     const projection = renderer.orbitProjection ??= { camera: new PerspectiveCamera(48, 1, .1, 80),
-      point: new Vector3(), axis: new Vector3(.2, .8, .35).normalize() };
+      point: new Vector3(), axis: new Vector3() };
     const { camera, point, axis } = projection;
+    const movement = renderer.reducedMotion ? .25 : 1;
+    const cameraPhase = seed * TAU;
     camera.aspect = width / height;
-    camera.position.set(0, 0, 12.5 * Math.max(1, .9 / camera.aspect));
-    camera.lookAt(0, 0, 0);
+    camera.position.set(Math.sin(time * .10 + cameraPhase) * 1.1 * movement,
+      Math.cos(time * .083 + cameraPhase) * .65 * movement,
+      (11.8 + Math.sin(time * .065 + cameraPhase) * .35 * movement) * Math.max(1, .9 / camera.aspect));
+    camera.lookAt(Math.sin(time * .073 + cameraPhase) * .42 * movement,
+      Math.sin(time * .057 + cameraPhase) * .28 * movement, 0);
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld();
     const history = motion?.orbitHistory;
@@ -763,6 +820,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
       const mids = Math.max(0, Math.min(1, frame.mid));
       const expansion = 1 + bass * .18 + Math.max(0, Math.min(1.2, frame.impact)) * .28;
       const opacity = Math.exp(-age * 3.5) * (.12 + Math.max(0, Math.min(1, frame.level)) * .7);
+      axis.set(.2 + Math.sin(frame.clock * .045 + cameraPhase) * .18 * movement,
+        .8, .35 + Math.cos(frame.clock * .037 + cameraPhase) * .12 * movement).normalize();
       for (let side = 0; side < 2; side++) {
         curve.begin(true);
         for (let index = 0; index < points; index++) {
@@ -998,6 +1057,9 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   } else if (scene === "terrain") {
     const layers = 5;
     const points = detail(64, 24);
+    const previousRidge = renderer.terrainRidge ??= new Float64Array(65);
+    const minimumGap = height * .065;
+    const spacingSoftness = height * .035;
     const floor = height - centerY;
     const padding = Math.max(width, height) * .12;
     const terrainTime = time;
@@ -1028,7 +1090,13 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
           + sample(data, position) * height * .1 * response
           + ripple * height * high * .018 * response;
         const headroom = Math.max(height * .04, base + centerY - height * .04);
-        const vertical = base - headroom * Math.tanh(wave / headroom);
+        let vertical = base - headroom * Math.tanh(wave / headroom);
+        if (layer > 0) {
+          const boundary = previousRidge[point] + minimumGap;
+          const distance = vertical - boundary;
+          vertical = boundary + (distance + Math.hypot(distance, spacingSoftness)) * .5;
+        }
+        previousRidge[point] = vertical;
         if (point === 0) curve.point(-centerX - padding, vertical);
         curve.point(position * width - centerX, vertical);
         if (point === points) curve.point(width - centerX + padding, vertical);

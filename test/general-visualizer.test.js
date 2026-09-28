@@ -372,7 +372,7 @@ test("every scene uses inertial audio and drawing never advances its shared cros
 });
 
 test("all general scenes are distinct, finite and adapt geometry at desktop and mobile sizes", () => {
-  assert.equal(GENERAL_SCENES.length, 27);
+  assert.equal(GENERAL_SCENES.length, 28);
   const view = renderer();
   for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     const signatures = new Set();
@@ -420,7 +420,7 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
         if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "glenz-vector"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
-        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic", "ribbon-loom", "echo-chamber", "glenz-vector"].includes(scene)) assert(result.curves > 0, scene);
+        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic", "ribbon-loom", "echo-chamber", "glenz-vector", "copper-ribbons"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
   }
@@ -691,6 +691,80 @@ test("Orbit trails retain eight snapshots, expire in silence and survive crossfa
     updateGeneralMotion(view, .01);
     assert.equal(motion.orbitHistory, undefined);
     assert(motion.feedback);
+  }
+});
+
+test("Copper Ribbons retain independent bounded band and stereo responses without advancing audio", () => {
+  const view = Object.assign(renderer(), { scene: "copper-ribbons" });
+  const motion = updateGeneralMotion(view, .2);
+  motion.signal = { low: 0, mid: 0, high: 0, level: .5 };
+  motion.impact = 0;
+  motion.shaderWaveform.channels = [new Float64Array(256), new Float64Array(256)];
+  const baseline = render(view, view.scene).signature;
+  for (const band of ["low", "mid", "high"]) {
+    motion.signal[band] = 1;
+    const active = render(view, view.scene).signature;
+    assert.notEqual(active, baseline, band);
+    motion.signal[band] = 8;
+    assert.equal(render(view, view.scene).signature, active);
+    motion.signal[band] = 0;
+  }
+  for (const channel of motion.shaderWaveform.channels) {
+    channel.fill(.5);
+    assert.notEqual(render(view, view.scene).signature, baseline, "Both stereo channels must bend the ribbons");
+    channel.fill(0);
+  }
+  const before = structuredClone(motion);
+  assert.equal(render(view, view.scene).signature, baseline);
+  assert.equal(render(view, view.scene).signature, baseline);
+  assert.deepEqual(motion, before);
+});
+
+test("Copper Ribbons reuse bounded locally sorted strips and maintain a mellow raster palette", () => {
+  const view = Object.assign(renderer(), { scene: "copper-ribbons" });
+  const motion = updateGeneralMotion(view, .2);
+  motion.signal = { low: 1, mid: 1, high: 1, level: 1 };
+  motion.impact = 1.2;
+  motion.shaderWaveform.channels = [new Float64Array(256).fill(1), new Float64Array(256).fill(-1)];
+  render(view, view.scene);
+  const copper = view.copperRibbons;
+  const buffers = copper.ribbons.map(ribbon => ribbon.samples);
+  for (const quality of [1, .25]) {
+    view.quality = quality;
+    for (const [width, height] of [[1440, 900], [390, 844], [3200, 900]]) {
+      for (const time of [0, 12, 80]) {
+        motion.time = time;
+        const drawing = capture();
+        const fills = [];
+        const context = new Proxy(drawing.context, {
+          set: (target, key, value) => {
+            if (key === "fillStyle") fills.push(value);
+            target[key] = value;
+            return true;
+          }
+        });
+        drawGeneralScene(view, context, view.scene, width, height, 0, 0, .4);
+        assert.equal(copper.segments, quality === 1 ? 48 : 12);
+        assert.equal(fills.length, copper.segments * 6 * 5);
+        for (const fill of fills) {
+          const values = fill.match(/[\d.]+/g).map(Number);
+          assert([24, 188, 348].includes(values[0]));
+          assert.equal(values[1], 26);
+          assert(values[2] >= 10 && values[2] <= 42);
+          assert.equal(values[3], 1);
+        }
+        const coordinates = drawing.result().coordinates;
+        for (let index = 0; index < coordinates.length; index += 2) {
+          assert(Math.abs(coordinates[index]) <= width * .481);
+          assert(Math.abs(coordinates[index + 1]) < height * .45);
+        }
+        assert.equal(view.copperRibbons, copper);
+        copper.ribbons.forEach((ribbon, index) => assert.equal(ribbon.samples, buffers[index]));
+        copper.ordered.forEach((ribbon, index) => {
+          if (index) assert(ribbon.depth >= copper.ordered[index - 1].depth);
+        });
+      }
+    }
   }
 });
 
@@ -1078,6 +1152,51 @@ test("Polar Plasma uses bounded independent audio controls and a nonsingular ang
   assert.equal((plasma.match(/smoothstep\(/g) ?? []).length, transitions.length);
 });
 
+test("Terrain GPU fills preserve each complete contour without missing or overlapping triangles", () => {
+  const paths = new CurveSceneGeometry();
+  const view = renderer();
+  updateGeneralMotion(view, .2);
+  const originalFill = paths.fill;
+  let fills = 0;
+  paths.fill = function () {
+    const contour = this.path.map(point => ({ x: point.x, y: point.y }));
+    const ridge = contour.slice(0, -2);
+    for (let index = 1; index < ridge.length; index++) {
+      assert(ridge[index].x >= ridge[index - 1].x, "Terrain's ridge must not fold back across itself");
+    }
+    const firstIndex = this.indexCount;
+    originalFill.call(this);
+    let polygonArea = 0;
+    for (let index = 0; index < contour.length; index++) {
+      const point = contour[index];
+      const next = contour[(index + 1) % contour.length];
+      polygonArea += point.x * next.y - next.x * point.y;
+    }
+    let triangleArea = 0;
+    for (let index = firstIndex; index < this.indexCount; index += 3) {
+      const offsets = [0, 1, 2].map(corner => this.indices[index + corner] * 9);
+      if (offsets.some(offset => this.vertices[offset + 8] !== 1)) continue;
+      const [first, second, third] = offsets;
+      triangleArea += Math.abs((this.vertices[second] - this.vertices[first]) * (this.vertices[third + 1] - this.vertices[first + 1])
+        - (this.vertices[third] - this.vertices[first]) * (this.vertices[second + 1] - this.vertices[first + 1]));
+    }
+    assert(Math.abs(triangleArea - Math.abs(polygonArea)) < Math.abs(polygonArea) * 1e-5,
+      `Terrain layer ${fills}: triangles ${triangleArea}, contour ${Math.abs(polygonArea)}`);
+    fills++;
+  };
+  for (const [width, height] of [[1440, 900], [2732, 768], [390, 844]]) {
+    for (const quality of [1, .25, .6, 1]) {
+      view.quality = quality;
+      for (const time of [0, 12, 80]) {
+        view.generalMotion.time = time;
+        paths.begin({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+        drawGeneralScene(view, paths, "terrain", width, height, width / 2, height / 2);
+      }
+    }
+  }
+  assert.equal(fills, 180);
+});
+
 test("GPU curve batches retain original scene geometry, gradient stops and reusable buffers", () => {
   const paths = new CurveSceneGeometry();
   const transform = { a: 1.035, b: .02, c: -.02, d: 1.035, e: 17, f: -11 };
@@ -1085,7 +1204,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
   updateGeneralMotion(view, .2);
   const before = [...view.generalMotion.values];
   for (const [width, height] of [[1440, 900], [780, 1688]]) {
-    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "echo-chamber", "phosphor-bobs", "glenz-vector"]) {
+    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "echo-chamber", "phosphor-bobs", "glenz-vector", "copper-ribbons"]) {
       paths.begin(transform, .37);
       drawGeneralScene(view, paths, scene, width, height, width / 2, height / 2);
       assert(paths.vertexCount > 100);
@@ -1125,13 +1244,13 @@ test("GPU curves preserve crossfade alpha and bypass both raster allocation and 
   view.curveScenes = { draw: (...args) => { calls.push(args); return true; }, dispose() {} };
   const context = { globalAlpha: .37 };
   try {
-    for (const scene of ["aperture", "wavegarden", "helix", "terrain", "oscilloscope-orbit", "echo-chamber", "glenz-vector"]) {
+    for (const scene of ["aperture", "wavegarden", "helix", "terrain", "oscilloscope-orbit", "echo-chamber", "glenz-vector", "copper-ribbons"]) {
       view.drawScene(context, scene, 3840, 2160, 1920, 1080, .4);
       assert.equal(calls.at(-1)[0], view);
       assert.equal(calls.at(-1)[1], context);
       assert.deepEqual(calls.at(-1).slice(2), [scene, 3840, 2160, 1920, 1080, .4]);
     }
-    assert.equal(calls.length, 7);
+    assert.equal(calls.length, 8);
     assert.equal(view.sceneCanvas, undefined);
     assert.equal(context.globalAlpha, .37);
   } finally {
@@ -2298,6 +2417,48 @@ test("terrain ridges respond to independent audio features with time held fixed"
   }
 });
 
+test("terrain waves retain smooth separation under opposing stereo and peak audio", () => {
+  const view = renderer();
+  const motion = updateGeneralMotion(view, .4);
+  motion.signal = { low: 1, mid: 1, high: 1, level: 1 };
+  motion.impact = 1.2;
+  motion.bands.fill(.4);
+  motion.energyChannels[0].fill(0);
+  motion.energyChannels[1].fill(1);
+  motion.shaderWaveform.channels[0].fill(-1);
+  motion.shaderWaveform.channels[1].fill(1);
+  const paths = new CurveSceneGeometry();
+  let ridges;
+  paths.fill = () => ridges.push(paths.path.slice(0, -2).map(point => ({ x: point.x, y: point.y })));
+  paths.stroke = () => {};
+  const heightAt = (ridge, horizontal) => {
+    const index = ridge.findIndex(point => point.x >= horizontal);
+    const first = ridge[Math.max(0, index - 1)];
+    const last = ridge[index];
+    const fraction = (horizontal - first.x) / (last.x - first.x || 1);
+    return first.y + (last.y - first.y) * fraction;
+  };
+  for (const [width, height] of [[2732, 768], [1440, 900], [390, 844]]) {
+    for (const quality of [1, .25]) {
+      view.quality = quality;
+      for (const time of [0, 12, 40, 80]) {
+        motion.time = time;
+        ridges = [];
+        paths.begin({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+        drawGeneralScene(view, paths, "terrain", width, height, width / 2, height / 2);
+        assert.equal(ridges.length, 5);
+        for (let layer = 1; layer < ridges.length; layer++) {
+          for (let sampleIndex = 0; sampleIndex <= 128; sampleIndex++) {
+            const horizontal = width * sampleIndex / 128;
+            const gap = heightAt(ridges[layer], horizontal) - heightAt(ridges[layer - 1], horizontal);
+            assert(gap >= height * .06, `Layer ${layer} at ${horizontal}: gap ${gap}px`);
+          }
+        }
+      }
+    }
+  }
+});
+
 test("terrain restores five full-width gradient surfaces extending to the floor", () => {
   assert(GENERAL_SCENES.includes("terrain"));
   const drawing = capture();
@@ -2670,7 +2831,7 @@ test("general crossfade keeps the outgoing seed and balances both scenes around 
   view.music = { beatInterval: .5, toneFast: [], toneCentroidFast: .5 };
   view.sidSceneMode = false;
   view.sceneDeck = [...GENERAL_SCENES];
-  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector"]) {
+  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber", "phosphor-bobs", "glenz-vector", "copper-ribbons"]) {
     calls.length = 0;
     context.globalAlpha = 1;
     view.scene = GENERAL_SCENES[GENERAL_SCENES.indexOf(scene) - 1];
