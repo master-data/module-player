@@ -2,6 +2,36 @@ import * as THREE from "./vendor/three/three.module.min.js";
 
 export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist"];
 export const WAVEFORM_POINTS = 256;
+const WAVEFORM_RADIUS = 16;
+const waveformKernel = Float64Array.from({ length: WAVEFORM_RADIUS * 2 + 1 }, (_, index) =>
+  Math.exp(-.5 * ((index - WAVEFORM_RADIUS) / 7) ** 2));
+const waveformWeight = waveformKernel.reduce((sum, value) => sum + value, 0);
+
+function horizonDirection(longitude, latitude, rotation, target, offset) {
+  const tilt = 23.44 * Math.PI / 180;
+  const observer = 48 * Math.PI / 180;
+  const horizontal = Math.cos(longitude) * Math.cos(latitude);
+  const orbital = Math.sin(longitude) * Math.cos(latitude);
+  const vertical = Math.sin(latitude);
+  const equatorial = orbital * Math.cos(tilt) - vertical * Math.sin(tilt);
+  const polar = orbital * Math.sin(tilt) + vertical * Math.cos(tilt);
+  const meridian = Math.cos(rotation) * horizontal + Math.sin(rotation) * equatorial;
+  target[offset] = -Math.sin(rotation) * horizontal + Math.cos(rotation) * equatorial;
+  target[offset + 1] = Math.cos(observer) * meridian + Math.sin(observer) * polar;
+  target[offset + 2] = -Math.sin(observer) * meridian + Math.cos(observer) * polar;
+}
+
+export function flightSkyDirections(time, seed = 0, target = new Float64Array(6)) {
+  const days = Math.max(0, Number.isFinite(time) ? time : 0) / 1200;
+  const solarLongitude = Math.PI * 2 / 3 + days * Math.PI * 2 / 365.25;
+  const ascension = Math.atan2(Math.sin(solarLongitude) * Math.cos(23.44 * Math.PI / 180), Math.cos(solarLongitude));
+  const rotation = ascension + 1.28 + (Number.isFinite(seed) ? seed : 0) * .1 + days * Math.PI * 2;
+  const lunarLongitude = solarLongitude + 2.35 + days * Math.PI * 2 / 29.53;
+  const lunarLatitude = Math.sin(lunarLongitude - .8) * 5.145 * Math.PI / 180;
+  horizonDirection(solarLongitude, 0, rotation, target, 0);
+  horizonDirection(lunarLongitude, lunarLatitude, rotation, target, 3);
+  return target;
+}
 
 const vertexShader = `
 void main() {
@@ -112,7 +142,7 @@ vec3 ribbonLocal(vec3 point) {
   float aspect = resolution.x / resolution.y;
   vec2 wave = waveAt((point.y + 2.08) / 4.16);
   float axis = wave.x * min(.72, aspect * .65);
-  float twist = clock * .55 + seed * PI * 2.0 + point.y * 2.0
+  float twist = clock * .35 + seed * PI * 2.0 + point.y * 1.35
     + sin(point.y * 1.1 + clock * .21) * (.65 + audio.y * .25) + impact * .12;
   vec2 radial = point.xz - vec2(axis, wave.y * min(.32, aspect * .2));
   float cosine = cos(twist);
@@ -122,7 +152,7 @@ vec3 ribbonLocal(vec3 point) {
 float ribbon(vec3 point) {
   float width = min(.95, resolution.x / resolution.y * 1.22) * (1.0 + audio.x * .09 + impact * .06);
   vec3 bounds = abs(ribbonLocal(point)) - vec3(width, 2.08, width * .65);
-  return length(max(bounds, 0.0)) + min(max(bounds.x, max(bounds.y, bounds.z)), 0.0) - .085;
+  return length(max(bounds, 0.0)) + min(max(bounds.x, max(bounds.y, bounds.z)), 0.0) - .14;
 }
 void main() {
   vec2 screen = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
@@ -145,7 +175,7 @@ void main() {
   float coverage = hit ? 1.0 : 1.0 - smoothstep(0.0, tolerance * 2.0, closest);
   if (coverage <= 0.0) { gl_FragColor = vec4(0.0); return; }
   if (!hit) point = nearest;
-  float epsilon = .003;
+  float epsilon = .012;
   vec3 normal = normalize(vec3(
     ribbon(point + vec3(epsilon, 0.0, 0.0)) - ribbon(point - vec3(epsilon, 0.0, 0.0)),
     ribbon(point + vec3(0.0, epsilon, 0.0)) - ribbon(point - vec3(0.0, epsilon, 0.0)),
@@ -158,8 +188,8 @@ void main() {
   float iridescence = .5 + .5 * sin(local.y * 1.4 + normal.x * 2.5 + clock * .13);
   vec3 metal = mix(vec3(.045, .28, .30), vec3(.48, .14, .055), iridescence);
   metal = mix(metal, vec3(.4, .49, .5), fresnel * .4);
-  float softbox = pow(max(dot(normal, normalize(light - direction)), 0.0), 32.0);
-  float rim = pow(max(dot(normal, normalize(rimLight - direction)), 0.0), 48.0);
+  float softbox = pow(max(dot(normal, normalize(light - direction)), 0.0), 18.0);
+  float rim = pow(max(dot(normal, normalize(rimLight - direction)), 0.0), 26.0);
   vec3 color = metal * (.25 + diffuse * .65);
   color += vec3(.45, .55, .58) * softbox * (.6 + audio.z * .15);
   color += vec3(.3, .12, .055) * rim * .45 + metal * fresnel * (.2 + audio.z * .15);
@@ -175,6 +205,8 @@ uniform vec4 cameraAudio;
 uniform vec3 pigmentFlow;
 uniform vec3 pigmentSpectrum;
 uniform vec4 terrainAudio;
+uniform vec3 sunDirection;
+uniform vec3 moonDirection;
 float mountainMass(vec2 position) {
   float coarse = texture2D(terrainMap, position / 190.0).r;
   return pow(coarse, 2.2) * 93.2;
@@ -184,8 +216,8 @@ float baseElevation(vec2 position) {
   float mass = mountainMass(position);
   float drainage = texture2D(terrainMap, position / 38.0 + vec2(.17, .43)).r;
   float gullies = pow(1.0 - abs(drainage * 2.0 - 1.0), 3.0);
-  vec2 along = waveAt(.5 + sin(position.x * .009 + position.y * .003) * .5);
-  vec2 across = waveAt(.5 + sin(position.y * .008 - position.x * .004) * .5);
+  vec2 along = waveAt(.5 + sin(position.x * .0045 + position.y * .0015) * .5);
+  vec2 across = waveAt(.5 + sin(position.y * .004 - position.x * .002) * .5);
   float crest = clamp(.5 + along.x * .3 + across.y * .2, 0.0, 1.0);
   float separation = abs(along.x - across.y) * .5;
   float ridges = mass * (.18 + crest * .82);
@@ -259,12 +291,57 @@ vec3 terrainPigment(vec3 point, vec3 normal, vec3 rock, float mineral, float str
   float coverage = activity * .94 * (1.0 - exp(-strength * 2.2)) * (1.0 - snow * .85);
   return mix(rock, pigment, coverage);
 }
-vec3 sky(vec3 direction) {
-  float altitude = max(direction.y, 0.0);
-  vec3 color = mix(vec3(.46, .56, .66), vec3(.045, .16, .31), pow(altitude, .45));
-  vec3 sun = normalize(vec3(-.65, .42, .7));
-  color += vec3(1.0, .69, .36) * pow(max(dot(direction, sun), 0.0), 160.0) * 1.4;
+vec3 sunlightColor() {
+  return mix(vec3(1.1, 1.03, .92), vec3(1.0, .39, .14), 1.0 - smoothstep(0.0, .45, sunDirection.y));
+}
+vec3 sky(vec3 direction, bool celestial) {
+  float altitude = .5 * (direction.y + sqrt(direction.y * direction.y + .0016));
+  float daylight = smoothstep(-.12, .15, sunDirection.y);
+  vec3 horizon = mix(vec3(.012, .019, .035), vec3(.16, .26, .36), daylight);
+  vec3 zenith = mix(vec3(.001, .004, .012), vec3(.012, .055, .14), daylight);
+  vec3 color = mix(horizon, zenith, 1.0 - exp(-altitude * 3.0));
+  float towardSun = max(dot(direction.xz, sunDirection.xz)
+    / max(length(direction.xz) * length(sunDirection.xz), .001), 0.0);
+  float twilight = exp(-pow((sunDirection.y + .025) / .12, 2.0));
+  color += vec3(.48, .13, .035) * twilight * exp(-altitude * 8.0) * pow(towardSun, 4.0);
+  if (!celestial) return color;
+  float footprint = 1.2 / resolution.y;
+  float sunDistance = length(direction - sunDirection);
+  float sunDisc = 1.0 - smoothstep(.00465 - footprint, .00465 + footprint, sunDistance);
+  float sunVisible = smoothstep(-.012, .008, sunDirection.y);
+  color += sunlightColor() * sunVisible * (sunDisc * 4.0 + exp(-sunDistance * sunDistance * 160.0) * .24);
+  float moonDistance = length(direction - moonDirection);
+  float moonDisc = 1.0 - smoothstep(.0045 - footprint, .0045 + footprint, moonDistance);
+  if (moonDisc > 0.0 && moonDirection.y > -.01) {
+    vec3 tangent = (direction - moonDirection * dot(direction, moonDirection)) / .0045;
+    vec3 moonNormal = normalize(tangent - moonDirection * sqrt(max(0.0, 1.0 - dot(tangent, tangent))));
+    float lit = max(dot(moonNormal, sunDirection), 0.0);
+    float maria = texture2D(terrainMap, moonNormal.xz * .8 + .5).r;
+    vec3 moon = vec3(.48, .51, .55) * (.025 + lit * .85) * (.65 + maria * .35);
+    color = mix(color, color * daylight * .65 + moon, moonDisc);
+  }
+  vec2 starPosition = vec2(atan(direction.z, direction.x) / (2.0 * PI) + .5, asin(clamp(direction.y, -1.0, 1.0)) / PI + .5) * vec2(360.0, 180.0);
+  vec2 cell = floor(starPosition);
+  float random = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+  vec2 starOffset = .2 + .6 * fract(sin(vec2(dot(cell, vec2(269.5, 183.3)), dot(cell, vec2(113.5, 271.9)))) * 43758.5453);
+  float star = (1.0 - smoothstep(.025, .11 + min(length(fwidth(starPosition)), .3), length(fract(starPosition) - starOffset))) * step(.982, random);
+  vec3 starColor = mix(vec3(.65, .78, 1.0), vec3(1.0, .83, .62), fract(random * 327.0));
+  color += starColor * star * (.22 + .95 * (1.0 - daylight)) * smoothstep(-.02, .16, direction.y) * (1.0 - moonDisc);
   return color;
+}
+float terrainShadow(vec3 point, vec3 normal, vec3 light) {
+  if (light.y <= 0.0) return 0.0;
+  float distanceAlong = .6;
+  float visibility = 1.0;
+  for (int shadowStep = 0; shadowStep < 24; shadowStep++) {
+    vec3 probe = point + normal * .35 + light * distanceAlong;
+    float gap = probe.y - elevation(probe.xz);
+    if (gap < .025) return 0.0;
+    visibility = min(visibility, 10.0 * gap / distanceAlong);
+    distanceAlong += clamp(gap * .5, .6, 10.0);
+    if (distanceAlong > 150.0) break;
+  }
+  return clamp(visibility, 0.0, 1.0);
 }
 float beaconBox(vec3 origin, vec3 direction, vec3 center, vec3 bounds) {
   vec3 inverse = (step(vec3(0.0), direction) * 2.0 - 1.0) / max(abs(direction), vec3(.000001));
@@ -315,7 +392,7 @@ void main() {
     lastDistance = distanceAlong;
     distanceAlong += clamp(gap * .16, .006, 2.0);
   }
-  vec3 color = sky(direction);
+  vec3 color = sky(direction, true);
   if (hit) {
     for (int refine = 0; refine < 5; refine++) {
       float middle = (lastDistance + distanceAlong) * .5;
@@ -329,13 +406,12 @@ void main() {
       elevation(point.xz - vec2(epsilon, 0.0)) - elevation(point.xz + vec2(epsilon, 0.0)),
       epsilon * 2.0,
       elevation(point.xz - vec2(0.0, epsilon)) - elevation(point.xz + vec2(0.0, epsilon))));
-    vec3 sun = normalize(vec3(-.65, .42, .7));
-    float shade = 1.0;
-    for (int shadowStep = 1; shadowStep <= 12; shadowStep++) {
-      float offset = float(shadowStep) * (.7 + float(shadowStep) * .2);
-      vec3 probe = point + normal * .12 + sun * offset;
-      shade = min(shade, smoothstep(-.2, .4 + offset * .035, probe.y - elevation(probe.xz)));
-    }
+    float daylight = smoothstep(-.12, .15, sunDirection.y);
+    float solarStrength = smoothstep(-.012, .10, sunDirection.y);
+    float lunarPhase = .5 - .5 * dot(sunDirection, moonDirection);
+    float lunarStrength = (1.0 - daylight) * smoothstep(0.0, .15, moonDirection.y) * lunarPhase * .08;
+    vec3 dominantLight = sunDirection.y > 0.0 ? sunDirection : moonDirection;
+    float shade = terrainShadow(point, normal, dominantLight);
     float mineral = texture2D(terrainMap, point.xz / 32.0).r;
     float strata = texture2D(terrainMap, vec2(point.x * .045 + point.z * .02, point.y * .14)).r;
     vec3 rock = mix(vec3(.075, .065, .052), vec3(.26, .235, .19), mineral);
@@ -347,13 +423,16 @@ void main() {
     rock = mix(rock, vec3(.57, .64, .69), snow);
     vec3 radiance;
     rock = terrainPigment(point, normal, rock, mineral, strata, snow, distanceAlong, radiance);
-    float diffuse = max(dot(normal, sun), 0.0);
+    float diffuse = max(dot(normal, sunDirection), 0.0);
+    float moonDiffuse = max(dot(normal, moonDirection), 0.0);
     float skyExposure = .35 + .65 * normal.y;
-    color = rock * (vec3(.12, .18, .25) * skyExposure + vec3(1.1, .98, .8) * diffuse * (.12 + shade * .88));
+    vec3 ambient = mix(vec3(.018, .027, .045), vec3(.12, .18, .25), daylight);
+    vec3 direct = sunlightColor() * diffuse * solarStrength + vec3(.52, .65, .88) * moonDiffuse * lunarStrength;
+    color = rock * (ambient * skyExposure + direct * (.08 + shade * .92));
     color += radiance * (.4 + shade * .6);
-    color += vec3(.012, .026, .025) * pow(diffuse, 4.0) * (audio.z + impact * .2);
-    float visibility = exp(-distanceAlong * .0035) * (1.0 - smoothstep(170.0, flightRange, distanceAlong));
-    color = mix(sky(direction), color, visibility);
+    color += vec3(.012, .026, .025) * pow(diffuse, 4.0) * solarStrength * (audio.z + impact * .2);
+    float visibility = exp(-distanceAlong * .0018) * (1.0 - smoothstep(200.0, flightRange, distanceAlong));
+    color = mix(sky(direction, false), color, visibility);
   }
   float visibleDistance = hit ? distanceAlong : flightRange;
   vec2 beaconLocation = vec2(0.0);
@@ -377,34 +456,35 @@ void main() {
       float radius = length(separation);
       float footprint = max(along / resolution.y, .025);
       float core = 1.0 - smoothstep(.12, .20 + footprint, radius);
-      float halo = exp(-radius * radius / 1.4) * beaconPulse;
+      float halo = exp(-radius * radius / 1.4) * (.3 + beaconPulse);
       float shaft = exp(-dot(separation.xz, separation.xz) / (.025 + footprint * footprint))
         * exp(-abs(separation.y) / 2.8) * beaconPulse;
       float visibility = 1.0 - smoothstep(110.0, flightRange, along);
-      color += visibility * (vec3(1.0, .32, .055) * (core * (.4 + beaconPulse * 2.0) + halo * .65)
+      color += visibility * (vec3(1.0, .48, .12) * (core * (1.4 + beaconPulse * 2.0) + halo * .85)
         + vec3(1.0, .65, .28) * shaft * .8);
     }
   }
-  vec3 beamDirection = normalize(vec3(sin(flightClock * .65), -.08, cos(flightClock * .65)));
+  vec3 beamDirection = normalize(vec3(sin(flightClock * .65), -.025, cos(flightClock * .65)));
   float beam = 0.0;
-  float beamStep = min(visibleDistance, 150.0) / 40.0;
-  for (int beamIndex = 0; beamIndex < 40; beamIndex++) {
-    vec3 point = origin + direction * (float(beamIndex) + .5) * beamStep;
+  float beamStep = min(visibleDistance, 180.0) / 64.0;
+  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  for (int beamIndex = 0; beamIndex < 64; beamIndex++) {
+    vec3 point = origin + direction * (float(beamIndex) + jitter) * beamStep;
     vec3 fromLamp = point - lamp;
     float along = dot(fromLamp, beamDirection);
-    if (along <= 0.0 || along >= 120.0) continue;
+    if (along <= 0.0 || along >= 160.0) continue;
     float radius = length(fromLamp - beamDirection * along);
-    float cone = 1.0 - smoothstep(along * .018 + .15, along * .06 + .35, radius);
+    float cone = 1.0 - smoothstep(along * .032 + .18, along * .045 + .3, radius);
     if (cone <= 0.0) continue;
     float clear = 1.0;
     for (int shadowIndex = 1; shadowIndex <= 16; shadowIndex++) {
       vec3 probe = mix(lamp, point, float(shadowIndex) / 16.0);
       if (probe.y < elevation(probe.xz)) { clear = 0.0; break; }
     }
-    beam += cone * clear * exp(-along * .025) * beamStep;
+    beam += cone * clear * exp(-along * .008) * beamStep;
   }
-  color += vec3(1.0, .52, .18) * (1.0 - exp(-beam * .12)) * (.16 + beaconPulse * .84);
-  gl_FragColor = vec4(finish(color), 1.0);
+  color += vec3(1.0, .68, .3) * (1.0 - exp(-beam * .24)) * (.65 + beaconPulse);
+  gl_FragColor = vec4(finish(color) + (jitter - .5) / 255.0, 1.0);
 }`;
 
 function heightTexture(octaves = 6) {
@@ -509,7 +589,8 @@ export class ShaderScenes {
       waveformMap: { value: this.waveformTexture }, beaconPulse: { value: 0 }, flightClock: { value: 0 },
       cameraAudio: { value: new THREE.Vector4() },
       pigmentFlow: { value: new THREE.Vector3() }, pigmentSpectrum: { value: new THREE.Vector3() },
-      terrainAudio: { value: new THREE.Vector4() }
+      terrainAudio: { value: new THREE.Vector4() },
+      sunDirection: { value: new THREE.Vector3() }, moonDirection: { value: new THREE.Vector3() }
     };
     this.materials = [tunnelShader, terrainShader, rasterShader].map(fragmentShader => new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false
@@ -524,6 +605,7 @@ export class ShaderScenes {
   }
 
   updateWaveform(channels = []) {
+    const source = this.waveformSource ??= new Float32Array(WAVEFORM_POINTS * 2);
     for (let side = 0; side < 2; side++) {
       const samples = channels[side] ?? channels[0];
       for (let point = 0; point < WAVEFORM_POINTS; point++) {
@@ -536,6 +618,17 @@ export class ShaderScenes {
             ? samples[Math.min(index + 1, samples.length - 1)] : 0;
           value = THREE.MathUtils.lerp(start, end, offset - index);
         }
+        source[point * 2 + side] = THREE.MathUtils.clamp(value, -1, 1);
+      }
+    }
+    for (let point = 0; point < WAVEFORM_POINTS; point++) {
+      for (let side = 0; side < 2; side++) {
+        let value = 0;
+        for (let tap = 0; tap < waveformKernel.length; tap++) {
+          const index = Math.max(0, Math.min(WAVEFORM_POINTS - 1, point + tap - WAVEFORM_RADIUS));
+          value += source[index * 2 + side] * waveformKernel[tap];
+        }
+        value /= waveformWeight;
         this.waveform[point * 2 + side] = THREE.MathUtils.clamp(value * 4 / (1 + Math.abs(value) * 3), -1, 1);
       }
     }
@@ -550,6 +643,9 @@ export class ShaderScenes {
     this.uniforms.resolution.value.set(width, height);
     this.uniforms.clock.value = time;
     this.uniforms.flightClock.value = flightTime;
+    const sky = flightSkyDirections(flightTime, seed, this.skyDirections ??= new Float64Array(6));
+    this.uniforms.sunDirection.value.set(sky[0], sky[1], sky[2]);
+    this.uniforms.moonDirection.value.set(sky[3], sky[4], sky[5]);
     const cameraAudio = state.flight?.values;
     this.uniforms.cameraAudio.value.set(cameraAudio?.[0] ?? 0, cameraAudio?.[1] ?? 0,
       cameraAudio?.[2] ?? 0, cameraAudio?.[3] ?? 0);

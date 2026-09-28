@@ -4,7 +4,7 @@ import test from "node:test";
 import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion } from "../demo/general-scenes.js";
 import { CurveSceneGeometry, CurveScenes } from "../demo/curve-scenes.js";
 import { ImmersiveVisualizer } from "../demo/immersive-visualizer.js";
-import { SHADER_SCENES, ShaderScenes, WAVEFORM_POINTS, createFlightHeightTexture } from "../demo/shader-scenes.js";
+import { SHADER_SCENES, ShaderScenes, WAVEFORM_POINTS, createFlightHeightTexture, flightSkyDirections } from "../demo/shader-scenes.js";
 import { DataUtils, RepeatWrapping, LinearFilter } from "../demo/vendor/three/three.module.min.js";
 
 function renderer() {
@@ -366,6 +366,7 @@ test("all general scenes are distinct, finite and adapt geometry at desktop and 
       const low = render(view, scene, width, height);
       assert.equal(low.depth, 0, scene);
       if (scene === "monolith") assert.equal(low.points, 38);
+      else if (scene === "aperture") assert.equal(low.points, full.points, "Rigid iris leaves retain their corners at every detail level");
       else assert(low.points > 30 && low.points < full.points * .7, scene);
     }
     assert.equal(signatures.size, GENERAL_SCENES.length);
@@ -397,8 +398,8 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       const view = Object.assign(renderer(), { quality: .25, canvas: { clientWidth: width } });
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
-        if (!["terrain", "voxel-flight", "prism", "helix", "copper"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
-        if (!["cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex"].includes(scene)) assert(result.curves > 0, scene);
+        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
+        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
   }
@@ -447,14 +448,14 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
       assert(paths.indexCount > paths.vertexCount * 2, "Triangle vertices should be shared");
       assert(paths.indices.subarray(0, paths.indexCount).every(index => index < paths.vertexCount));
       assert.equal(paths.stack.length, 0);
-      assert.equal(paths.paintCount, scene === "aperture" ? 24 : 0);
+      assert.equal(paths.paintCount, scene === "aperture" ? 12 : 0);
       for (let offset = 0; offset < paths.vertexCount * 9; offset += 9) {
         for (let component = 0; component < 9; component++) assert(Number.isFinite(paths.vertices[offset + component]));
         assert(paths.vertices[offset + 5] <= .37 + 1e-7);
         assert(paths.vertices[offset + 8] >= 0 && paths.vertices[offset + 8] <= 1);
       }
       if (scene === "aperture") {
-        assert.deepEqual([...paths.paints.slice(20, 24)].map(value => Math.round(value * 100)), [18, 55, 82, 100]);
+        assert.deepEqual([...paths.paints.slice(20, 24)].map(value => Math.round(value * 100)), [22, 48, 52, 100]);
       }
       const count = paths.vertexCount;
       const snapshot = paths.vertices.slice(0, count * 9);
@@ -591,7 +592,7 @@ test("dense curve scenes fall back when the native raster surface is unavailable
   }
 });
 
-test("Aperture retains two full-bleed iris layers and an open center at every detail level", () => {
+test("Aperture retains two six-leaf iris layers and an open center at every detail level", () => {
   for (const quality of [.25, 1]) {
     for (const impact of [0, 1.2]) {
       const view = Object.assign(renderer(), { quality });
@@ -608,17 +609,84 @@ test("Aperture retains two full-bleed iris layers and an open center at every de
         }
       });
       view.drawScene(context, "aperture", 1440, 900, 720, 450);
-      assert.equal(fills, 24);
-      assert.equal(gradients, 24);
+      assert.equal(fills, 12);
+      assert.equal(gradients, 12);
       const coordinates = drawing.result().coordinates;
       for (let index = 0; index < coordinates.length; index += 2) {
         const radius = Math.hypot(coordinates[index], coordinates[index + 1]);
         assert(radius > 900 * .06, "The central aperture must remain open");
-        assert(radius < Math.hypot(1440, 900) * .75, "Blades must remain bounded beyond the viewport");
+        assert(radius < Math.hypot(1440, 900) * 1.1, "Zoomed blades must remain bounded beyond the viewport");
       }
       assert(Math.max(...coordinates.map(Math.abs)) > 1440 * .5, "The iris must extend across the landscape viewport");
       assert.equal(drawing.result().depth, 0);
     }
+  }
+});
+
+test("Aperture leaves share a straight-sided hexagonal opening without decorative overlays", () => {
+  const view = renderer();
+  updateGeneralMotion(view, .2);
+  const drawing = capture();
+  const leaves = [];
+  let path = [];
+  let strokes = 0;
+  const context = new Proxy(drawing.context, {
+    get: (target, name) => (...values) => {
+      if (name === "beginPath") path = [];
+      if (name === "moveTo" || name === "lineTo") path.push(values);
+      if (name === "fill") leaves.push(path.slice());
+      if (name === "stroke") strokes++;
+      if (name === "quadraticCurveTo" || name === "bezierCurveTo") assert.fail("Mechanical leaves must not become rounded splines");
+      return target[name](...values);
+    }
+  });
+  drawGeneralScene(view, context, "aperture", 1440, 900, 720, 450);
+  assert.equal(leaves.length, 12);
+  for (let layer = 0; layer < 2; layer++) {
+    for (let blade = 0; blade < 6; blade++) {
+      const leaf = leaves[layer * 6 + blade];
+      const next = leaves[layer * 6 + (blade + 1) % 6];
+      assert.equal(leaf.length, 4);
+      assert(Math.hypot(leaf[3][0] - next[0][0], leaf[3][1] - next[0][1]) < 1e-8);
+      const radius = Math.hypot(...leaf[0]);
+      const chord = Math.hypot(leaf[3][0] - leaf[0][0], leaf[3][1] - leaf[0][1]);
+      assert(Math.abs(chord - radius) < 1e-8, "Six shared edges form a regular hexagon");
+    }
+  }
+  assert.equal(strokes, 24, "Only blade seams and opening edges remain");
+});
+
+test("Aperture zoom and drift continue with musical state held fixed", () => {
+  const view = renderer();
+  updateGeneralMotion(view, .2);
+  view.elapsed = (Math.PI * 2.5 - view.sceneSeed * Math.PI * 2) / .14;
+  const before = render(view, "aperture");
+  const state = [...view.generalMotion.values];
+  view.elapsed += Math.PI / .14;
+  const after = render(view, "aperture");
+  assert(Math.max(...after.coordinates.map((value, index) => Math.abs(value - before.coordinates[index]))) > 100);
+  assert.notEqual(after.signature, before.signature);
+  assert.deepEqual([...view.generalMotion.values], state);
+  assert.deepEqual(render(view, "aperture"), after);
+});
+
+test("Aperture uses saturated demo-scene hues and opaque chrome highlights", () => {
+  const view = renderer();
+  const drawing = capture();
+  const paints = [];
+  const context = new Proxy(drawing.context, {
+    get: (target, name) => name === "createLinearGradient" ? () => {
+      const stops = [];
+      paints.push(stops);
+      return { addColorStop: (offset, color) => stops.push({ offset, color }) };
+    } : target[name]
+  });
+  drawGeneralScene(view, context, "aperture", 1440, 900, 720, 450);
+  assert.equal(paints.length, 12);
+  assert.deepEqual(paints.slice(0, 6).map(stops => Number(stops[0].color.match(/hsla\((\d+)/)[1])), [330, 205, 48, 265, 8, 185]);
+  for (const stops of paints) {
+    assert.deepEqual(stops.map(stop => stop.offset), [0, .22, .48, .52, 1]);
+    assert(stops.every(stop => Number(stop.color.match(/\/ ([\d.]+)/)[1]) >= .94));
   }
 });
 
@@ -700,6 +768,19 @@ test("waveform-driven shaders upload signed stereo without changing shared sampl
   assert.equal(gpu.waveformTexture.needsUpdate, true);
 });
 
+test("spatial waveform filtering removes fine serrations while retaining broad stereo shapes", () => {
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), { waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {} });
+  const broad = Float32Array.from({ length: WAVEFORM_POINTS }, (_, index) => Math.sin(index / WAVEFORM_POINTS * Math.PI * 4) * .5);
+  const fine = Float32Array.from({ length: WAVEFORM_POINTS }, (_, index) => index % 2 ? -.5 : .5);
+  gpu.updateWaveform([broad, fine]);
+  const storage = gpu.waveformSource;
+  assert(gpu.waveform[64] > .7, "Broad waveform crests must remain visible");
+  for (let point = 20; point < WAVEFORM_POINTS - 20; point++) assert(Math.abs(gpu.waveform[point * 2 + 1]) < .02);
+  gpu.updateWaveform([new Float32Array(WAVEFORM_POINTS).fill(.25)]);
+  assert.equal(gpu.waveformSource, storage);
+  assert(gpu.waveform.every(value => Math.abs(value - 1 / 1.75) < 1e-6), "Smoothing must preserve constant displacement and duplicate mono");
+});
+
 test("fresh waveform textures preserve peaks between old sample points", () => {
   const view = renderer();
   const samples = new Float32Array(1024);
@@ -710,8 +791,28 @@ test("fresh waveform textures preserve peaks between old sample points", () => {
   assert(view.generalMotion.channels[0].every(value => value === 0), "The transient falls between the smoothed geometry samples");
   const gpu = Object.assign(Object.create(ShaderScenes.prototype), { waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {} });
   gpu.updateWaveform(view.generalMotion.traceChannels);
-  assert(gpu.waveform[256] < -.8);
+  assert(gpu.waveform[256] < -.05 && gpu.waveform[256] > -.8);
+  assert(gpu.waveform[240] < 0 && gpu.waveform[272] < 0, "Fine peaks must spread into smooth relief rather than narrow ridges");
   assert.equal(samples[513], Math.fround(-.8));
+});
+
+test("flight sky follows unit-length solar and lunar paths through day and night", () => {
+  const buffer = new Float64Array(6);
+  const heights = [];
+  for (let time = 0; time <= 1200; time += 60) {
+    assert.equal(flightSkyDirections(time, .4, buffer), buffer);
+    assert(Math.abs(Math.hypot(...buffer.subarray(0, 3)) - 1) < 1e-12);
+    assert(Math.abs(Math.hypot(...buffer.subarray(3)) - 1) < 1e-12);
+    heights.push(buffer[1]);
+    const previous = [...buffer];
+    flightSkyDirections(time + 1 / 120, .4, buffer);
+    assert(buffer.every((value, index) => Math.abs(value - previous[index]) < .0001));
+  }
+  assert(Math.min(...heights) < -.3 && Math.max(...heights) > .8);
+  const first = flightSkyDirections(0, .4);
+  const later = flightSkyDirections(1200, .4);
+  assert(Math.hypot(...first.subarray(3).map((value, index) => value - later[index + 3])) > .1, "The Moon must have its own orbital motion");
+  assert.deepEqual(flightSkyDirections(12, .4), flightSkyDirections(12, .4));
 });
 
 test("terrain and twister refresh waveform uniforms on each draw", () => {
@@ -724,7 +825,8 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
     uniforms: {
       resolution: { value: { set() {} } }, clock: {}, flightClock: {}, seed: {}, terrainMap: {},
       audio: { value: { set() {} } }, cameraAudio: { value: { set() {} } }, impact: {}, detail: {}, beaconPulse: {},
-      pigmentFlow: { value: { set() {} } }, pigmentSpectrum: { value: { set() {} } }, terrainAudio: { value: { set() {} } }
+      pigmentFlow: { value: { set() {} } }, pigmentSpectrum: { value: { set() {} } }, terrainAudio: { value: { set() {} } },
+      sunDirection: { value: { set() {} } }, moonDirection: { value: { set() {} } }
     }
   });
   const state = { time: 12, signal: renderer().signal, channels: [new Float32Array(96)], traceChannels: [new Float32Array([.5, -.5])] };
@@ -749,9 +851,19 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
     gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1, pulse);
     assert.equal(gpu.uniforms.beaconPulse.value, expected);
   }
+  const sunUploads = [];
+  const moonUploads = [];
+  gpu.uniforms.sunDirection.value.set = (...values) => sunUploads.push(values);
+  gpu.uniforms.moonDirection.value.set = (...values) => moonUploads.push(values);
   gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1, 1, 7);
   assert.equal(gpu.uniforms.flightClock.value, 7);
   assert.equal(gpu.uniforms.clock.value, state.time);
+  const expectedSky = flightSkyDirections(7, .4);
+  assert.deepEqual(sunUploads.at(-1), [...expectedSky.subarray(0, 3)]);
+  assert.deepEqual(moonUploads.at(-1), [...expectedSky.subarray(3)]);
+  gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, { ...state, time: 999, signal: { low: 1, mid: 1, high: 1, level: 1 } }, .4, 1, 0, 7);
+  assert.deepEqual(sunUploads.at(-1), [...expectedSky.subarray(0, 3)], "Music-driven time and energy must not move the Sun");
+  assert.deepEqual(moonUploads.at(-1), [...expectedSky.subarray(3)]);
   const flight = { values: new Float64Array([.5, .2, .1, -.6]) };
   const before = [...flight.values];
   gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, { ...state, flight }, .4, 1);
@@ -807,6 +919,13 @@ test("Voxel Flight's terrain shape uses signed stereo rather than generic band-d
   assert.match(geometry, /ridges = mass \* \(\.18 \+ crest \* \.82\)/, "Waveforms must control the main relief, not a small surface ripple");
   assert.match(geometry, /- separation \* 9\.0/);
   assert.doesNotMatch(geometry, /terrainAudio|pigmentFlow|flightClock|impact|audio\./, "Band or beat changes alone must not pump the ground");
+  assert.match(source, /vec3 color = sky\(direction, true\)/);
+  assert.match(source, /color = mix\(sky\(direction, false\), color, visibility\)/, "Terrain fog must not reveal sun, moon or stars through the ground");
+  assert.match(source, /float shade = terrainShadow\(point, normal, dominantLight\)/);
+  assert.doesNotMatch(source, /float altitude = max\(direction.y, 0.0\)/, "Sky must not have a hard horizon crease");
+  assert.match(source, /star \* \(\.22 \+ \.95 \* \(1.0 - daylight\)\)/, "Stylized stars remain visible during daylight");
+  assert.match(source, /cone \* clear \* exp/, "The brighter beam must still respect terrain shadows");
+  assert.match(source, /\(float\(beamIndex\) \+ jitter\)/, "Volume samples must not form coherent overlapping planes");
 });
 
 test("flight clearance map smooths peaks while conservatively covering terrain and wrapped edges", () => {

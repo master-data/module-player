@@ -1,6 +1,6 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=27";
-import { ShaderScenes } from "./shader-scenes.js?v=21";
-import { CurveScenes } from "./curve-scenes.js?v=3";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=30";
+import { ShaderScenes } from "./shader-scenes.js?v=23";
+import { CurveScenes } from "./curve-scenes.js?v=6";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];

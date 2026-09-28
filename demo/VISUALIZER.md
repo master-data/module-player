@@ -95,6 +95,60 @@ band levels/impact left depth identical. Sixteen sharper-waveform/flight-time
 diagnostic cases found no unfinished rays or camera-inside flags. These checks
 use synthetic PCM, not the user's music.
 
+## Smooth surfaces and a coherent sky
+
+Aperture uses a six-hue demo-scene palette (pink, blue, yellow, violet, red and
+cyan) with near-opaque chrome blades, a dark midtone and a narrow bright
+reflection. Six rigid, overlapping leaves now meet at a shared hexagonal opening,
+with a recessed six-leaf backing layer. Bass, transients and waveform energy drive
+the shared opening instead of distorting individual leaf edges. A small rocking
+motion replaces continuous blade spinning. Only blade seams and opening-edge
+glints remain: the decorative ribs, pins and segmented ring have been removed.
+A bounded 1.12-1.52x zoom cycle, lateral drift and gentle roll use elapsed time
+independently of musical energy. A larger base opening and softer bass/transient
+response reduce the pumping sensation while preserving musical movement. The iris
+remains an expressive camera-inspired mechanism, not a physical lens simulation;
+its corners are retained at every quality level in both GPU and Canvas rendering.
+
+Voxel Flight uses a continuous horizon gradient and lighter distance fog to
+avoid a hard banked sky stripe and washed-out terrain. A denser, irregularly
+positioned star field remains faintly visible in daylight by artistic choice;
+this exposure is not physically accurate. Stable one-code-value dithering
+reduces sky quantization bands. The rotating beacon now has a tighter, brighter
+160-unit cone with 64 jittered volume samples to avoid coherent sampling planes.
+Its steady beam remains visible with strobe disabled; enabled strobe adds the
+existing bass-synchronized pulse. Terrain still occludes the light samples.
+
+Raster Twist and Voxel Flight now spatially filter their 256-point waveforms
+with a normalized 33-tap Gaussian (sigma seven samples), in addition to the
+160 ms target hold and temporal easing. This keeps broad waveform shapes while
+removing fine serrations and horizontal shading bands. The source PCM remains
+untouched; two interleaved work buffers are reused. Raster Twist has a longer
+twist pitch, slower continuous rotation, rounder edges and broader highlights.
+Voxel Flight's spatial waveform sweeps have twice their previous wavelength.
+
+Both effects use actual per-pixel GPU ray marching: Raster Twist intersects a
+twisted rounded solid; Voxel Flight intersects its waveform-shaped heightfield.
+Terrain shadows now march up to 24 adaptive samples toward the dominant visible
+Sun or Moon. This is bounded real-time shader ray marching, not hardware RTX or
+an unbiased multi-bounce path tracer. Native canvas resolution is unchanged.
+
+The sky uses a fixed 48-degree observer latitude, 23.44-degree axial tilt and a
+20-minute virtual solar day. A separate inclined lunar orbit and 29.53-day
+relative period set the Moon's position and illuminated phase. The same world
+directions control celestial discs, ground lighting and shadow rays. Warm low
+sunlight, twilight haze, moonlight and world-anchored stars replace the fixed
+sky light. Celestial discs use approximately real angular sizes, so they appear
+only when the camera faces them. Terrain occludes them; terrain fog contains
+atmosphere only, never stars or discs shining through mountains.
+
+This is an Earth-inspired illustrative model, not an ephemeris for the user's
+location or current date. Atmospheric scattering, night exposure and soft
+shadows are artistic real-time approximations. The sky advances with elapsed
+flight time, not musical energy, and the existing beacon and camera clearance
+remain intact. GPU checks cover actual disc rendering, day/night views and
+terrain intersections; the Canvas fallback retains its existing appearance.
+
 ## Windows system audio
 
 The demo can drive the general visualizer from Windows audio, including Spotify,

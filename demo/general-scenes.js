@@ -2,7 +2,7 @@ export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "c
 
 const TAU = Math.PI * 2;
 const PALETTES = {
-  aperture: [174, 38], silk: [12, 183], contours: [162, 44], diffraction: [38, 200],
+  aperture: [330, 205, 48, 265, 8, 185], silk: [12, 183], contours: [162, 44], diffraction: [38, 200],
   cascade: [195, 16], interference: [176, 342], weave: [40, 186], prism: [188, 38],
   monolith: [190, 32], wavegarden: [165, 345], copper: [18, 182],
   "checker-tunnel": [168, 332], "raster-twist": [192, 22], "dot-vortex": [42, 178]
@@ -670,11 +670,19 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     drawCrystalFacets(context, scale, time, 12, detail(9, 3), cutoff, voices,
       (voiceIndex, position) => audio(position % 1, voiceIndex % 2));
   } else {
-    const blades = 12;
-    const points = detail(30, 10);
+    const blades = 6;
     const response = renderer.reducedMotion ? .3 : 1;
     const reach = Math.hypot(width, height);
-    const opening = scale * (.095 + response * (low * .1 + impact * .095));
+    const travel = (renderer.elapsed ?? time) * .14 + seed * TAU;
+    const zoom = 1.12 + response * (.2 + Math.sin(travel) * .2);
+    context.translate(Math.sin(travel * .73) * scale * .075 * response,
+      Math.cos(travel * .57) * scale * .055 * response);
+    context.rotate(Math.sin(travel * .61) * .14 * response);
+    const envelope = motion?.energyChannels?.[0] ?? left ?? [];
+    let pressure = 0;
+    for (const value of envelope) pressure += Math.abs(value);
+    pressure /= Math.max(1, envelope.length);
+    const opening = scale * zoom * (.13 + response * (low * .055 + impact * .04 + pressure * .12));
     for (let layer = 0; layer < 2; layer++) {
       const direction = layer ? 1 : -1;
       const energyData = motion?.energyChannels?.[layer];
@@ -682,40 +690,42 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
         const energy = energyData ? sample(energyData, position) : Math.abs(sample(layer ? right : left, position));
         return energy * 4 / (1 + energy * 3);
       };
-      const outer = reach * (layer ? .58 : .72);
-      const rotation = time * .085 * direction + seed * TAU + layer * .24
+      const outer = reach * (layer ? .58 : .72) * zoom;
+      const rotation = Math.sin(time * .19) * .12 * direction + seed * TAU + layer * .12
         + direction * response * (mid * .18 + impact * .12);
-      const twist = direction * (.78 + response * (mid * .42 + impact * .3));
+      const twist = .52 + response * (mid * .18 + impact * .12);
       for (let blade = 0; blade < blades; blade++) {
         const contour = contourAt((blade + .5) / blades);
         const energy = Math.min(1, bands[blade % 6] * Math.min(1, level * 3) * 2 + contour * .6 + high * .25);
-        const inner = opening * (layer ? 1 : 1.18) + scale * contour * .075 * response;
+        const inner = opening * (layer ? 1 : 1.3);
         const start = blade / blades * TAU + rotation;
-        const hue = blade % 4 === 0 ? palette[1] : palette[0] + layer * 12;
+        const hue = palette[(blade + layer * 3) % palette.length];
         const gradient = context.createLinearGradient(
           Math.cos(start) * inner, Math.sin(start) * inner,
           Math.cos(start + twist) * outer, Math.sin(start + twist) * outer);
-        gradient.addColorStop(0, ink(hue, .82, 65 + high * 12));
-        gradient.addColorStop(.18, ink(hue, .75, 38 + energy * 14));
-        gradient.addColorStop(.55, ink(hue + 12, .6, 14 + energy * 9));
-        gradient.addColorStop(.82, ink(hue, .68, 32 + energy * 16));
-        gradient.addColorStop(1, ink(hue, .42, 12 + energy * 12));
-        curve.begin(true);
-        for (let edge = 0; edge < 2; edge++) {
-          for (let point = 0; point <= points; point++) {
-            const position = edge ? 1 - point / points : point / points;
-            const taper = Math.sin(position * Math.PI);
-            const ripple = (contourAt(position) * .09 + audio(position, layer) * .025) * scale * taper * response;
-            const radius = inner + (outer - inner) * position + ripple;
-            const spread = (.48 + taper * (.13 + energy * .08 * response)) * (edge ? 1 : 0);
-            const angle = start + twist * position + spread;
-            curve.point(Math.cos(angle) * radius, Math.sin(angle) * radius);
-          }
-        }
-        curve.end();
+        gradient.addColorStop(0, ink(hue, .98, 88 + high * 5));
+        gradient.addColorStop(.22, ink(hue, .96, 42 + energy * 12));
+        gradient.addColorStop(.48, ink(hue, .94, 7 + energy * 4));
+        gradient.addColorStop(.52, ink(hue, .98, 76 + energy * 10));
+        gradient.addColorStop(1, ink(hue, .94, 13 + energy * 9));
+        const end = start + TAU / blades;
+        const tipX = Math.cos(start) * inner;
+        const tipY = Math.sin(start) * inner;
+        const heelX = Math.cos(start + twist) * outer;
+        const heelY = Math.sin(start + twist) * outer;
+        context.beginPath();
+        context.moveTo(tipX, tipY);
+        context.lineTo(heelX, heelY);
+        context.lineTo(Math.cos(end + twist + .08) * outer, Math.sin(end + twist + .08) * outer);
+        context.lineTo(Math.cos(end) * inner, Math.sin(end) * inner);
+        context.closePath();
         context.fillStyle = gradient;
         context.fill();
         stroke(context, hue, (layer ? .26 : .12) + energy * .18, lineWidth);
+        context.beginPath();
+        context.moveTo(tipX, tipY);
+        context.lineTo(Math.cos(end) * inner, Math.sin(end) * inner);
+        stroke(context, hue, .85, lineWidth * .55);
       }
     }
   }
