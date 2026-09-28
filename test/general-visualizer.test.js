@@ -339,13 +339,17 @@ test("music has a fast attack and beat momentum decays consistently without a fl
   assert(reduced.generalMotion.impact < normal.generalMotion.impact * .3);
 });
 
-test("every scene has a substantial geometric beat response, not just a color change", () => {
+test("every scene responds to beats through geometry or its full-screen plasma field", () => {
   for (const scene of GENERAL_SCENES) {
     const view = renderer();
     updateGeneralMotion(view, .2);
     const resting = render(view, scene);
     view.generalMotion.impact = 1;
     const hit = render(view, scene);
+    if (scene === "polar-plasma") {
+      assert.notEqual(hit.signature, resting.signature);
+      continue;
+    }
     assert.equal(resting.coordinates.length, hit.coordinates.length);
     const displacement = Math.max(...hit.coordinates.map((value, index) => Math.abs(value - resting.coordinates[index])));
     assert(displacement > 18, `${scene}: ${displacement}px`);
@@ -368,7 +372,7 @@ test("every scene uses inertial audio and drawing never advances its shared cros
 });
 
 test("all general scenes are distinct, finite and adapt geometry at desktop and mobile sizes", () => {
-  assert.equal(GENERAL_SCENES.length, 20);
+  assert.equal(GENERAL_SCENES.length, 21);
   const view = renderer();
   for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     const signatures = new Set();
@@ -416,14 +420,14 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
         if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
-        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex"].includes(scene)) assert(result.curves > 0, scene);
+        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
   }
 });
 
 test("GPU scenes dispatch at native dimensions with shared motion and fall back without WebGL", () => {
-  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry"]);
+  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma"]);
   const view = renderer();
   const motion = updateGeneralMotion(view, .1);
   const calls = [];
@@ -607,6 +611,40 @@ test("Feedback Bloom retains bounded stereo history, expires silence and never a
     updateGeneralMotion(view, .01);
     assert.equal(motion.feedback, undefined);
   }
+});
+
+test("Polar Plasma uses bounded independent audio controls and a nonsingular angular field", async () => {
+  const view = Object.assign(renderer(), { scene: "polar-plasma" });
+  const motion = updateGeneralMotion(view, .1);
+  const signal = { low: 0, mid: 0, high: 0, level: .5 };
+  motion.signal = signal;
+  motion.impact = 0;
+  motion.shaderWaveform.channels = [new Float64Array(256), new Float64Array(256)];
+  const baseline = render(view, view.scene).signature;
+  for (const band of ["low", "mid", "high"]) {
+    motion.signal = { ...signal, [band]: 1 };
+    const active = render(view, view.scene).signature;
+    assert.notEqual(active, baseline, band);
+    motion.signal = { ...signal, [band]: 8 };
+    assert.equal(render(view, view.scene).signature, active, `${band} must be bounded`);
+  }
+  motion.signal = signal;
+  for (const side of [0, 1]) {
+    motion.shaderWaveform.channels[side].fill(.5);
+    assert.notEqual(render(view, view.scene).signature, baseline, `Stereo side ${side}`);
+    motion.shaderWaveform.channels[side].fill(0);
+  }
+  assert.equal(render(view, view.scene).signature, baseline);
+  const source = await readFile(new URL("../demo/shader-scenes.js", import.meta.url), "utf8");
+  const plasma = source.slice(source.indexOf("const plasmaShader"), source.indexOf("const foundryShader"));
+  assert.match(plasma, /sqrt\(dot\(point, point\) \+ \.16\)/);
+  assert.doesNotMatch(plasma, /atan\(/);
+  assert.match(plasma, /waveAt\(positions\.x\)\.x/);
+  assert.match(plasma, /waveAt\(positions\.y\)\.y/);
+  assert.match(plasma, /edgeWidth = max\(fwidth\(field\), \.0008\)/);
+  const transitions = [...plasma.matchAll(/smoothstep\((\.[0-9]+) - edgeWidth, \1 \+ edgeWidth, field\)/g)];
+  assert.deepEqual(transitions.map(match => Number(match[1])), [.24, .38, .50, .64, .76, .83]);
+  assert.equal((plasma.match(/smoothstep\(/g) ?? []).length, transitions.length);
 });
 
 test("GPU curve batches retain original scene geometry, gradient stops and reusable buffers", () => {
@@ -1167,9 +1205,9 @@ test("flight sky follows unit-length solar and lunar paths through day and night
   assert.deepEqual(flightSkyDirections(12, .4), flightSkyDirections(12, .4));
 });
 
-test("terrain, twister and Foundry refresh waveform uniforms on each draw", () => {
+test("terrain, twister, Foundry and plasma refresh waveform uniforms on each draw", () => {
   const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
-    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}, {}],
+    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}, {}, {}],
     renderer: {
       domElement: { width: 1440, height: 900 },
       getContext: () => ({ isContextLost: () => false }), render() {}
@@ -1187,7 +1225,7 @@ test("terrain, twister and Foundry refresh waveform uniforms on each draw", () =
   gpu.texture = { name: "original" };
   gpu.mountainTexture = { name: "smooth" };
   gpu.uniforms.cameraAudio.value.set = (...values) => cameraUploads.push(values);
-  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry"]) {
+  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry", "polar-plasma"]) {
     gpu.waveform.fill(0);
     assert.equal(gpu.draw({ drawImage() {} }, scene, 1440, 900, state, .4, 1), true);
     assert.equal(gpu.uniforms.terrainMap.value, scene === "voxel-flight" ? gpu.mountainTexture : gpu.texture);
@@ -1940,7 +1978,7 @@ test("general crossfade keeps the outgoing seed and balances both scenes around 
   view.music = { beatInterval: .5, toneFast: [], toneCentroidFast: .5 };
   view.sidSceneMode = false;
   view.sceneDeck = [...GENERAL_SCENES];
-  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom"]) {
+  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma"]) {
     calls.length = 0;
     context.globalAlpha = 1;
     view.scene = GENERAL_SCENES[GENERAL_SCENES.indexOf(scene) - 1];

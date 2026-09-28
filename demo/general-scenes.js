@@ -1,6 +1,6 @@
 import { PerspectiveCamera, TorusKnotGeometry, Vector3 } from "./vendor/three/three.module.min.js";
 
-export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom"];
+export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma"];
 
 const TAU = Math.PI * 2;
 const CURVE_KERNEL = Float64Array.from({ length: 33 }, (_, index) => Math.exp(-.5 * ((index - 16) / 7) ** 2));
@@ -320,7 +320,7 @@ export function drawCrystalFacets(context, scale, time, sectors, layers, cutoff,
 }
 
 export function drawGeneralScene(renderer, context, scene, width, height, centerX, centerY, seed = renderer.sceneSeed) {
-  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry") {
+  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry" || scene === "polar-plasma") {
     if (renderer.drawShaderScene?.(context, scene, width, height, seed)) return;
     if (scene === "voxel-flight") return drawGeneralScene(renderer, context, "terrain", width, height, centerX, centerY, seed + .37);
   }
@@ -337,7 +337,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const right = channels[1] ?? left;
   const traces = motion?.traceChannels ?? channels;
   const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
-  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom"].includes(scene)
+  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma"].includes(scene)
     ? filterCurveWaveform(renderer, motion?.shaderWaveform?.channels ?? traces) : undefined;
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
@@ -351,7 +351,50 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (scene === "feedback-bloom") {
+  if (scene === "polar-plasma") {
+    const columns = detail(56, 16);
+    const rows = Math.ceil(columns * height / width);
+    const cellWidth = width / columns;
+    const cellHeight = height / rows;
+    const phase = time * .16 + seed * TAU;
+    const bass = Math.max(0, Math.min(1, low));
+    const mids = Math.max(0, Math.min(1, mid));
+    const treble = Math.max(0, Math.min(1, high));
+    const ease = (start, end, value) => {
+      const fraction = Math.max(0, Math.min(1, (value - start) / (end - start)));
+      return fraction * fraction * (3 - 2 * fraction);
+    };
+    for (let row = -1; row <= rows; row++) {
+      for (let column = -1; column <= columns; column++) {
+        const horizontal = ((column + .5) * cellWidth * 2 - width) / scale + Math.sin(phase * .37) * .18;
+        const vertical = (height - (row + .5) * cellHeight * 2) / scale + Math.cos(phase * .31) * .18;
+        const leftWave = sample(smoothTraces[0], .5 + .45 * horizontal / Math.sqrt(1 + horizontal * horizontal));
+        const rightWave = sample(smoothTraces[1], .5 + .45 * vertical / Math.sqrt(1 + vertical * vertical));
+        const radius = Math.sqrt(horizontal * horizontal + vertical * vertical + .16);
+        const twist = Math.sin(radius * 1.4 - phase * .5) * (.45 + mids * .3) + leftWave * .24 + rightWave * .18 + impact * .12;
+        const across = Math.cos(twist) * horizontal + Math.sin(twist) * vertical;
+        const down = -Math.sin(twist) * horizontal + Math.cos(twist) * vertical;
+        const radialX = across / radius;
+        const radialY = down / radius;
+        const harmonicX = radialX ** 3 - 3 * radialX * radialY * radialY;
+        const harmonicY = 3 * radialX * radialX * radialY - radialY ** 3;
+        const field = .5 + .22 * Math.sin(radius * (3.8 + bass * .55) - phase + harmonicX * 1.5)
+          + .18 * Math.sin(across * 1.6 + down * 1.3 + phase * .7 + rightWave * .6)
+          + (.06 + treble * .04) * Math.cos(radius * 6.1 + harmonicY * 1.4 + phase * .5);
+        const ink = [.008, .009, .012];
+        const color = [...ink];
+        const edgeWidth = .006;
+        for (const [target, threshold] of [[[.015, .48, .65], .24], [ink, .38],
+          [[.48, .018, .38], .50], [ink, .64], [[.65, .72, .78], .76], [ink, .83]]) {
+          const blend = ease(threshold - edgeWidth, threshold + edgeWidth, field);
+          for (let component = 0; component < 3; component++) color[component] += (target[component] - color[component]) * blend;
+        }
+        const light = .72 + Math.max(0, Math.min(1, level)) * .12 + .1 * Math.cos(radius * 1.8 + phase * .3);
+        context.fillStyle = `rgb(${color.map(value => Math.round((value * light) ** .4545 * 255)).join(" ")})`;
+        context.fillRect(column * cellWidth - centerX, row * cellHeight - centerY, cellWidth + 1, cellHeight + 1);
+      }
+    }
+  } else if (scene === "feedback-bloom") {
     const history = motion?.feedback;
     const count = history?.count ?? 0;
     const points = detail(96, 24);

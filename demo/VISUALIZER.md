@@ -18,7 +18,7 @@ ignored. Automatic scene rotation remains shuffled.
 
 ## Metaball Foundry
 
-The general deck now has 20 effects. Metaball Foundry is a full-screen Three.js
+The general deck now has 21 effects. Metaball Foundry is a full-screen Three.js
 raymarched chrome sculpture: six smoothly joined forms, a neutral softbox, and
 two reflected stereo waveform ribbons with faint cool/warm separation. These
 are directional environment reflections, not painted surface stripes or a
@@ -78,6 +78,22 @@ This is retained waveform geometry, not recursive framebuffer feedback. It uses
 the shared native-resolution GPU curve renderer with additive blending and the
 equivalent Canvas fallback, without allocating full-screen history textures.
 It retains the standard 20-second hold and immediate manual navigation.
+
+## Polar Plasma
+
+Polar Plasma follows Feedback Bloom: crisp cyan, magenta and silver bands
+separated by charcoal, with pixel-aware antialiasing instead of broad color
+blends. Bass changes broad radial spacing, mids alter the twist,
+treble adds restrained secondary ripples, and eased stereo waveforms bend the
+flow independently. Band controls are bounded; beat momentum bends the field
+without introducing a flash. Slow drift and rotation continue during silence.
+
+The Three.js full-screen shader uses continuous angular harmonics instead of an
+angle lookup, with a softened radius at the center to avoid radial seams and
+singularities. It renders at native resolution and reuses the existing filtered
+waveform texture. Without WebGL, a coarse adaptive Canvas color grid provides
+an approximation. The scene keeps the standard 20-second hold, automatic
+crossfades and immediate manual selection. SID's separate deck is unchanged.
 
 ## Audio and display updates
 

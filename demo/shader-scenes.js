@@ -1,6 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 
-export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry"];
+export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma"];
 export const WAVEFORM_POINTS = 256;
 const WAVEFORM_RADIUS = 16;
 const waveformKernel = Float64Array.from({ length: WAVEFORM_RADIUS * 2 + 1 }, (_, index) =>
@@ -487,6 +487,37 @@ void main() {
   gl_FragColor = vec4(finish(color) + (jitter - .5) / 255.0, 1.0);
 }`;
 
+const plasmaShader = common + waveformShader + `
+void main() {
+  vec3 bands = clamp(audio.xyz, 0.0, 1.0);
+  float phase = clock * .16 + seed * PI * 2.0;
+  vec2 point = (gl_FragCoord.xy * 2.0 - resolution) / min(resolution.x, resolution.y);
+  point += vec2(sin(phase * .37), cos(phase * .31)) * .18;
+  vec2 positions = .5 + .45 * point / sqrt(vec2(1.0) + point * point);
+  vec2 wave = vec2(waveAt(positions.x).x, waveAt(positions.y).y);
+  float radius = sqrt(dot(point, point) + .16);
+  float twist = sin(radius * 1.4 - phase * .5) * (.45 + bands.y * .3)
+    + wave.x * .24 + wave.y * .18 + clamp(impact, 0.0, 1.2) * .12;
+  point = mat2(cos(twist), -sin(twist), sin(twist), cos(twist)) * point;
+  vec2 radial = point / radius;
+  vec2 harmonic = vec2(radial.x * radial.x - radial.y * radial.y, 2.0 * radial.x * radial.y);
+  harmonic = vec2(harmonic.x * radial.x - harmonic.y * radial.y,
+    harmonic.x * radial.y + harmonic.y * radial.x);
+  float field = .5 + .22 * sin(radius * (3.8 + bands.x * .55) - phase + harmonic.x * 1.5)
+    + .18 * sin(point.x * 1.6 + point.y * 1.3 + phase * .7 + wave.y * .6)
+    + (.06 + bands.z * .04) * cos(radius * 6.1 + harmonic.y * 1.4 + phase * .5);
+  float edgeWidth = max(fwidth(field), .0008);
+  vec3 ink = vec3(.008, .009, .012);
+  vec3 color = mix(ink, vec3(.015, .48, .65), smoothstep(.24 - edgeWidth, .24 + edgeWidth, field));
+  color = mix(color, ink, smoothstep(.38 - edgeWidth, .38 + edgeWidth, field));
+  color = mix(color, vec3(.48, .018, .38), smoothstep(.50 - edgeWidth, .50 + edgeWidth, field));
+  color = mix(color, ink, smoothstep(.64 - edgeWidth, .64 + edgeWidth, field));
+  color = mix(color, vec3(.65, .72, .78), smoothstep(.76 - edgeWidth, .76 + edgeWidth, field));
+  color = mix(color, ink, smoothstep(.83 - edgeWidth, .83 + edgeWidth, field));
+  color *= .72 + clamp(audio.w, 0.0, 1.0) * .12 + .1 * cos(radius * 1.8 + phase * .3);
+  gl_FragColor = vec4(finish(color), 1.0);
+}`;
+
 const foundryShader = common + waveformShader + `
 uniform vec4 foundryBodies[6];
 uniform vec4 composition;
@@ -662,7 +693,7 @@ export class ShaderScenes {
       terrainAudio: { value: new THREE.Vector4() },
       sunDirection: { value: new THREE.Vector3() }, moonDirection: { value: new THREE.Vector3() }
     };
-    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader].map(fragmentShader => new THREE.ShaderMaterial({
+    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader, plasmaShader].map(fragmentShader => new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false
     }));
     this.mesh = new THREE.Mesh(this.geometry, this.materials[0]);
@@ -757,7 +788,7 @@ export class ShaderScenes {
     if (name === "metaball-foundry") this.updateFoundry(state, seed, arc);
     this.uniforms.terrainMap.value = name === "voxel-flight" ? this.mountainTexture : this.texture;
     this.uniforms.beaconPulse.value = Number.isFinite(beaconPulse) ? THREE.MathUtils.clamp(beaconPulse, 0, 1) : 0;
-    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
+    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry" || name === "polar-plasma") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
     this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
     this.renderer.render(this.scene, this.camera);
     context.drawImage(canvas, 0, 0, width, height);
