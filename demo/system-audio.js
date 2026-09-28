@@ -77,14 +77,18 @@ export class SystemAudioCapture {
       const splitter = session.context.createChannelSplitter(streamCount);
       session.nodes.push(splitter);
       input.connect(splitter);
+      const sampleRate = session.context.sampleRate || 48000;
+      const sampleLength = Math.min(32768, 2 ** Math.ceil(Math.log2(sampleRate * .02)));
       session.analysers = Array.from({ length: streamCount }, (_, index) => {
         const analyser = session.context.createAnalyser();
         session.nodes.push(analyser);
-        analyser.fftSize = 256;
+        analyser.fftSize = sampleLength;
         splitter.connect(analyser, index);
         return analyser;
       });
-      const channels = session.analysers.map(() => new Float32Array(256));
+      session.waveformBuffers = session.analysers.map(() => new Float32Array(32768));
+      const channels = session.waveformBuffers.map(buffer => buffer.subarray(0, sampleLength));
+      session.shorterReads = 0;
       const bassSampleLength = Math.min(32768, 2 ** Math.ceil(Math.log2((session.context.sampleRate || 48000) * .02)));
       session.referenceAnalysers = Array.from({ length: streamCount }, (_, index) => {
         const analyser = session.context.createAnalyser();
@@ -116,7 +120,7 @@ export class SystemAudioCapture {
       session.fullBandEnergy = 0;
       session.bassRatio = 0;
       session.source = {
-        streamCount, sampleLength: 256, revision: 0,
+        streamCount, sampleLength, sampleRate, revision: 0,
         readChannel: index => channels[index],
         readChannels: () => channels,
         readBassEnergy: () => session.bassEnergy,
@@ -137,9 +141,25 @@ export class SystemAudioCapture {
     }
   }
 
-  readSource() {
+  readSource(time = performance.now()) {
     if (this.state !== "active") return undefined;
-    const { source, analysers } = this.session;
+    const session = this.session;
+    const { source, analysers } = session;
+    const interval = Number.isFinite(time) && Number.isFinite(session.lastReadAt) && time >= session.lastReadAt
+      ? (time - session.lastReadAt) / 1000 : 1 / 60;
+    session.lastReadAt = time;
+    const requiredSamples = Math.max(source.sampleRate * .02, source.sampleRate * interval + 128);
+    const sampleLength = Math.min(32768, 2 ** Math.ceil(Math.log2(requiredSamples)));
+    session.shorterReads = sampleLength < source.sampleLength ? session.shorterReads + 1 : 0;
+    if (sampleLength > source.sampleLength || session.shorterReads >= 60) {
+      const channels = source.readChannels();
+      analysers.forEach((analyser, index) => {
+        analyser.fftSize = sampleLength;
+        channels[index] = session.waveformBuffers[index].subarray(0, sampleLength);
+      });
+      source.sampleLength = sampleLength;
+      session.shorterReads = 0;
+    }
     analysers.forEach((analyser, index) => analyser.getFloatTimeDomainData(source.readChannel(index)));
     const { bassAnalysers, referenceAnalysers, bassSamples } = this.session;
     const readEnergy = analyser => {

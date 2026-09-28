@@ -1,6 +1,7 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 
 export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist"];
+export const WAVEFORM_POINTS = 256;
 
 const vertexShader = `
 void main() {
@@ -88,15 +89,18 @@ void main() {
 }`;
 
 const waveformShader = `
-uniform vec2 waveform[64];
+uniform sampler2D waveformMap;
+vec2 waveformPoint(int index) {
+  return texelFetch(waveformMap, ivec2(clamp(index, 0, ${WAVEFORM_POINTS - 1}), 0), 0).rg;
+}
 vec2 waveAt(float position) {
-  float offset = clamp(position, 0.0, 1.0) * 63.0;
+  float offset = clamp(position, 0.0, 1.0) * ${WAVEFORM_POINTS - 1}.0;
   int index = int(floor(offset));
   float fraction = fract(offset);
-  vec2 before = waveform[max(0, index - 1)];
-  vec2 start = waveform[index];
-  vec2 end = waveform[min(63, index + 1)];
-  vec2 after = waveform[min(63, index + 2)];
+  vec2 before = waveformPoint(index - 1);
+  vec2 start = waveformPoint(index);
+  vec2 end = waveformPoint(index + 1);
+  vec2 after = waveformPoint(index + 2);
   return clamp(.5 * ((2.0 * start) + (-before + end) * fraction
     + (2.0 * before - 5.0 * start + 4.0 * end - after) * fraction * fraction
     + (-before + 3.0 * start - 3.0 * end + after) * fraction * fraction * fraction), -1.0, 1.0);
@@ -496,12 +500,14 @@ export class ShaderScenes {
     this.geometry = new THREE.PlaneGeometry(2, 2);
     this.camera = new THREE.Camera();
     this.scene = new THREE.Scene();
-    this.waveform = new Float32Array(128);
+    this.waveform = new Float32Array(WAVEFORM_POINTS * 2);
+    this.waveformTexture = new THREE.DataTexture(this.waveform, WAVEFORM_POINTS, 1, THREE.RGFormat, THREE.FloatType);
+    this.waveformTexture.needsUpdate = true;
     this.uniforms = {
       resolution: { value: new THREE.Vector2() }, clock: { value: 0 }, seed: { value: 0 },
       audio: { value: new THREE.Vector4() }, impact: { value: 0 }, detail: { value: 1 },
       terrainMap: { value: this.texture }, flightMap: { value: this.flightTexture },
-      waveform: { value: this.waveform }, beaconPulse: { value: 0 }, flightClock: { value: 0 },
+      waveformMap: { value: this.waveformTexture }, beaconPulse: { value: 0 }, flightClock: { value: 0 },
       cameraAudio: { value: new THREE.Vector4() },
       pigmentFlow: { value: new THREE.Vector3() }, pigmentSpectrum: { value: new THREE.Vector3() },
       terrainAudio: { value: new THREE.Vector4() }
@@ -521,10 +527,10 @@ export class ShaderScenes {
   updateWaveform(channels = []) {
     for (let side = 0; side < 2; side++) {
       const samples = channels[side] ?? channels[0];
-      for (let point = 0; point < 64; point++) {
+      for (let point = 0; point < WAVEFORM_POINTS; point++) {
         let value = 0;
         if (samples?.length) {
-          const offset = point / 63 * (samples.length - 1);
+          const offset = point / (WAVEFORM_POINTS - 1) * (samples.length - 1);
           const index = Math.floor(offset);
           const start = Number.isFinite(samples[index]) ? samples[index] : 0;
           const end = Number.isFinite(samples[Math.min(index + 1, samples.length - 1)])
@@ -534,6 +540,7 @@ export class ShaderScenes {
         this.waveform[point * 2 + side] = THREE.MathUtils.clamp(value * 4 / (1 + Math.abs(value) * 3), -1, 1);
       }
     }
+    this.waveformTexture.needsUpdate = true;
   }
 
   draw(context, name, width, height, state, seed, quality, beaconPulse = 0, flightTime = state.time) {
@@ -563,7 +570,7 @@ export class ShaderScenes {
     this.uniforms.detail.value = quality;
     this.uniforms.terrainMap.value = name === "voxel-flight" ? this.mountainTexture : this.texture;
     this.uniforms.beaconPulse.value = Number.isFinite(beaconPulse) ? THREE.MathUtils.clamp(beaconPulse, 0, 1) : 0;
-    if (name === "raster-twist" || name === "voxel-flight") this.updateWaveform(state.channels);
+    if (name === "raster-twist" || name === "voxel-flight") this.updateWaveform(state.traceChannels ?? state.channels);
     this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
     this.renderer.render(this.scene, this.camera);
     context.drawImage(canvas, 0, 0, width, height);
@@ -576,6 +583,7 @@ export class ShaderScenes {
     this.texture.dispose();
     this.mountainTexture.dispose();
     this.flightTexture.dispose();
+    this.waveformTexture.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
   }

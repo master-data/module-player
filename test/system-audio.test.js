@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import { SystemAudioCapture } from "../demo/system-audio.js";
 
-function fixture({ channelCount = 2, audio = true, capture } = {}) {
+function fixture({ channelCount = 2, audio = true, capture, sampleRate = 48000 } = {}) {
   const tracks = Array.from({ length: audio ? 2 : 1 }, () => Object.assign(new EventTarget(), {
     readyState: "live", stops: 0,
     stop() { this.stops++; this.readyState = "ended"; },
@@ -22,7 +22,7 @@ function fixture({ channelCount = 2, audio = true, capture } = {}) {
     nodes.push(value);
     return value;
   };
-  const context = { state: "running", destination: {},
+  const context = { state: "running", destination: {}, sampleRate,
     resume: async () => {}, close: async () => { context.state = "closed"; },
     createMediaStreamSource: node, createChannelSplitter: node, createAnalyser: node,
     createBiquadFilter: () => Object.assign(node(), { frequency: { value: 0 }, Q: { value: 0 } })
@@ -49,6 +49,33 @@ test("demo stylesheet retains capture, strobe and SID presentation contracts", a
   assert(css.includes("#close-immersive-visualizer[hidden]"));
 });
 
+test("scope display refresh paints every callback and manual rates remain frame synchronized", async () => {
+  const source = (await readFile(new URL("../demo/main.js", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  const html = await readFile(new URL("../demo/index.html", import.meta.url), "utf8");
+  assert.match(html, /value="auto" selected>Display/);
+  for (const hz of [60, 120, 144, 240, 360]) {
+    for (const setting of ["auto", "30", "90", "240"]) {
+      let callback;
+      let paints = 0;
+      const controls = { "scope-hz": { value: setting }, "immersive-dialog": {}, "tracker-dialog": {} };
+      const runtime = vm.createContext({
+        scopeTimer: undefined, scopesEnabled: true, activeEngine: "uade", player: { visualization: {} },
+        $: name => controls[name], performance: { now: () => 0 }, draw: () => paints++,
+        window: { requestAnimationFrame: next => { callback = next; return 1; }, cancelAnimationFrame: () => { callback = undefined; } }
+      });
+      vm.runInContext(source.slice(source.indexOf("function stopScopeLoop()"), source.indexOf("function updateRestartButton()")), runtime);
+      runtime.startScopeLoop();
+      for (let frame = 0; frame < hz; frame++) callback(frame * 1000 / hz);
+      assert.equal(paints, 1 + (setting === "auto" ? hz : Math.min(hz, Number(setting))), `${hz} Hz / ${setting}`);
+      runtime.stopScopeLoop();
+      assert.equal(callback, undefined);
+      controls["immersive-dialog"].open = true;
+      runtime.startScopeLoop();
+      assert.equal(callback, undefined);
+    }
+  }
+});
+
 test("system audio refreshes stable stereo buffers and revision without audible routing", async () => {
   const setup = fixture();
   assert.equal(await setup.adapter.start(), true);
@@ -73,6 +100,36 @@ test("system audio refreshes stable stereo buffers and revision without audible 
   assert.equal(setup.adapter.readSource(), undefined);
   setup.adapter.stop();
   assert(setup.tracks.every(track => track.stops === 1));
+});
+
+test("capture history covers frame intervals and reuses bounded storage across refresh rates", async () => {
+  for (const sampleRate of [44100, 48000, 96000, 192000]) {
+    const setup = fixture({ sampleRate });
+    await setup.adapter.start();
+    const source = setup.adapter.readSource(0);
+    const channels = source.readChannels();
+    const storage = channels.map(channel => channel.buffer);
+    let time = 0;
+    for (const hz of [30, 60, 120, 144, 240, 360]) {
+      for (let frame = 0; frame < 65; frame++) {
+        time += 1000 / hz;
+        assert.equal(setup.adapter.readSource(time), source);
+        assert(source.sampleLength >= sampleRate / hz + 128);
+        assert.equal(source.readChannels(), channels);
+        assert.equal(source.sampleRate, sampleRate);
+        channels.forEach((channel, index) => {
+          assert.equal(channel.buffer, storage[index]);
+          assert.equal(channel.length, source.sampleLength);
+          assert.equal(setup.adapter.session.analysers[index].fftSize, channel.length);
+        });
+      }
+    }
+    setup.adapter.readSource(time + 5000);
+    assert.equal(source.sampleLength, 32768, "Suspended tabs must not allocate unbounded history");
+    for (let frame = 1; frame <= 60; frame++) setup.adapter.readSource(time + 5000 + frame * 1000 / 120);
+    assert.equal(source.sampleLength, 2 ** Math.ceil(Math.log2(sampleRate * .02)));
+    setup.adapter.stop();
+  }
 });
 
 test("system audio exposes separate 35-110 Hz bass analysis without changing channel samples", async () => {

@@ -2,10 +2,10 @@ import { createUadePlayer, parseUadeSongInfo } from "../uade/index.js?v=2";
 import { configureAudioContext } from "../uade/runtime-loader.js?v=2";
 import { createXmpPlayer } from "../xmp/index.js?v=7";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
-import { createSidPlayer } from "../sid/sid-player.js?v=4";
+import { createSidPlayer } from "../sid/sid-player.js?v=5";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=84";
-import { SystemAudioCapture } from "./system-audio.js?v=6";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=85";
+import { SystemAudioCapture } from "./system-audio.js?v=7";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
@@ -169,7 +169,7 @@ function updateSidWriteTracing() {
 }
 function stopScopeLoop() {
   if (scopeTimer === undefined) return;
-  clearInterval(scopeTimer);
+  window.cancelAnimationFrame(scopeTimer);
   scopeTimer = undefined;
 }
 function startScopeLoop() {
@@ -177,8 +177,19 @@ function startScopeLoop() {
   if ($("immersive-dialog").open || $("tracker-dialog").open) return;
   draw(performance.now());
   if (!scopesEnabled || !(activeEngine === "xmp" ? xmpPlayer?.visualization : activeEngine === "sid" ? sidPlayer?.visualization : player?.visualization)) return;
-  const refreshInterval = 1000 / Number($("scope-hz").value);
-  scopeTimer = window.setInterval(() => draw(performance.now()), refreshInterval);
+  let lastPaintAt;
+  const refresh = time => {
+    const rate = Number($("scope-hz").value);
+    const interval = rate > 0 ? 1000 / rate : 0;
+    const elapsed = lastPaintAt === undefined ? Infinity : time - lastPaintAt;
+    if (!interval || elapsed + .01 >= interval) {
+      lastPaintAt = interval && Number.isFinite(elapsed)
+        ? lastPaintAt + Math.max(1, Math.floor((elapsed + .01) / interval)) * interval : time;
+      draw(time);
+    }
+    scopeTimer = window.requestAnimationFrame(refresh);
+  };
+  scopeTimer = window.requestAnimationFrame(refresh);
 }
 function updateRestartButton() { $("restart-uade").disabled = initializing || !restartSettings.size; }
 function stageRestart(setting) {

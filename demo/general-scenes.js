@@ -90,7 +90,15 @@ export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
   for (let side = 0; side < 2; side++) {
     const data = channels[side] ?? channels[0];
     for (let index = 0; index < traceChannels[side].length; index++) {
-      const value = sample(data, index / (traceChannels[side].length - 1));
+      let value = sample(data, index / (traceChannels[side].length - 1));
+      if (data?.length > traceChannels[side].length) {
+        value = 0;
+        const start = Math.floor(index * data.length / traceChannels[side].length);
+        const end = Math.floor((index + 1) * data.length / traceChannels[side].length);
+        for (let offset = start; offset < end; offset++) {
+          if (Number.isFinite(data[offset]) && Math.abs(data[offset]) > Math.abs(value)) value = data[offset];
+        }
+      }
       traceChannels[side][index] = Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
     }
     for (let index = 0; index < points; index++) {

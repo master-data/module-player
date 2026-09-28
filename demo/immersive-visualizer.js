@@ -1,6 +1,6 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=25";
-import { ShaderScenes } from "./shader-scenes.js?v=18";
-import { CurveScenes } from "./curve-scenes.js?v=1";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=26";
+import { ShaderScenes } from "./shader-scenes.js?v=19";
+import { CurveScenes } from "./curve-scenes.js?v=2";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
@@ -237,12 +237,12 @@ export class ImmersiveVisualizer {
     return Math.max(minimum, Math.round(full * quality));
   }
 
-  readSignal() {
+  readSignal(delta = 1 / 60) {
     this.strobeHit = false;
     const source = this.getSource?.();
-    const revision = source?.revision;
+    const revision = source?.sampleRevision ?? source?.revision;
     if (source && Number.isFinite(revision) && source === this.signalSource && revision === this.signalRevision && this.measuredSignal) {
-      this.smoothSignal(this.measuredSignal);
+      this.smoothSignal(this.measuredSignal, delta);
       return;
     }
     if (source !== this.signalSource || (Number.isFinite(revision) && revision < this.signalRevision)) this.strobeOnset = undefined;
@@ -265,42 +265,50 @@ export class ImmersiveVisualizer {
     if (!channels.length) {
       this.strobeOnset = undefined;
       const idle = 0.035 + Math.sin(this.elapsed * 0.7) * 0.008;
-      this.smoothSignal({ level: idle, peak: idle, low: idle, mid: idle * 0.7, high: idle * 0.4 });
+      this.smoothSignal({ level: idle, peak: idle, low: idle, mid: idle * 0.7, high: idle * 0.4 }, delta);
       return;
     }
 
-    const points = SPECTRAL_POINTS;
-    const monoSamples = this.monoSamples ??= new Float32Array(points);
     let squareSum = 0;
     let peak = 0;
     let low = 0;
     let mid = 0;
     let high = 0;
-    let previous = 0;
-    let slow = 0;
-    let fast = 0;
-    for (let index = 0; index < points; index++) {
-      const position = index / points;
-      let mono = 0;
-      for (const channel of channels) mono += sampleAt(channel, position);
-      mono /= channels.length;
-      monoSamples[index] = mono;
-      slow += (mono - slow) * 0.055;
-      fast += (mono - fast) * 0.24;
-      squareSum += mono * mono;
-      peak = Math.max(peak, Math.abs(mono));
-      low += Math.abs(slow);
-      mid += Math.abs(fast - slow);
-      high += Math.abs(mono - previous);
-      previous = mono;
+    const sampleRate = source.sampleRate || 48000;
+    const slowResponse = 1 - Math.pow(1 - .055, 48000 / sampleRate);
+    const fastResponse = 1 - Math.pow(1 - .24, 48000 / sampleRate);
+    for (const channel of channels) {
+      let previous = 0;
+      let slow = 0;
+      let fast = 0;
+      let channelSquare = 0;
+      let channelLow = 0;
+      let channelMid = 0;
+      let channelHigh = 0;
+      for (const sample of channel) {
+        const value = Number.isFinite(sample) ? sample : 0;
+        slow += (value - slow) * slowResponse;
+        fast += (value - fast) * fastResponse;
+        channelSquare += value * value;
+        peak = Math.max(peak, Math.abs(value));
+        channelLow += Math.abs(slow);
+        channelMid += Math.abs(fast - slow);
+        channelHigh += Math.abs(value - previous);
+        previous = value;
+      }
+      const count = Math.max(1, channel.length) * channels.length;
+      squareSum += channelSquare / count;
+      low += channelLow / count;
+      mid += channelMid / count;
+      high += channelHigh / count;
     }
-    this.readTone(monoSamples);
+    this.readTone(channels[0], channels);
     this.measuredSignal = {
-      level: clamp(Math.pow(Math.sqrt(squareSum / points), 0.45) * 1.6),
+      level: clamp(Math.pow(Math.sqrt(squareSum), 0.45) * 1.6),
       peak: clamp(Math.sqrt(peak) * 1.2),
-      low: clamp(Math.pow(low / points, 0.45) * 2.4),
-      mid: clamp(Math.pow(mid / points, 0.45) * 2.6),
-      high: clamp(Math.pow(high / points, 0.45) * 2)
+      low: clamp(Math.pow(low, 0.45) * 2.4),
+      mid: clamp(Math.pow(mid, 0.45) * 2.6),
+      high: clamp(Math.pow(high, 0.45) * 2)
     };
     const bassEnergy = source?.readBassEnergy?.();
     const strobeNow = performance.now() / 1000;
@@ -309,8 +317,8 @@ export class ImmersiveVisualizer {
     this.strobeReadAt = strobeNow;
     this.detectStrobeHit(Number.isFinite(bassEnergy)
       ? { low: bassEnergy, mid: 0, high: 0, bassRatio: source?.readBassRatio?.(), fullBand: source?.readFullBandEnergy?.() }
-      : { low: low / points * 4, mid: mid / points * 4, high: high / points * 4 }, strobeDelta);
-    this.smoothSignal(this.measuredSignal);
+      : { low: low * 4, mid: mid * 4, high: high * 4 }, strobeDelta);
+    this.smoothSignal(this.measuredSignal, delta);
   }
 
   detectStrobeHit(measured, delta = 1 / 60) {
@@ -346,15 +354,22 @@ export class ImmersiveVisualizer {
     return this.strobeHit;
   }
 
-  readTone(samples) {
+  readTone(samples, channels = [samples]) {
     const magnitudes = getSpectralKernels().map(({ cosine, sine }) => {
-      let real = 0;
-      let imaginary = 0;
-      for (let index = 0; index < samples.length; index++) {
-        real += samples[index] * cosine[index];
-        imaginary -= samples[index] * sine[index];
+      let magnitude = 0;
+      for (const channel of channels) {
+        let real = 0;
+        let imaginary = 0;
+        const start = Math.max(0, channel.length - SPECTRAL_POINTS);
+        for (let index = 0; index < SPECTRAL_POINTS; index++) {
+          const sample = channel.length >= SPECTRAL_POINTS ? channel[start + index] : sampleAt(channel, index / SPECTRAL_POINTS);
+          const value = Number.isFinite(sample) ? sample : 0;
+          real += value * cosine[index];
+          imaginary -= value * sine[index];
+        }
+        magnitude += Math.hypot(real, imaginary);
       }
-      return Math.hypot(real, imaginary);
+      return magnitude / channels.length;
     });
     const bands = Array.from({ length: 6 }, (_, index) => magnitudes[index * 2] + magnitudes[index * 2 + 1]);
     const total = Math.max(Number.EPSILON, bands.reduce((sum, value) => sum + value, 0));
@@ -369,13 +384,15 @@ export class ImmersiveVisualizer {
     }
   }
 
-  smoothSignal(next) {
+  smoothSignal(next, delta = 1 / 60) {
+    const frames = Math.max(0, delta) * 60;
     const flux = Math.max(0, next.low - this.previousSignal.low) + Math.max(0, next.mid - this.previousSignal.mid) + Math.max(0, next.high - this.previousSignal.high);
     for (const key of ["level", "peak", "low", "mid", "high"]) {
       const response = next[key] > this.signal[key] ? 0.34 : 0.09;
-      this.signal[key] = mix(this.signal[key], next[key], response);
+      this.signal[key] = mix(this.signal[key], next[key], 1 - Math.pow(1 - response, frames));
     }
-    this.signal.flux = mix(this.signal.flux, clamp(flux * 2.4), flux > this.signal.flux ? 0.5 : 0.08);
+    const fluxResponse = flux > this.signal.flux ? 0.5 : 0.08;
+    this.signal.flux = mix(this.signal.flux, clamp(flux * 2.4), 1 - Math.pow(1 - fluxResponse, frames));
     this.previousSignal = next;
   }
 
@@ -623,7 +640,7 @@ export class ImmersiveVisualizer {
     this.elapsed += delta * (this.reducedMotion ? 0.22 : 1);
     this.pointer.x = mix(this.pointer.x, this.pointer.targetX, follow(delta, .47));
     this.pointer.y = mix(this.pointer.y, this.pointer.targetY, follow(delta, .47));
-    this.readSignal();
+    this.readSignal(delta);
     const sidState = this.getSidState?.();
     const sidFeedback = sidState ? this.applySidRegisterFeedback(sidState, delta) : undefined;
     if (!sidState) {

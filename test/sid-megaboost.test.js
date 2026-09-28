@@ -96,6 +96,32 @@ test("revision caching avoids repeated audio analysis without freezing frame smo
   assert.equal(analyses, 5);
 });
 
+test("SID analyser freshness follows the audio clock without invalidating register revisions", async () => {
+  const source = await readFile(new URL("../sid/sid-player.js", import.meta.url), "utf8");
+  let reads = 0;
+  let analyses = 0;
+  const player = {
+    _scopeRevision: 7, _audioContext: { currentTime: 1, sampleRate: 96000 },
+    _scopeBuffers: [new Float32Array(256)],
+    _analysers: [{ fftSize: 256, getFloatTimeDomainData: buffer => { reads++; buffer.fill(.1); } }]
+  };
+  const runtime = vm.createContext({ player });
+  vm.runInContext(source.slice(source.indexOf("class SidVisualizationSource"), source.indexOf("export class SidPlaybackError"))
+    + "\nglobalThis.scope = new SidVisualizationSource(player);", runtime);
+  const renderer = Object.assign(visualizer(), { getSource: () => runtime.scope, readTone: () => analyses++, smoothSignal() {} });
+  renderer.readSignal();
+  renderer.readSignal();
+  assert.equal(analyses, 1, "A suspended audio clock should reuse the measurement");
+  for (let frame = 1; frame <= 120; frame++) {
+    player._audioContext.currentTime = 1 + frame / 120;
+    renderer.readSignal(1 / 120);
+  }
+  assert.equal(analyses, 121);
+  assert.equal(reads, 121);
+  assert.equal(runtime.scope.revision, 7);
+  assert.equal(runtime.scope.sampleRate, 96000);
+});
+
 test("canvas uses native display resolution regardless of adaptive quality and excludes startup timing", () => {
   const originalDpr = globalThis.devicePixelRatio;
   globalThis.devicePixelRatio = 2;

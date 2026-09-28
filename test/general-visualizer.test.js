@@ -3,7 +3,7 @@ import test from "node:test";
 import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion } from "../demo/general-scenes.js";
 import { CurveSceneGeometry, CurveScenes } from "../demo/curve-scenes.js";
 import { ImmersiveVisualizer } from "../demo/immersive-visualizer.js";
-import { SHADER_SCENES, ShaderScenes, createFlightHeightTexture } from "../demo/shader-scenes.js";
+import { SHADER_SCENES, ShaderScenes, WAVEFORM_POINTS, createFlightHeightTexture } from "../demo/shader-scenes.js";
 import { DataUtils, RepeatWrapping, LinearFilter } from "../demo/vendor/three/three.module.min.js";
 
 function renderer() {
@@ -624,7 +624,7 @@ test("Copper uses one smooth gradient per bar at every detail level", () => {
 });
 
 test("waveform-driven shaders upload signed stereo without changing shared samples", () => {
-  const gpu = Object.assign(Object.create(ShaderScenes.prototype), { waveform: new Float32Array(128) });
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), { waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {} });
   const left = Float32Array.from({ length: 96 }, (_, index) => Math.sin(index / 95 * Math.PI * 4) * .5);
   const right = Float32Array.from(left, value => -value);
   const original = [...left];
@@ -632,23 +632,38 @@ test("waveform-driven shaders upload signed stereo without changing shared sampl
   gpu.updateWaveform([left, right]);
   assert(gpu.waveform.some(value => value > .5));
   assert(gpu.waveform.some(value => value < -.5));
-  for (let point = 0; point < 64; point++) assert.equal(gpu.waveform[point * 2], -gpu.waveform[point * 2 + 1]);
+  for (let point = 0; point < WAVEFORM_POINTS; point++) assert.equal(gpu.waveform[point * 2], -gpu.waveform[point * 2 + 1]);
   assert.deepEqual([...left], original);
   const first = [...gpu.waveform];
   gpu.updateWaveform([left, right]);
   assert.deepEqual([...gpu.waveform], first);
   assert.equal(gpu.waveform, storage);
   gpu.updateWaveform([left]);
-  for (let point = 0; point < 64; point++) assert.equal(gpu.waveform[point * 2], gpu.waveform[point * 2 + 1]);
+  for (let point = 0; point < WAVEFORM_POINTS; point++) assert.equal(gpu.waveform[point * 2], gpu.waveform[point * 2 + 1]);
   gpu.updateWaveform([new Float32Array([NaN, Infinity, -20, 20])]);
   assert(gpu.waveform.every(value => Number.isFinite(value) && Math.abs(value) <= 1));
   gpu.updateWaveform([]);
   assert(gpu.waveform.every(value => value === 0));
+  assert.equal(gpu.waveformTexture.needsUpdate, true);
+});
+
+test("fresh waveform textures preserve peaks between old sample points", () => {
+  const view = renderer();
+  const samples = new Float32Array(1024);
+  samples[513] = -.8;
+  view.channels = [samples];
+  updateGeneralMotion(view, 1 / 240);
+  assert.equal(view.generalMotion.traceChannels[0][128], samples[513]);
+  assert(view.generalMotion.channels[0].every(value => value === 0), "The transient falls between the smoothed geometry samples");
+  const gpu = Object.assign(Object.create(ShaderScenes.prototype), { waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {} });
+  gpu.updateWaveform(view.generalMotion.traceChannels);
+  assert(gpu.waveform[256] < -.8);
+  assert.equal(samples[513], Math.fround(-.8));
 });
 
 test("terrain and twister refresh waveform uniforms on each draw", () => {
   const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
-    waveform: new Float32Array(128), mesh: {}, materials: [{}, {}, {}],
+    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}],
     renderer: {
       domElement: { width: 1440, height: 900 },
       getContext: () => ({ isContextLost: () => false }), render() {}
@@ -659,7 +674,7 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
       pigmentFlow: { value: { set() {} } }, pigmentSpectrum: { value: { set() {} } }, terrainAudio: { value: { set() {} } }
     }
   });
-  const state = { time: 12, signal: renderer().signal, channels: [new Float32Array([.5, -.5])] };
+  const state = { time: 12, signal: renderer().signal, channels: [new Float32Array(96)], traceChannels: [new Float32Array([.5, -.5])] };
   const cameraUploads = [];
   gpu.texture = { name: "original" };
   gpu.mountainTexture = { name: "smooth" };
@@ -669,8 +684,8 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
     assert.equal(gpu.draw({ drawImage() {} }, scene, 1440, 900, state, .4, 1), true);
     assert.equal(gpu.uniforms.terrainMap.value, scene === "voxel-flight" ? gpu.mountainTexture : gpu.texture);
     assert(gpu.waveform[0] > .5, scene);
-    assert(gpu.waveform[126] < -.5, scene);
-    gpu.draw({ drawImage() {} }, scene, 1440, 900, { ...state, channels: [] }, .4, 1);
+    assert(gpu.waveform[(WAVEFORM_POINTS - 1) * 2] < -.5, scene);
+    gpu.draw({ drawImage() {} }, scene, 1440, 900, { ...state, channels: [], traceChannels: [] }, .4, 1);
     assert(gpu.waveform.every(value => value === 0), `${scene} must not retain another scene's waveform`);
   }
   for (const [pulse, expected] of [[1, 1], [.25, .25], [-1, 0], [2, 1], [NaN, 0], [undefined, 0]]) {
@@ -816,10 +831,11 @@ test("GPU scene resources are released with the visualizer", () => {
     texture: { dispose: () => resources.push("terrain") },
     mountainTexture: { dispose: () => resources.push("mountain") },
     flightTexture: { dispose: () => resources.push("flight") },
+    waveformTexture: { dispose: () => resources.push("waveform") },
     renderer: { dispose: () => resources.push("renderer"), forceContextLoss: () => resources.push("context") }
   });
   gpu.dispose();
-  assert.deepEqual(resources, ["material", "geometry", "terrain", "mountain", "flight", "renderer", "context"]);
+  assert.deepEqual(resources, ["material", "geometry", "terrain", "mountain", "flight", "waveform", "renderer", "context"]);
 });
 
 test("Dot Vortex occupies the portrait height even at minimum detail", () => {
@@ -1336,6 +1352,46 @@ test("strobe follows bass beats under a steady full-band mix and above unity", (
       }
     }
   }
+});
+
+test("signal smoothing has the same attack and release at every display rate", () => {
+  const keys = ["level", "peak", "low", "mid", "high"];
+  const results = [];
+  for (const hz of [60, 120, 144, 240, 360]) {
+    const view = renderer();
+    view.signal = Object.fromEntries([...keys, "flux"].map(key => [key, 0]));
+    view.previousSignal = { ...view.signal };
+    const loud = Object.fromEntries(keys.map(key => [key, .8]));
+    const quiet = Object.fromEntries(keys.map(key => [key, .1]));
+    for (let frame = 0; frame < hz / 6; frame++) view.smoothSignal(loud, 1 / hz);
+    const attack = { ...view.signal };
+    for (let frame = 0; frame < hz / 6; frame++) view.smoothSignal(quiet, 1 / hz);
+    results.push({ attack, release: { ...view.signal } });
+  }
+  for (const result of results) for (const phase of ["attack", "release"]) for (const key of keys) {
+    assert(Math.abs(result[phase][key] - results[0][phase][key]) < 1e-12, `${phase}/${key}`);
+  }
+});
+
+test("audio analysis preserves opposite-phase stereo and examines every captured sample", () => {
+  const left = Float32Array.from({ length: 1024 }, (_, index) => Math.sin(index * .15) * .08);
+  const inverted = Float32Array.from(left, value => -value);
+  const measure = channels => {
+    const view = renderer();
+    Object.assign(view, { getSource: () => ({ sampleRate: 48000, readChannels: () => channels }),
+      previousSignal: { low: 0, mid: 0, high: 0 }, music: { toneReady: false } });
+    view.readSignal(1 / 120);
+    return view;
+  };
+  const mono = measure([left]);
+  const stereo = measure([left, inverted]);
+  assert.deepEqual(stereo.measuredSignal, mono.measuredSignal);
+  assert.deepEqual(stereo.tone, mono.tone);
+  const impulse = new Float32Array(1024);
+  impulse[513] = .5;
+  assert(measure([impulse]).measuredSignal.level > 0, "Sparse 256-point reads must not miss an interleaved transient");
+  const invalid = measure([new Float32Array([NaN, Infinity, -Infinity])]);
+  assert(Object.values(invalid.measuredSignal).every(Number.isFinite));
 });
 
 test("module strobe does not promote quiet low-frequency PCM with visual gain", () => {

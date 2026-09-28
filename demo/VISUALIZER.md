@@ -6,6 +6,55 @@ FPS cap, including 240 Hz and higher when supported by the display, browser and
 GPU. Native canvas resolution is preserved. The component's optional
 `reducedMotion` mode described below is not enabled by the demo.
 
+## Audio and display updates
+
+Dashboard scopes default to **Display**, rendering on every animation callback.
+Explicit 15-360 Hz settings remain available to reduce work; those rates also use
+animation callbacks, never a timer that runs independently of display refresh.
+Immersive rendering remains uncapped and at native resolution.
+
+System Audio reads the analysers on every immersive frame at the AudioContext's
+sample rate. Channel history has a 20 ms minimum, rounded up to a power of two
+(1024 samples at 48 kHz), and grows to cover the latest frame interval plus one
+128-sample audio quantum. It shrinks after 60 consecutive shorter reads. Each
+channel reuses a fixed 32768-sample backing buffer; no per-frame PCM allocation.
+Long suspension gaps beyond that capacity cannot be recovered. This is bounded,
+overlapping waveform history, not a lossless continuous recording. Capture and
+browser audio latency still apply; strobe's filtered history is unchanged.
+
+Energy analysis examines every captured sample per channel before combining
+energies, so opposite-phase stereo cannot cancel it. Tone analysis combines
+channel magnitudes from the newest 256 contiguous samples instead of decimating
+a longer window. Signal attack/release smoothing uses elapsed time, retaining
+the same envelope response across display rates. The six tone bands remain a
+visual descriptor, not a calibrated full-spectrum audio measurement.
+
+Fresh waveform snapshots retain the strongest signed peak per bin when reducing
+longer buffers to 256 points. Terrain and Raster Twist upload those snapshots
+to a reusable 256-point-per-channel float texture every draw, replacing the old
+64-point uniform fed by smoothed geometry. The existing inertial shape motion
+remains for the other effects. Both representations are artistic summaries, not
+sample-for-sample oscilloscopes, and adaptive geometry detail remains enabled.
+
+SID analyser freshness follows its audio clock independently of emulator block
+revisions. Register/MEGABOOST telemetry still caches by the original revision.
+UADE/XMP source reads remain frame-driven, but data availability is controlled by
+their playback backends; rendering faster cannot manufacture missing samples.
+The per-effect timing table below predates these audio-path improvements.
+
+Post-update integration check (2026-09-28): a real 48 kHz Web Audio oscillator
+at 173 Hz, amplitude .15, with opposite-phase stereo, fed a local synthetic
+MediaStream into the capture adapter. On the same RTX 4090/ANGLE browser, all 17
+general effects at native 3840x2160 and quality 1 had 8.3 ms median callbacks
+and 8.4-8.5 ms p95. CPU medians ranged .3-2.6 ms (Aperture 2.6 ms, p95 2.9 ms).
+Each effect ran 70 frames with one fresh analyser read per frame; the first 20
+were excluded from timing. This is not directly comparable to the earlier fixed
+signal benchmark and does not measure physical presentation or GPU completion.
+The waveform texture compiled and responded to waveform-only changes at both
+1440x900 and 780x1688, with no GL errors. Full syntax/test checks: 124 passed.
+Actual Windows sharing, real-track behavior and 240 Hz presentation remain
+separate manual checks.
+
 ## Windows system audio
 
 The demo can drive the general visualizer from Windows audio, including Spotify,

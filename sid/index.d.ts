@@ -55,6 +55,8 @@ export interface SidVisualizationSource {
   getZoom(): number;
   setZoom(level: 1 | 2 | 3 | 4 | 5): void;
   readonly revision: number;
+  readonly sampleRevision: number;
+  readonly sampleRate: number;
   readChannel(channel: number): Float32Array;
   readChannels(): readonly Float32Array[];
   readVu(channel: number): number;

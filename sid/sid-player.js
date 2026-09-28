@@ -82,6 +82,8 @@ class SidVisualizationSource {
     return this._player._scopeBuffers;
   }
   get revision() { return this._player._scopeRevision; }
+  get sampleRevision() { return this._player._audioContext?.currentTime ?? this._player._scopeRevision; }
+  get sampleRate() { return this._player._audioContext?.sampleRate ?? 48000; }
   readVu(channel) {
     const data = this.readChannel(channel);
     if (!data.length) return 0;
