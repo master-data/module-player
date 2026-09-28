@@ -1,9 +1,11 @@
 import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=25";
 import { ShaderScenes } from "./shader-scenes.js?v=18";
+import { CurveScenes } from "./curve-scenes.js?v=1";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
 const SCENES = GENERAL_SCENES;
+const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave"]);
 const SPECTRAL_POINTS = 256;
 const SPECTRAL_BINS = [2, 3, 5, 7, 10, 14, 20, 28, 39, 54, 72, 96];
 let spectralKernels;
@@ -136,7 +138,7 @@ export class ImmersiveVisualizer {
     this.sidVoices = [];
     this.sidTime = 0;
     this.sidSceneMode = false;
-    this.quality = .65;
+    this.quality = 1;
     this.frameBudget = { fastest: Infinity, elapsed: 0, frames: 0, stressed: 0, healthy: 0, skipFirst: true };
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas);
@@ -153,6 +155,7 @@ export class ImmersiveVisualizer {
   start() {
     if (this.animationFrame !== undefined) return;
     this.prepareShaderScenes();
+    this.prepareCurveScenes();
     this.resize();
     this.lastTime = performance.now();
     this.frameBudget = { fastest: Infinity, elapsed: 0, frames: 0, stressed: 0, healthy: 0, skipFirst: true };
@@ -173,6 +176,14 @@ export class ImmersiveVisualizer {
     this.resizeObserver.disconnect();
     this.shaderScenes?.dispose();
     this.shaderScenes = undefined;
+    this.curveScenes?.dispose();
+    this.curveScenes = undefined;
+    if (this.sceneCanvas) {
+      this.sceneCanvas.width = 1;
+      this.sceneCanvas.height = 1;
+    }
+    this.sceneCanvas = undefined;
+    this.sceneContext = undefined;
   }
 
   resize() {
@@ -198,7 +209,7 @@ export class ImmersiveVisualizer {
     budget.fastest = Math.min(budget.fastest, Math.max(1000 / 360, interval));
     budget.elapsed += interval;
     budget.frames++;
-    const cpuBudget = Math.min(4, budget.fastest * .35);
+    const cpuBudget = budget.fastest * .8;
     if (cost > cpuBudget || interval > budget.fastest * 1.45) budget.stressed++;
     if (budget.elapsed < 1000) return;
     let quality = this.quality;
@@ -571,13 +582,12 @@ export class ImmersiveVisualizer {
   }
 
   setStrobeEnabled(enabled) {
-    this.strobeEnabled = Boolean(enabled) && !this.reducedMotion;
+    this.strobeEnabled = Boolean(enabled);
     this.strobe = { time: 0, lastFlashAt: -Infinity, age: 1, opacity: 0 };
     return this.strobeEnabled;
   }
 
   updateStrobe(delta, musicalEvent = {}, sidState) {
-    if (this.reducedMotion && this.strobeEnabled) this.setStrobeEnabled(false);
     if (!this.strobeEnabled || sidState?.playing === false) {
       if (this.strobe) {
         this.strobe.opacity = 0;
@@ -596,7 +606,7 @@ export class ImmersiveVisualizer {
   }
 
   drawStrobe(context, width, height) {
-    if (!this.strobeEnabled || this.reducedMotion || !this.strobe?.opacity) return;
+    if (!this.strobeEnabled || !this.strobe?.opacity) return;
     context.save();
     context.globalCompositeOperation = "source-over";
     context.globalAlpha = this.strobe.opacity;
@@ -1139,7 +1149,57 @@ export class ImmersiveVisualizer {
   }
 
   drawScene(context, scene, width, height, centerX, centerY, seed = this.sceneSeed) {
-    drawGeneralScene(this, context, scene, width, height, centerX, centerY, seed);
+    if (RASTER_SCENES.has(scene) && this.prepareCurveScenes()) {
+      try {
+        if (this.curveScenes.draw(this, context, scene, width, height, centerX, centerY, seed)) return;
+      } catch (error) {
+        this.curveScenes?.dispose();
+        this.curveScenes = undefined;
+        this.curveUnavailable = true;
+        console.warn("GPU curves unavailable; using Canvas scenes.", error);
+      }
+    }
+    if (!RASTER_SCENES.has(scene) || this.sceneRasterUnavailable || typeof OffscreenCanvas === "undefined") {
+      drawGeneralScene(this, context, scene, width, height, centerX, centerY, seed);
+      return;
+    }
+    if (!this.sceneCanvas) {
+      try {
+        this.sceneCanvas = new OffscreenCanvas(width, height);
+        this.sceneContext = this.sceneCanvas.getContext("2d", { willReadFrequently: true });
+        if (!this.sceneContext) throw new Error("Canvas raster context unavailable");
+      } catch {
+        this.sceneRasterUnavailable = true;
+        this.sceneCanvas = undefined;
+        this.sceneContext = undefined;
+        drawGeneralScene(this, context, scene, width, height, centerX, centerY, seed);
+        return;
+      }
+    }
+    if (this.sceneCanvas.width !== width) this.sceneCanvas.width = width;
+    if (this.sceneCanvas.height !== height) this.sceneCanvas.height = height;
+    this.sceneContext.resetTransform();
+    this.sceneContext.clearRect(0, 0, width, height);
+    this.sceneContext.setTransform(context.getTransform());
+    this.sceneContext.globalAlpha = context.globalAlpha;
+    drawGeneralScene(this, this.sceneContext, scene, width, height, centerX, centerY, seed);
+    context.save();
+    context.resetTransform();
+    context.globalAlpha = 1;
+    context.drawImage(this.sceneCanvas, 0, 0);
+    context.restore();
+  }
+
+  prepareCurveScenes() {
+    if (this.curveUnavailable || typeof document === "undefined") return false;
+    try {
+      this.curveScenes ??= new CurveScenes();
+      return true;
+    } catch (error) {
+      this.curveUnavailable = true;
+      console.warn("GPU curves unavailable; using Canvas scenes.", error);
+      return false;
+    }
   }
 
   prepareShaderScenes() {
@@ -1160,7 +1220,7 @@ export class ImmersiveVisualizer {
     if (!this.prepareShaderScenes()) return false;
     return this.shaderScenes.draw(context, scene, width, height,
       this.generalMotion ?? { time: this.elapsed, signal: this.signal, channels: this.channels }, seed, this.quality,
-      this.strobeEnabled && !this.reducedMotion ? (this.strobe?.opacity ?? 0) / .28 : 0, this.elapsed);
+      this.strobeEnabled ? (this.strobe?.opacity ?? 0) / .28 : 0, this.elapsed);
   }
 
   drawVignette(context, width, height) {

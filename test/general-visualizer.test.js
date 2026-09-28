@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GENERAL_SCENES, updateGeneralMotion } from "../demo/general-scenes.js";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion } from "../demo/general-scenes.js";
+import { CurveSceneGeometry, CurveScenes } from "../demo/curve-scenes.js";
 import { ImmersiveVisualizer } from "../demo/immersive-visualizer.js";
 import { SHADER_SCENES, ShaderScenes, createFlightHeightTexture } from "../demo/shader-scenes.js";
 import { DataUtils, RepeatWrapping, LinearFilter } from "../demo/vendor/three/three.module.min.js";
@@ -378,6 +379,165 @@ test("GPU scenes dispatch at native dimensions with shared motion and fall back 
   }
 });
 
+test("GPU curve batches retain original scene geometry, gradient stops and reusable buffers", () => {
+  const paths = new CurveSceneGeometry();
+  const transform = { a: 1.035, b: .02, c: -.02, d: 1.035, e: 17, f: -11 };
+  const view = renderer();
+  updateGeneralMotion(view, .2);
+  const before = [...view.generalMotion.values];
+  for (const [width, height] of [[1440, 900], [780, 1688]]) {
+    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave"]) {
+      paths.begin(transform, .37);
+      drawGeneralScene(view, paths, scene, width, height, width / 2, height / 2);
+      assert(paths.vertexCount > 100);
+      assert.equal(paths.indexCount % 3, 0);
+      assert(paths.indexCount > paths.vertexCount * 2, "Triangle vertices should be shared");
+      assert(paths.indices.subarray(0, paths.indexCount).every(index => index < paths.vertexCount));
+      assert.equal(paths.stack.length, 0);
+      assert.equal(paths.paintCount, scene === "aperture" ? 24 : 0);
+      for (let offset = 0; offset < paths.vertexCount * 9; offset += 9) {
+        for (let component = 0; component < 9; component++) assert(Number.isFinite(paths.vertices[offset + component]));
+        assert(paths.vertices[offset + 5] <= .37 + 1e-7);
+        assert(paths.vertices[offset + 8] >= 0 && paths.vertices[offset + 8] <= 1);
+      }
+      if (scene === "aperture") {
+        assert.deepEqual([...paths.paints.slice(20, 24)].map(value => Math.round(value * 100)), [18, 55, 82, 100]);
+      }
+      const count = paths.vertexCount;
+      const snapshot = paths.vertices.slice(0, count * 9);
+      const indices = paths.indices.slice(0, paths.indexCount);
+      const buffer = paths.vertices;
+      paths.begin(transform, .37);
+      drawGeneralScene(view, paths, scene, width, height, width / 2, height / 2);
+      assert.equal(paths.vertices, buffer);
+      assert.equal(paths.vertexCount, count);
+      assert.deepEqual(paths.vertices.subarray(0, count * 9), snapshot);
+      assert.deepEqual(paths.indices.subarray(0, paths.indexCount), indices);
+    }
+  }
+  assert.deepEqual([...view.generalMotion.values], before, "GPU drawing must not advance shared audio");
+});
+
+test("GPU curves preserve crossfade alpha and bypass both raster allocation and CPU paths", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: {} });
+  const calls = [];
+  const view = renderer();
+  view.curveScenes = { draw: (...args) => { calls.push(args); return true; }, dispose() {} };
+  const context = { globalAlpha: .37 };
+  try {
+    view.drawScene(context, "aperture", 3840, 2160, 1920, 1080, .4);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], view);
+    assert.equal(calls[0][1], context);
+    assert.deepEqual(calls[0].slice(2), ["aperture", 3840, 2160, 1920, 1080, .4]);
+    assert.equal(view.sceneCanvas, undefined);
+    assert.equal(context.globalAlpha, .37);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "document", original);
+    else delete globalThis.document;
+  }
+});
+
+test("GPU curve resources are released and context loss requests the raster fallback", () => {
+  const released = [];
+  const gpu = Object.assign(Object.create(CurveScenes.prototype), {
+    geometry: { dispose: () => released.push("geometry") },
+    material: { dispose: () => released.push("material") },
+    texture: { dispose: () => released.push("texture") },
+    renderer: {
+      getContext: () => ({ isContextLost: () => true }),
+      dispose: () => released.push("renderer"), forceContextLoss: () => released.push("context")
+    }
+  });
+  assert.equal(gpu.draw(), false);
+  const view = renderer();
+  view.stop = () => {};
+  view.resizeObserver = { disconnect() {} };
+  view.curveScenes = gpu;
+  view.dispose();
+  view.dispose();
+  assert.deepEqual(released, ["geometry", "material", "texture", "renderer", "context"]);
+  assert.equal(view.curveScenes, undefined);
+});
+
+test("dense curve scenes reuse a native raster surface with camera and per-path crossfade alpha", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "OffscreenCanvas");
+  const surfaces = [];
+  const transforms = [];
+  const drawing = capture();
+  const raster = new Proxy(drawing.context, {
+    get: (target, name) => name === "setTransform" ? transform => transforms.push(transform) : target[name]
+  });
+  Object.defineProperty(globalThis, "OffscreenCanvas", { configurable: true, value: class {
+    constructor(width, height) { this.width = width; this.height = height; surfaces.push(this); }
+    getContext(type, options) {
+      assert.equal(type, "2d");
+      assert.deepEqual(options, { willReadFrequently: true });
+      return raster;
+    }
+  } });
+  const transform = { a: 1.04, b: .02, c: -.02, d: 1.04, e: 24, f: -12 };
+  const copies = [];
+  let savedAlpha;
+  const output = {
+    globalAlpha: .37,
+    getTransform: () => transform,
+    save() { savedAlpha = this.globalAlpha; },
+    resetTransform() {},
+    restore() { this.globalAlpha = savedAlpha; },
+    drawImage(surface, horizontal, vertical) {
+      assert.equal(this.globalAlpha, 1, "Crossfade alpha must not be applied twice");
+      assert.equal(raster.globalAlpha, .37);
+      copies.push([surface.width, surface.height, horizontal, vertical]);
+    }
+  };
+  try {
+    const view = renderer();
+    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave"]) {
+      view.drawScene(output, scene, 3840, 2160, 1920, 1080);
+      assert.equal(output.globalAlpha, .37);
+    }
+    assert.equal(surfaces.length, 1);
+    assert.deepEqual(copies, Array.from({ length: 6 }, () => [3840, 2160, 0, 0]));
+    assert(transforms.every(value => value === transform));
+    view.quality = .25;
+    view.drawScene(output, "diffraction", 3840, 2160, 1920, 1080);
+    assert.deepEqual(copies.at(-1), [3840, 2160, 0, 0]);
+    view.drawScene(output, "diffraction", 780, 1688, 390, 844);
+    assert.equal(surfaces.length, 1);
+    assert.deepEqual(copies.at(-1), [780, 1688, 0, 0]);
+    view.stop = () => {};
+    view.resizeObserver = { disconnect() {} };
+    view.dispose();
+    assert.equal(surfaces[0].width, 1);
+    assert.equal(view.sceneCanvas, undefined);
+    assert.equal(view.sceneContext, undefined);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "OffscreenCanvas", original);
+    else delete globalThis.OffscreenCanvas;
+  }
+});
+
+test("dense curve scenes fall back when the native raster surface is unavailable", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "OffscreenCanvas");
+  let attempts = 0;
+  Object.defineProperty(globalThis, "OffscreenCanvas", { configurable: true, value: class {
+    constructor() { attempts++; }
+    getContext() { return null; }
+  } });
+  try {
+    const view = renderer();
+    assert(render(view, "diffraction").curves > 0);
+    assert(render(view, "silk").curves > 0);
+    assert.equal(attempts, 1);
+    assert.equal(view.sceneRasterUnavailable, true);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "OffscreenCanvas", original);
+    else delete globalThis.OffscreenCanvas;
+  }
+});
+
 test("Aperture retains two full-bleed iris layers and an open center at every detail level", () => {
   for (const quality of [.25, 1]) {
     for (const impact of [0, 1.2]) {
@@ -632,7 +792,7 @@ test("Voxel beacon shares the exact strobe envelope without advancing scene stat
   view.updateStrobe(1 / 60, { beat: true });
   view.reducedMotion = true;
   draw();
-  assert.equal(pulses.at(-1), 0);
+  assert.equal(pulses.at(-1), 1);
   view.reducedMotion = false;
   view.setStrobeEnabled(false);
   draw();
@@ -1276,7 +1436,7 @@ test("strobe does not retrigger cached audio or synthesize hits without a source
   assert.equal(view.strobeHit, true, "Filtered bass must trigger without an overall level rise");
 });
 
-test("strobe follows every detected beat immediately and respects reduced motion", () => {
+test("explicit strobe follows every detected beat even with reduced motion", () => {
   for (const rate of [30, 60, 240]) {
     const view = renderer();
     view.updateStrobe(1 / rate, { beat: true });
@@ -1314,13 +1474,18 @@ test("strobe follows every detected beat immediately and respects reduced motion
     view.setStrobeEnabled(true);
     view.reducedMotion = true;
     view.updateStrobe(.01, { beat: true });
-    assert.equal(view.strobeEnabled, false);
-    assert.equal(view.setStrobeEnabled(true), false);
+    assert.equal(view.strobeEnabled, true);
+    assert.equal(view.strobe.opacity, .28);
+    assert.equal(view.setStrobeEnabled(true), true);
+    view.setStrobeEnabled(false);
+    view.updateStrobe(.01, { beat: true });
+    assert.equal(view.strobe.opacity, 0);
   }
 });
 
 test("strobe draws one bounded overlay without advancing its envelope", () => {
   const view = renderer();
+  view.reducedMotion = true;
   const drawing = capture();
   view.drawStrobe(drawing.context, 1440, 900);
   assert.equal(drawing.result().points, 0);

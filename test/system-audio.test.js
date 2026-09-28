@@ -245,11 +245,13 @@ test("closing and reopening the visualizer reuses live capture until explicitly 
   assert(setup.tracks.every(track => track.readyState === "ended" && track.stops === 1));
 });
 
-test("strobe controls persist explicit choices without confirmation and respect reduced motion", async () => {
+test("strobe controls persist explicit choices independently of reduced motion without confirmation", async () => {
   const source = (await readFile(new URL("../demo/main.js", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
+  const css = await readFile(new URL("../demo/styles.css", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /matchMedia|immersiveMotionPreference|reducedMotion/);
+  assert.doesNotMatch(css, /prefers-reduced-motion/);
   let onToggle;
   let onClick;
-  let onMotionChange;
   let active = false;
   const checkbox = { checked: false, disabled: false, addEventListener: (name, callback) => {
     if (name === "change") onToggle = callback;
@@ -257,17 +259,16 @@ test("strobe controls persist explicit choices without confirmation and respect 
   } };
   const control = { title: "" };
   const stage = { classList: { toggle: (_, value) => { active = value; } } };
-  const preference = { matches: false, addEventListener: (_, callback) => { onMotionChange = callback; } };
   const visualizer = {
     reducedMotion: false,
-    setStrobeEnabled: enabled => Boolean(enabled) && !visualizer.reducedMotion
+    setStrobeEnabled: enabled => Boolean(enabled)
   };
   const stored = new Map();
   const storageKey = "module-player.immersive-strobe";
   let storageBlocked = false;
   const globals = {
     $: name => name === "immersive-strobe" ? checkbox : name === "immersive-strobe-control" ? control : stage,
-    immersiveVisualizer: visualizer, immersiveMotionPreference: preference,
+    immersiveVisualizer: visualizer,
     window: { confirm: () => assert.fail("Strobe must not request confirmation") },
     localStorage: {
       getItem: key => { if (storageBlocked) throw new Error("Storage blocked"); return stored.get(key) ?? null; },
@@ -300,20 +301,26 @@ test("strobe controls persist explicit choices without confirmation and respect 
   assert.equal(checkbox.checked, false);
   checkbox.checked = true;
   onToggle();
-  preference.matches = true;
-  onMotionChange();
-  assert.equal(active, false);
-  assert.equal(checkbox.checked, false);
-  assert.equal(checkbox.disabled, true);
-  assert.equal(visualizer.reducedMotion, true);
-  assert.match(control.title, /unavailable/);
+  assert.equal(active, true);
+  assert.equal(checkbox.checked, true);
+  assert.equal(checkbox.disabled, false);
+  assert.equal(visualizer.reducedMotion, false);
+  assert.match(control.title, /Flashing lights may trigger seizures/);
   assert.equal(stored.get(storageKey), "true");
   loadControls();
+  assert.equal(active, true);
+  checkbox.checked = false;
+  onToggle();
+  loadControls();
   assert.equal(active, false);
-  preference.matches = false;
-  onMotionChange();
   assert.equal(checkbox.disabled, false);
-  assert.equal(checkbox.checked, false);
+  checkbox.checked = true;
+  onToggle();
+  assert.equal(active, true);
+  assert.equal(visualizer.reducedMotion, false);
+  assert.equal(checkbox.disabled, false);
+  assert.equal(checkbox.checked, true);
+  assert.equal(visualizer.reducedMotion, false);
   loadControls();
   assert.equal(checkbox.checked, true);
   let blurs = 0;
@@ -324,6 +331,8 @@ test("strobe controls persist explicit choices without confirmation and respect 
   storageBlocked = true;
   const blockedRuntime = loadControls();
   assert.equal(checkbox.checked, false);
+  assert.equal(checkbox.disabled, false);
+  assert.equal(visualizer.reducedMotion, false);
   checkbox.checked = true;
   onToggle();
   assert.equal(active, true);

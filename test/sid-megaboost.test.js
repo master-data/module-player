@@ -37,7 +37,18 @@ test("adaptive quality preserves 240 Hz headroom, reduces overload, and recovers
   assert(renderer.quality > .25 && renderer.quality < .4);
 });
 
-test("every 240 Hz callback paints a frame without an FPS gate", () => {
+test("adaptive detail stays full when rendering fits a high-refresh frame budget", () => {
+  for (const rate of [60, 120, 240, 360]) {
+    const renderer = Object.assign(visualizer(), {
+      quality: 1, frameBudget: { fastest: Infinity, elapsed: 0, frames: 0, stressed: 0, healthy: 0 },
+      canvas: { dataset: {} }
+    });
+    for (let frame = 0; frame < rate * 2; frame++) renderer.adaptQuality(1000 / rate, 1000 / rate * .7);
+    assert.equal(renderer.quality, 1, `${rate} Hz must retain detail when its deadline is met`);
+  }
+});
+
+test("every 60-360 Hz callback paints a frame at full speed without an FPS gate", () => {
   const originalRaf = globalThis.requestAnimationFrame;
   let paints = 0;
   let scheduled = 0;
@@ -48,9 +59,16 @@ test("every 240 Hz callback paints a frame without an FPS gate", () => {
   });
   globalThis.requestAnimationFrame = () => ++scheduled;
   try {
-    for (let frame = 1; frame <= 240; frame++) renderer.draw(frame * 1000 / 240);
-    assert.equal(paints, 240);
-    assert.equal(scheduled, 240);
+    for (const rate of [60, 120, 144, 240, 360]) {
+      paints = 0;
+      scheduled = 0;
+      renderer.lastTime = 0;
+      renderer.elapsed = 0;
+      for (let frame = 1; frame <= rate; frame++) renderer.draw(frame * 1000 / rate);
+      assert.equal(paints, rate);
+      assert.equal(scheduled, rate);
+      assert(Math.abs(renderer.elapsed - 1) < 1e-12);
+    }
   } finally { globalThis.requestAnimationFrame = originalRaf; }
 });
 

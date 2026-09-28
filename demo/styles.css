@@ -1767,16 +1767,6 @@ body.settings-open .settings-tab {
 
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .immersive-kicker span {
-        animation: none;
-    }
-
-    .mega-active .mega-layer {
-        animation: none;
-    }
-}
-
 .diagnostic-item span {
     display: block;
     color: #617279;

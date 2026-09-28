@@ -4,7 +4,7 @@ import { createXmpPlayer } from "../xmp/index.js?v=7";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=4";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=81";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=84";
 import { SystemAudioCapture } from "./system-audio.js?v=6";
 
 const $ = (id) => document.getElementById(id);
@@ -94,7 +94,6 @@ const sidNoiseStates = new Map();
 const sidOscillatorPhases = new Map();
 let visualizationInput = "module";
 const systemAudio = new SystemAudioCapture({ onChange: updateSystemAudio });
-const immersiveMotionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
   getSource: () => visualizationInput === "system" ? systemAudio.readSource() : activeVisualizationSource(),
   getSidState: () => {
@@ -140,8 +139,7 @@ const immersiveVisualizer = new ImmersiveVisualizer($("immersive-canvas"), {
     };
     return lastMegaSidState;
   },
-  onFrame: renderMegaFrame,
-  reducedMotion: immersiveMotionPreference.matches
+  onFrame: renderMegaFrame
 });
 
 function readStoredBoolean(key, fallback) {
@@ -2268,14 +2266,8 @@ function setImmersiveStrobe(enabled) {
   $("immersive-strobe").checked = active;
   $("immersive-stage").classList.toggle("strobe-active", active);
 }
-function updateImmersiveMotionPreference() {
-  immersiveVisualizer.reducedMotion = immersiveMotionPreference.matches;
-  $("immersive-strobe").disabled = immersiveMotionPreference.matches;
-  $("immersive-strobe-control").title = immersiveMotionPreference.matches
-    ? "Strobe is unavailable while reduced motion is enabled"
-    : "Beat-synchronized strobe. Flashing lights may trigger seizures.";
-  if (immersiveMotionPreference.matches) setImmersiveStrobe(false);
-}
+$("immersive-strobe").disabled = false;
+$("immersive-strobe-control").title = "Beat-synchronized strobe. Flashing lights may trigger seizures.";
 $("immersive-strobe").addEventListener("change", () => {
   immersiveStrobePreference = $("immersive-strobe").checked;
   storeBoolean(STROBE_STORAGE_KEY, immersiveStrobePreference);
@@ -2284,9 +2276,7 @@ $("immersive-strobe").addEventListener("change", () => {
 $("immersive-strobe").addEventListener("click", (event) => {
   if (event.detail > 0) event.currentTarget.blur();
 });
-immersiveMotionPreference.addEventListener("change", updateImmersiveMotionPreference);
 setImmersiveStrobe(immersiveStrobePreference);
-updateImmersiveMotionPreference();
 
 function showImmersiveCursor() {
   clearTimeout(immersiveCursorTimer);

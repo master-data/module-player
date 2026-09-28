@@ -1,5 +1,11 @@
 # General visualizer review
 
+The demo ignores the browser/OS reduced-motion preference for both rendering and
+CSS animations. It runs at full motion on every animation callback, with no app
+FPS cap, including 240 Hz and higher when supported by the display, browser and
+GPU. Native canvas resolution is preserved. The component's optional
+`reducedMotion` mode described below is not enabled by the demo.
+
 ## Windows system audio
 
 The demo can drive the general visualizer from Windows audio, including Spotify,
@@ -216,7 +222,7 @@ Three.js shaders, composited into the existing Canvas scene transitions.
     light blocked by the landscape. No repeated or respawning towers remain.
     Its pulse uses the Strobe overlay's exact normalized opacity: immediate
     peak, then the same 160 ms quadratic decay, with no independent beat clock.
-    With Strobe off or reduced motion enabled, the lamp and beam retain a dim
+    With Strobe off, the lamp and beam retain a dim
     steady light without pulsing. Only GPU Voxel Flight contains this beacon.
 
 All five share inertial audio and reduced-motion timing. Canvas geometry adapts
@@ -269,6 +275,62 @@ Animation still runs on every requestAnimationFrame
 callback. There is no FPS cap. Reduced motion slows time and reduces geometry.
 Canvas dimension changes are queued and applied immediately before painting;
 quality updates and resize notifications never clear a completed visible frame.
+
+Aperture, Diffraction, Silk, Contours, Interference and Weave use a shared
+Three.js indexed curve renderer. It consumes the original scene paths, samples
+quadratic/cubic curves with subpixel error bounds, and uses Three.js triangulation
+for filled blades. Solid colors and Aperture's five-stop gradients retain
+premultiplied transparency. Anti-aliased triangle edges and round open caps retain
+the broad curves; gradients, audio deformation and both 12-blade iris layers
+remain intact. Camera transforms and per-path crossfade opacity are applied before
+compositing at native resolution. Vertex/index storage is reused and only active
+ranges are uploaded. Programs compile when the visualizer opens, not on the first
+scene switch. Missing/lost WebGL falls back to one reusable native-resolution
+CPU-preferred `OffscreenCanvas`, then direct Canvas if unavailable. All buffers,
+textures, contexts and fallback surfaces are released on disposal. The other
+Canvas and raymarched scenes retain their existing renderers.
+
+Detail starts at full quality. The adaptive controller retains it while CPU work
+fits 80% of the fastest observed frame interval and callbacks are not falling
+behind. There is no hard 4 ms CPU budget, FPS gate or resolution downscaling.
+
+### Per-effect performance audit (2026-09-28)
+
+RTX 4090, Windows, VS Code Chromium/ANGLE D3D11. Native 3840x2160, quality 1,
+synthetic stereo PCM and fixed low/mid/high levels .6/.4/.3, level .5, seed .4,
+initial scene clock 12 seconds. One effect at a time, 60 callbacks, first 15
+excluded; adaptive detail disabled during measurement. CPU includes updates and
+draw submission, NOT completion of asynchronous GPU work. These are short local
+samples, not guarantees for other tracks, browsers or hardware.
+
+| Effect | CPU median / p95 (ms) | Frame interval median / p95 (ms) |
+| --- | ---: | ---: |
+| Aperture | 3.1 / 5.6 | 8.3 / 8.4 |
+| Silk | 2.0 / 2.4 | 8.3 / 8.4 |
+| Contours | 1.8 / 2.3 | 8.3 / 8.4 |
+| Diffraction | 0.8 / 1.5 | 8.3 / 8.4 |
+| Cascade | 1.6 / 2.3 | 8.3 / 8.5 |
+| Interference | 2.4 / 2.6 | 8.3 / 8.5 |
+| Weave | 1.5 / 2.4 | 8.3 / 8.4 |
+| Prism | 0.2 / 0.4 | 8.3 / 8.4 |
+| Monolith | 0.3 / 0.5 | 8.3 / 8.4 |
+| Wavegarden | 0.2 / 0.4 | 8.3 / 8.4 |
+| Terrain | 0.3 / 0.4 | 8.3 / 16.7 |
+| Helix | 0.2 / 0.4 | 8.3 / 8.4 |
+| Copper | 0.3 / 0.4 | 8.3 / 8.4 |
+| Checker Tunnel | 0.3 / 0.6 | 8.3 / 8.4 |
+| Raster Twist | 0.3 / 0.5 | 8.3 / 8.4 |
+| Dot Vortex | 1.8 / 2.4 | 8.3 / 8.4 |
+| Voxel Flight | 0.3 / 0.4 | 8.3 / 8.4 |
+
+The observed browser cadence was about 120 Hz, so actual 240 Hz presentation was
+not verified. The 240 Hz budget is 4.17 ms: all median CPU values fit it, but
+Aperture's p95 does not, and low shader submission cost alone cannot establish a
+GPU frame rate. Terrain also showed occasional 16.7 ms callbacks. All callbacks
+continue to render, including 240/360 Hz in scheduling regressions; faster
+displays are not artificially capped. The previous Aperture direct/raster paths
+measured about 41.6/33.4 ms per frame at quality .65, so the faster result does not
+come from reducing scene detail.
 
 Interference and Weave use closed quadratic splines with matching endpoints
 and tangents across the wraparound. Their final audio sample need not equal the
@@ -331,9 +393,10 @@ MEGABOOST, including system-audio visualization. Its control follows the close
 button's inactivity timeout even while active, reappearing on pointer movement,
 pointer down or keyboard activity. Keyboard focus keeps it visible; mouse focus
 does not prevent auto-hide. Closing the view disables strobe without clearing
-the saved choice. Reduced-motion preferences disable strobe, including changes
-made during playback, without overwriting the preference. Turning reduced motion
-off does not resume strobe until the view is reopened or the toggle is enabled.
+the saved choice. Strobe defaults to off and follows the explicit saved choice,
+including the beacon. The demo ignores the browser's reduced-motion preference
+for both ordinary animation and flashing. Preference changes do not toggle Strobe
+or slow the visuals.
 Rapid flashing can trigger photosensitive seizures; the overlay opacity is not
 a guarantee of photosensitivity safety.
 
