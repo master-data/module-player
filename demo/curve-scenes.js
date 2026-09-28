@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { drawGeneralScene } from "./general-scenes.js?v=37";
+import { drawGeneralScene } from "./general-scenes.js?v=39";
 
 const STRIDE = 9;
 const PAINTS = 32;

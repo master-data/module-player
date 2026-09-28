@@ -276,19 +276,19 @@ vec3 terrainPigment(vec3 point, vec3 normal, vec3 rock, float mineral, float str
   pigment *= luminance / max(dot(pigment, vec3(.2126, .7152, .0722)), .025);
   float surgePhase = length(point.xz) * .14 + point.y * .11 + mineral * .8 - pigmentFlow.x * 2.3;
   float surgeWidth = max(fwidth(surgePhase) * .5, .015);
-  float surge = smoothstep(.76 - surgeWidth, .98 + surgeWidth, sin(surgePhase));
+  float surge = smoothstep(.94 - surgeWidth, .995 + surgeWidth, sin(surgePhase));
   surge *= 1.0 - smoothstep(.4, 1.2, surgeWidth);
   float contourPhase = point.y * .42 + strata * .55 - pigmentFlow.y * 1.6;
   float contourWidth = max(fwidth(contourPhase) * .5, .015);
-  float contours = smoothstep(.84 - contourWidth, 1.0 + contourWidth, sin(contourPhase));
+  float contours = smoothstep(.96 - contourWidth, .995 + contourWidth, sin(contourPhase));
   contours *= 1.0 - smoothstep(.35, 1.1, contourWidth);
   vec3 light = vec3(.015, .65, 1.0) * surge * pigmentBands.x
     + vec3(1.0, .035, .16) * contours * pigmentBands.y
     + vec3(1.0, .72, .22) * filaments * pigmentBands.z;
-  radiance = (1.0 - exp(-light * 2.0)) * activity * (.16 + min(impact, 1.2) * .07)
+  radiance = (1.0 - exp(-light * 2.0)) * activity * (.025 + min(impact, 1.2) * .012)
     * (1.0 - snow * .8) * (.5 + normal.y * .5)
     * (1.0 - smoothstep(120.0, 220.0, distanceAlong));
-  float coverage = activity * .94 * (1.0 - exp(-strength * 2.2)) * (1.0 - snow * .85);
+  float coverage = activity * .28 * (1.0 - exp(-strength * 2.2)) * (1.0 - snow * .85);
   return mix(rock, pigment, coverage);
 }
 vec3 sunlightColor() {

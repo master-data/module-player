@@ -425,7 +425,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   } else if (scene === "terrain") {
     const layers = 5;
     const points = detail(64, 24);
-    const bottom = height - centerY;
+    const floor = height - centerY;
+    const padding = Math.max(width, height) * .12;
     const terrainTime = time;
     const response = renderer.reducedMotion ? .3 : 1;
     const hue = 150 + seed * 30 + Math.sin(terrainTime * .08) * 18;
@@ -440,6 +441,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
         - height * response * (low * (.025 + depth * .025) + impact * (.035 + (1 - depth) * .035));
       const amplitude = height * (.035 + (layers - 1 - layer) * .009
         + response * (low * .075 + band * .045 + impact * .055));
+      let bottom = floor + padding;
+      let gradientTop = base - amplitude;
       curve.begin();
       for (let point = 0; point <= points; point++) {
         const position = point / points;
@@ -452,13 +455,18 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
           + sample(data, position) * height * .1 * response
           + ripple * height * high * .018 * response;
         const headroom = Math.max(height * .04, base + centerY - height * .04);
-        curve.point(position * width - centerX, base - headroom * Math.tanh(wave / headroom));
+        const vertical = base - headroom * Math.tanh(wave / headroom);
+        if (point === 0) curve.point(-centerX - padding, vertical);
+        curve.point(position * width - centerX, vertical);
+        if (point === points) curve.point(width - centerX + padding, vertical);
+        bottom = Math.max(bottom, vertical + padding);
+        gradientTop = Math.min(gradientTop, vertical);
       }
       curve.end();
-      context.lineTo(width - centerX, bottom);
-      context.lineTo(-centerX, bottom);
+      context.lineTo(width - centerX + padding, bottom);
+      context.lineTo(-centerX - padding, bottom);
       context.closePath();
-      const gradient = context.createLinearGradient(0, base - amplitude, 0, bottom);
+      const gradient = context.createLinearGradient(0, gradientTop, 0, floor);
       gradient.addColorStop(0, `hsla(${hue + layer * 18} 94% 68% / ${.13 + (8 - layer) * .012})`);
       gradient.addColorStop(1, `hsla(${hue + 110 + layer * 9} 84% 24% / .015)`);
       context.fillStyle = gradient;

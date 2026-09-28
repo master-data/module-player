@@ -1432,6 +1432,57 @@ test("terrain restores five full-width gradient surfaces extending to the floor"
   assert(coordinates.includes(-960) && coordinates.includes(960));
 });
 
+test("terrain gradients start above every crest rather than clipping peaks to a flat color", () => {
+  const view = renderer();
+  view.channels = [new Float32Array(256).fill(.9)];
+  view.signal = { low: .8, mid: 1, high: .5, level: 1 };
+  updateGeneralMotion(view, 1);
+  const paths = new CurveSceneGeometry();
+  const createGradient = paths.createLinearGradient.bind(paths);
+  let gradientTop;
+  let layers = 0;
+  paths.createLinearGradient = (...coordinates) => {
+    gradientTop = paths.point(coordinates[0], coordinates[1]).y;
+    return createGradient(...coordinates);
+  };
+  paths.fill = () => {
+    const ridge = paths.path.slice(0, -2);
+    assert(gradientTop <= Math.min(...ridge.map(point => point.y)) + 1e-8);
+    layers++;
+  };
+  paths.stroke = () => {};
+  paths.begin({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+  drawGeneralScene(view, paths, "terrain", 2048, 576, 1024, 288);
+  assert.equal(layers, 5);
+});
+
+test("terrain fill closures stay below low valleys and outside the moving camera", () => {
+  for (const [width, height] of [[1440, 900], [390, 844], [3200, 900]]) {
+    const view = renderer();
+    view.channels = [new Float32Array(256).fill(-1)];
+    view.signal = { low: 0, mid: 0, high: 0, level: 0 };
+    view.tone.bands.fill(0);
+    const motion = updateGeneralMotion(view, 1);
+    motion.energyChannels.forEach(channel => channel.fill(0));
+    const paths = new CurveSceneGeometry();
+    const fill = paths.fill.bind(paths);
+    let layers = 0;
+    paths.fill = () => {
+      const ridge = paths.path.slice(0, -2);
+      const [lowerRight, lowerLeft] = paths.path.slice(-2);
+      assert(lowerRight.y > Math.max(...ridge.map(point => point.y)), "A valley cannot cross the polygon's closing edge");
+      assert.equal(lowerRight.y, lowerLeft.y);
+      assert(lowerLeft.x < -width * .06 && lowerRight.x > width * 1.06, "Camera sway must not reveal vertical sides");
+      assert(lowerLeft.y > height * 1.06, "Camera sway must not reveal a horizontal floor edge");
+      layers++;
+      fill();
+    };
+    paths.begin({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+    drawGeneralScene(view, paths, "terrain", width, height, width / 2, height / 2);
+    assert.equal(layers, 5);
+  }
+});
+
 test("terrain includes bounded traveling streaks without advancing state during a crossfade", () => {
   const view = renderer();
   let strokes = 0;

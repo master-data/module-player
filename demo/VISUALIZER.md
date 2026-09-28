@@ -73,6 +73,11 @@ separate manual checks.
 
 ## Waveform-authored Voxel Flight
 
+Audio-driven surface colors are restrained accents: pigment coverage is capped
+at 28%, with narrow cyan/magenta bands and low emission so rock, meadow and snow
+remain visible. This styling does not change terrain elevation, camera clearance,
+the flight path or beacon lighting.
+
 Voxel Flight keeps its continuous landscape, not discrete cubes. Two broad,
 crossing spatial sweeps read signed left/right PCM. Their crests scale the main
 mountain envelope from 18% to 100%; stereo differences carve valleys by up to
@@ -590,6 +595,13 @@ inject a continuous momentum pulse into each scene's geometry, with stronger
 accents on strong beats and returns from a drop. Energy also drives scene speed.
 Waveform displacement uses bounded visual gain; playback audio is unchanged.
 Reduced motion retains slower attacks and attenuated beat impulses.
+
+Terrain's filled layers extend beyond the viewport and
+close below their lowest valley, preventing horizontal closing-edge artifacts and
+exposed sides during camera sway or roll. Gradient positions remain tied to the
+visible floor rather than the padded polygon boundary.
+The gradient start also tracks the highest ridge point when audio lifts a crest
+above its nominal start, avoiding a straight flat-color cap through the peak.
 
 Terrain uses stereo energy contours rectified before temporal smoothing, avoiding
 phase cancellation of signed PCM. Bass and beats lift the layers, mids and stereo
