@@ -2,7 +2,7 @@ export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "c
 
 const TAU = Math.PI * 2;
 const PALETTES = {
-  aperture: [330, 205, 48, 265, 8, 185], silk: [12, 183], contours: [162, 44], diffraction: [38, 200],
+  aperture: [188, 205, 188, 28, 205, 188], silk: [12, 183], contours: [162, 44], diffraction: [38, 200],
   cascade: [195, 16], interference: [176, 342], weave: [40, 186], prism: [188, 38],
   monolith: [190, 32], wavegarden: [165, 345], copper: [18, 182],
   "checker-tunnel": [168, 332], "raster-twist": [192, 22], "dot-vortex": [42, 178]
@@ -683,22 +683,63 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     for (const value of envelope) pressure += Math.abs(value);
     pressure /= Math.max(1, envelope.length);
     const frequencyGroups = [bands[0], (bands[1] + bands[2]) * .5, (bands[3] + bands[4]) * .5, bands[5]];
-    for (let layer = 0; layer < 4; layer++) {
+    const irises = frequencyGroups.map((group, layer) => {
+      const frequency = Math.min(1, group * level * 6);
       const direction = layer % 2 ? 1 : -1;
+      return {
+        frequency,
+        opacity: .28 + frequency * .2,
+        rotation: seed * TAU + layer * .27 + direction * response
+          * (time * (.075 + layer * .018) + frequency * .28 + impact * .12),
+        twist: .52 + response * (frequency * .18 + impact * .12),
+        inner: scale * zoom * (.105 + layer * .035
+          + response * (frequency * .075 + impact * .04 + pressure * .12))
+      };
+    });
+    const mirrorAxis = seed * TAU;
+    const opticalInk = (hue, alpha, lightness) => `hsla(${hue} ${lightness > 65 ? 18 : 58}% ${lightness}% / ${alpha})`;
+    const polar = (radius, angle) => [Math.cos(angle) * radius, Math.sin(angle) * radius];
+    context.beginPath();
+    for (let corner = 0; corner < 12; corner++) {
+      const point = polar(irises[3].inner * 1.8, mirrorAxis + corner / 12 * TAU);
+      if (corner === 0) context.moveTo(...point);
+      else context.lineTo(...point);
+    }
+    context.closePath();
+    context.fillStyle = opticalInk(palette[0], .95, 7 + irises[0].frequency * 5);
+    context.fill();
+    for (let layer = 0; layer < irises.length; layer++) {
+      const iris = irises[layer];
+      for (let shell = 2; shell >= 0; shell--) {
+        const folded = .5 - .5 * Math.cos((iris.rotation + shell * iris.twist) * 6);
+        const tip = (.18 + folded * .64) * Math.PI / 6;
+        const inner = iris.inner * (.035 + shell * .24);
+        const outer = iris.inner * (.48 + shell * .48);
+        const hue = palette[(shell + layer) % palette.length];
+        for (let sector = 0; sector < 6; sector++) {
+          const axis = mirrorAxis + sector / 6 * TAU;
+          for (const mirror of [-1, 1]) {
+            curve.begin(true);
+            curve.point(...polar(inner, axis));
+            curve.point(...polar(outer, axis + mirror * tip));
+            curve.point(...polar(inner + (outer - inner) * .55, axis + mirror * Math.PI / 6));
+            curve.point(...polar(inner * .6, axis + mirror * tip));
+            curve.end();
+            context.fillStyle = opticalInk(hue, iris.opacity * .6 + .06, 24 + folded * 24 + iris.frequency * 14);
+            context.fill();
+          }
+        }
+      }
+    }
+    for (let layer = 0; layer < 4; layer++) {
       const side = layer % 2;
-      const frequency = Math.min(1, frequencyGroups[layer] * level * 6);
-      const opacity = .28 + frequency * .2;
+      const { frequency, opacity, rotation, twist, inner } = irises[layer];
       const energyData = motion?.energyChannels?.[side];
       const contourAt = position => {
         const energy = energyData ? sample(energyData, position) : Math.abs(sample(side ? right : left, position));
         return energy * 4 / (1 + energy * 3);
       };
       const outer = reach * (.72 - layer * .045) * zoom;
-      const rotation = seed * TAU + layer * .27 + direction * response
-        * (time * (.075 + layer * .018) + frequency * .28 + impact * .12);
-      const twist = .52 + response * (frequency * .18 + impact * .12);
-      const inner = scale * zoom * (.105 + layer * .035
-        + response * (frequency * .075 + impact * .04 + pressure * .12));
       for (let blade = 0; blade < blades; blade++) {
         const contour = contourAt((blade + .5) / blades);
         const energy = Math.min(1, frequency * .7 + contour * .3);
@@ -707,11 +748,11 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
         const gradient = context.createLinearGradient(
           Math.cos(start) * inner, Math.sin(start) * inner,
           Math.cos(start + twist) * outer, Math.sin(start + twist) * outer);
-        gradient.addColorStop(0, ink(hue, opacity + .12, 78 + energy * 12));
-        gradient.addColorStop(.22, ink(hue, opacity, 42 + energy * 12));
-        gradient.addColorStop(.48, ink(hue, opacity * .65, 9 + energy * 4));
-        gradient.addColorStop(.52, ink(hue, opacity + .08, 68 + energy * 14));
-        gradient.addColorStop(1, ink(hue, opacity * .8, 18 + energy * 9));
+        gradient.addColorStop(0, opticalInk(hue, opacity + .12, 70 + energy * 10));
+        gradient.addColorStop(.28, opticalInk(hue, opacity, 32 + energy * 12));
+        gradient.addColorStop(.52, opticalInk(hue, opacity * .65, 8 + energy * 4));
+        gradient.addColorStop(.78, opticalInk(hue, opacity + .08, 68 + energy * 10));
+        gradient.addColorStop(1, opticalInk(hue, opacity * .8, 14 + energy * 9));
         const end = start + TAU / blades;
         const tipX = Math.cos(start) * inner;
         const tipY = Math.sin(start) * inner;
@@ -725,11 +766,11 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
         context.closePath();
         context.fillStyle = gradient;
         context.fill();
-        stroke(context, hue, .08 + frequency * .12, lineWidth * .7);
+        stroke(context, hue, .025 + frequency * .04, lineWidth * .7);
         context.beginPath();
         context.moveTo(tipX, tipY);
         context.lineTo(Math.cos(end) * inner, Math.sin(end) * inner);
-        stroke(context, hue, .24 + frequency * .25, lineWidth * .55);
+        stroke(context, hue, .08 + frequency * .12, lineWidth * .55);
       }
     }
   }

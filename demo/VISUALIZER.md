@@ -102,11 +102,24 @@ and alternating rotation directions at different speeds. Bass, low-mid, high-mid
 and treble groups independently control their assigned iris's opening, angular
 offset, shading and opacity. These use the existing smoothed six-band analysis;
 stereo waveform energy and transients also provide shared musical movement.
-Each iris retains straight edges and a shared hexagonal opening. Pink, blue,
-yellow, violet, red and cyan chrome reflections blend through the layers using
+Each iris retains straight edges and a shared hexagonal opening. Cyan, cool blue
+and a sparse amber accent replace the rainbow palette; broad silver-tinted
+highlights and quieter seams give the surfaces a softer chrome finish. Colors blend using
 source-over alpha (gradient alpha .18-.6), without additive whiteout. The 24
 blade gradients fit the existing GPU paint buffer. Only blade seams and
 opening-edge glints remain; no decorative ribs, pins or segmented rings.
+
+The center is a six-fold kaleidoscope of rounded, mirrored reflections, replacing
+the separate tunnel. Three nested sets per iris repeat across six mirrored wedge
+pairs. They reuse the foreground iris's opening, rotation, twist, opacity and
+palette offset, so a frequency change moves both that iris and its reflections.
+Easing the shared rotation through each mirror wedge makes the pattern evolve
+without a separate clock or unrelated color cycle. These are procedural geometric
+reflections, not a framebuffer feedback effect. They sit behind the unchanged
+foreground blades. Closed quadratic splines remove needle-like tips, while lower
+opacity and the absence of outlines prevent a dense wireframe appearance. The
+reflections use the existing indexed GPU curve path and Canvas
+fallback, with no extra gradient textures or animation loop.
 A bounded 1.12-1.52x zoom cycle, lateral drift and gentle roll use elapsed time
 independently of musical energy, complementing the counter-rotation. The iris
 remains an expressive camera-inspired mechanism, not a physical lens simulation;

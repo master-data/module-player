@@ -455,7 +455,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
         assert(paths.vertices[offset + 8] >= 0 && paths.vertices[offset + 8] <= 1);
       }
       if (scene === "aperture") {
-        assert.deepEqual([...paths.paints.slice(20, 24)].map(value => Math.round(value * 100)), [22, 48, 52, 100]);
+        assert.deepEqual([...paths.paints.slice(20, 24)].map(value => Math.round(value * 100)), [28, 52, 78, 100]);
       }
       const count = paths.vertexCount;
       const snapshot = paths.vertices.slice(0, count * 9);
@@ -609,12 +609,12 @@ test("Aperture retains four six-leaf iris layers and an open center at every det
         }
       });
       view.drawScene(context, "aperture", 1440, 900, 720, 450);
-      assert.equal(fills, 24);
+      assert.equal(fills, 169);
       assert.equal(gradients, 24);
       const coordinates = drawing.result().coordinates;
       for (let index = 0; index < coordinates.length; index += 2) {
         const radius = Math.hypot(coordinates[index], coordinates[index + 1]);
-        assert(radius > 900 * .06, "The central aperture must remain open");
+        assert(radius >= 0, "Tunnel coordinates must remain finite");
         assert(radius < Math.hypot(1440, 900) * 1.1, "Zoomed blades must remain bounded beyond the viewport");
       }
       assert(Math.max(...coordinates.map(Math.abs)) > 1440 * .5, "The iris must extend across the landscape viewport");
@@ -630,13 +630,15 @@ test("Aperture leaves share a straight-sided hexagonal opening without decorativ
   const leaves = [];
   let path = [];
   let strokes = 0;
+  let foreground = false;
   const context = new Proxy(drawing.context, {
     get: (target, name) => (...values) => {
+      if (name === "createLinearGradient") foreground = true;
       if (name === "beginPath") path = [];
       if (name === "moveTo" || name === "lineTo") path.push(values);
-      if (name === "fill") leaves.push(path.slice());
-      if (name === "stroke") strokes++;
-      if (name === "quadraticCurveTo" || name === "bezierCurveTo") assert.fail("Mechanical leaves must not become rounded splines");
+      if (name === "fill" && foreground) leaves.push(path.slice());
+      if (name === "stroke" && foreground) strokes++;
+      if (foreground && (name === "quadraticCurveTo" || name === "bezierCurveTo")) assert.fail("Mechanical leaves must not become rounded splines");
       return target[name](...values);
     }
   });
@@ -649,11 +651,73 @@ test("Aperture leaves share a straight-sided hexagonal opening without decorativ
       assert.equal(leaf.length, 4);
       assert(Math.hypot(leaf[3][0] - next[0][0], leaf[3][1] - next[0][1]) < 1e-8);
       const radius = Math.hypot(...leaf[0]);
+      assert(radius > 900 * .06, "Foreground leaves retain an open center over the tunnel");
       const chord = Math.hypot(leaf[3][0] - leaf[0][0], leaf[3][1] - leaf[0][1]);
       assert(Math.abs(chord - radius) < 1e-8, "Six shared edges form a regular hexagon");
     }
   }
   assert.equal(strokes, 48, "Only blade seams and opening edges remain");
+});
+
+test("Aperture mirrors smooth iris reflections into a six-fold center without outlines", () => {
+  const view = renderer();
+  updateGeneralMotion(view, .2);
+  const snapshot = () => {
+    const drawing = capture();
+    const surfaces = [];
+    let foreground = false;
+    let path = [];
+    let curves = 0;
+    const context = new Proxy(drawing.context, {
+      get: (target, name) => (...values) => {
+        if (name === "createLinearGradient") foreground = true;
+        if (name === "beginPath") path = [];
+        if (name === "moveTo" || name === "lineTo") path.push(values);
+        if (name === "quadraticCurveTo" && !foreground) {
+          curves++;
+          path.push(values.slice(0, 2), values.slice(2));
+        }
+        if (name === "stroke" && !foreground) assert.fail("Reflections must not have sharp outlines");
+        if (name === "fill" && !foreground) surfaces.push(path.slice());
+        return target[name](...values);
+      }
+    });
+    drawGeneralScene(view, context, "aperture", 1440, 900, 720, 450);
+    assert.equal(curves, 144 * 4);
+    return surfaces;
+  };
+  const before = snapshot();
+  assert.equal(before.length, 145, "A backing surface and four sets of mirrored iris fragments precede the blades");
+  assert.equal(before[0].length, 12);
+  assert(before.slice(1).every(surface => surface.length === 9));
+  for (let index = 1; index < before.length; index += 2) {
+    const axis = view.sceneSeed * Math.PI * 2 + ((index - 1) % 12) / 2 * Math.PI / 3;
+    for (let corner = 0; corner < before[index].length; corner++) {
+      const first = before[index][corner];
+      const second = before[index + 1][corner];
+      const along = point => point[0] * Math.cos(axis) + point[1] * Math.sin(axis);
+      const across = point => -point[0] * Math.sin(axis) + point[1] * Math.cos(axis);
+      assert(Math.abs(along(first) - along(second)) < 1e-8);
+      assert(Math.abs(across(first) + across(second)) < 1e-8);
+    }
+  }
+  assert.deepEqual(snapshot(), before);
+  view.generalMotion.time += .5;
+  assert.notDeepEqual(snapshot(), before, "Reflections move with iris rotation even without fresh audio");
+  view.generalMotion.bands.fill(0);
+  const quiet = snapshot();
+  for (const [layer, band] of [0, 1, 3, 5].entries()) {
+    view.generalMotion.bands[band] = .1;
+    const active = snapshot();
+    for (let other = 0; other < 4; other++) {
+      const start = 1 + other * 36;
+      const reflections = active.slice(start, start + 36);
+      const baseline = quiet.slice(start, start + 36);
+      if (layer === other) assert.notDeepEqual(reflections, baseline, "The assigned iris drives its mirrored fragments");
+      else assert.deepEqual(reflections, baseline);
+    }
+    view.generalMotion.bands[band] = 0;
+  }
 });
 
 test("Aperture zoom and drift continue with musical state held fixed", () => {
@@ -670,7 +734,7 @@ test("Aperture zoom and drift continue with musical state held fixed", () => {
   assert.deepEqual(render(view, "aperture"), after);
 });
 
-test("Aperture uses saturated demo-scene hues and translucent chrome highlights", () => {
+test("Aperture uses restrained cyan and warm accents with broad silver highlights", () => {
   const view = renderer();
   const drawing = capture();
   const paints = [];
@@ -683,9 +747,10 @@ test("Aperture uses saturated demo-scene hues and translucent chrome highlights"
   });
   drawGeneralScene(view, context, "aperture", 1440, 900, 720, 450);
   assert.equal(paints.length, 24);
-  assert.deepEqual(paints.slice(0, 6).map(stops => Number(stops[0].color.match(/hsla\((\d+)/)[1])), [330, 205, 48, 265, 8, 185]);
+  assert.deepEqual(paints.slice(0, 6).map(stops => Number(stops[0].color.match(/hsla\((\d+)/)[1])), [188, 205, 188, 28, 205, 188]);
   for (const stops of paints) {
-    assert.deepEqual(stops.map(stop => stop.offset), [0, .22, .48, .52, 1]);
+    assert.deepEqual(stops.map(stop => stop.offset), [0, .28, .52, .78, 1]);
+    assert.match(stops[0].color, / 18% /, "Highlights should be silver-tinted, not saturated rainbow bands");
     assert(stops.every(stop => {
       const alpha = Number(stop.color.match(/\/ ([\d.]+)/)[1]);
       return alpha >= .18 && alpha <= .6;
@@ -710,7 +775,7 @@ test("Aperture irises counter-rotate and respond independently to four frequency
           paint = [];
           return { addColorStop: (offset, color) => paint.push([offset, color]) };
         }
-        if (name === "fill") leaves.push({ tip, paint });
+        if (name === "fill" && paint) leaves.push({ tip, paint });
         return target[name](...values);
       }
     });
