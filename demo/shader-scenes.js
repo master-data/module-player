@@ -1,6 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 
-export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma"];
+export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic"];
 export const WAVEFORM_POINTS = 256;
 const WAVEFORM_RADIUS = 16;
 const waveformKernel = Float64Array.from({ length: WAVEFORM_RADIUS * 2 + 1 }, (_, index) =>
@@ -487,6 +487,38 @@ void main() {
   gl_FragColor = vec4(finish(color) + (jitter - .5) / 255.0, 1.0);
 }`;
 
+const mosaicShader = common + waveformShader + `
+void main() {
+  vec3 bands = clamp(audio.xyz, 0.0, 1.0);
+  vec2 screen = (gl_FragCoord.xy * 2.0 - resolution) / min(resolution.x, resolution.y);
+  vec3 color = vec3(.009, .011, .014);
+  for (int layer = 1; layer >= 0; layer--) {
+    float depth = float(layer);
+    float angle = clock * (.10 + depth * .035) * (1.0 - depth * 2.0) + seed * PI * 2.0 + depth * .7;
+    float zoom = (2.4 + .35 * sin(clock * .13 + depth) + bands.x * .3 + clamp(impact, 0.0, 1.2) * .16) * pow(1.45, depth);
+    vec2 point = mat2(cos(angle), -sin(angle), sin(angle), cos(angle)) * screen * zoom;
+    point += vec2(sin(clock * .09), cos(clock * .07)) * (.18 + bands.y * .24);
+    vec2 cell = floor(point + .5);
+    vec2 local = point - cell;
+    vec2 wave = vec2(waveAt(.5 + .45 * sin(cell.x * .37)).x, waveAt(.5 + .45 * cos(cell.y * .31)).y);
+    float outer = .36 + bands.x * .03 + wave.x * .05;
+    float inner = .12 + bands.z * .10 + wave.y * .04;
+    float distanceToTile = abs(local.x) + abs(local.y);
+    float edge = max(fwidth(point.x) + fwidth(point.y), .001);
+    float mask = (1.0 - smoothstep(outer - edge, outer + edge, distanceToTile))
+      * smoothstep(inner - edge, inner + edge, distanceToTile);
+    vec2 shadowPoint = local - vec2(.045, -.065);
+    float shadow = 1.0 - smoothstep(outer - edge, outer + edge, abs(shadowPoint.x) + abs(shadowPoint.y));
+    color *= 1.0 - shadow * .35;
+    float pigment = mod(cell.x + cell.y * 2.0 + depth, 3.0);
+    vec3 tile = pigment < .5 ? vec3(.68, .74, .025) : pigment < 1.5 ? vec3(.035, .24, .65) : vec3(.64, .70, .75);
+    float bevel = smoothstep(outer - .055, outer - .012, distanceToTile);
+    tile *= (1.0 - depth * .48) * (.76 + bevel * local.y / outer * .35);
+    color = mix(color, tile, mask);
+  }
+  gl_FragColor = vec4(finish(color), 1.0);
+}`;
+
 const plasmaShader = common + waveformShader + `
 void main() {
   vec3 bands = clamp(audio.xyz, 0.0, 1.0);
@@ -693,7 +725,7 @@ export class ShaderScenes {
       terrainAudio: { value: new THREE.Vector4() },
       sunDirection: { value: new THREE.Vector3() }, moonDirection: { value: new THREE.Vector3() }
     };
-    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader, plasmaShader].map(fragmentShader => new THREE.ShaderMaterial({
+    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader, plasmaShader, mosaicShader].map(fragmentShader => new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false
     }));
     this.mesh = new THREE.Mesh(this.geometry, this.materials[0]);
@@ -788,7 +820,7 @@ export class ShaderScenes {
     if (name === "metaball-foundry") this.updateFoundry(state, seed, arc);
     this.uniforms.terrainMap.value = name === "voxel-flight" ? this.mountainTexture : this.texture;
     this.uniforms.beaconPulse.value = Number.isFinite(beaconPulse) ? THREE.MathUtils.clamp(beaconPulse, 0, 1) : 0;
-    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry" || name === "polar-plasma") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
+    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry" || name === "polar-plasma" || name === "rotozoom-mosaic") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
     this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
     this.renderer.render(this.scene, this.camera);
     context.drawImage(canvas, 0, 0, width, height);

@@ -372,7 +372,7 @@ test("every scene uses inertial audio and drawing never advances its shared cros
 });
 
 test("all general scenes are distinct, finite and adapt geometry at desktop and mobile sizes", () => {
-  assert.equal(GENERAL_SCENES.length, 21);
+  assert.equal(GENERAL_SCENES.length, 23);
   const view = renderer();
   for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     const signatures = new Set();
@@ -419,15 +419,15 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       const view = Object.assign(renderer(), { quality: .25, canvas: { clientWidth: width } });
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
-        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
-        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma"].includes(scene)) assert(result.curves > 0, scene);
+        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom", "oscilloscope-orbit"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
+        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
   }
 });
 
 test("GPU scenes dispatch at native dimensions with shared motion and fall back without WebGL", () => {
-  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma"]);
+  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry", "polar-plasma", "rotozoom-mosaic"]);
   const view = renderer();
   const motion = updateGeneralMotion(view, .1);
   const calls = [];
@@ -613,6 +613,118 @@ test("Feedback Bloom retains bounded stereo history, expires silence and never a
   }
 });
 
+test("Oscilloscope Orbit uses bounded stereo geometry, independent bands and a reusable framed projection", () => {
+  const view = Object.assign(renderer(), { scene: "oscilloscope-orbit" });
+  const motion = updateGeneralMotion(view, .1);
+  motion.orbitHistory = undefined;
+  motion.signal = { low: 0, mid: 0, high: 0, level: .5 };
+  motion.impact = 0;
+  motion.shaderWaveform.channels = [new Float64Array(256), new Float64Array(256)];
+  const resting = render(view, view.scene);
+  const baseline = resting.signature;
+  const projection = view.orbitProjection;
+  for (const band of ["low", "mid", "high"]) {
+    motion.signal[band] = 1;
+    const metric = band === "high" ? "minimumWidth" : "signature";
+    const active = render(view, view.scene)[metric];
+    assert.notEqual(active, resting[metric], band);
+    motion.signal[band] = 8;
+    assert.equal(render(view, view.scene)[metric], active, `${band} must be bounded`);
+    motion.signal[band] = 0;
+  }
+  for (const side of [0, 1]) {
+    motion.shaderWaveform.channels[side].fill(.5);
+    assert.notEqual(render(view, view.scene).signature, baseline, `Stereo side ${side}`);
+    motion.shaderWaveform.channels[side].fill(0);
+  }
+  assert.equal(render(view, view.scene).signature, baseline);
+  motion.signal = { low: 1, mid: 1, high: 1, level: 1 };
+  motion.impact = 1.2;
+  motion.shaderWaveform.channels[0].fill(1);
+  motion.shaderWaveform.channels[1].fill(-1);
+  for (const [width, height] of [[1440, 900], [390, 844], [3200, 900]]) {
+    for (const time of [0, 12, 80]) {
+      motion.time = time;
+      const before = structuredClone(motion);
+      const result = render(view, view.scene, width, height);
+      result.coordinates.forEach((value, index) => assert(Math.abs(value) < (index % 2 ? height : width) * .48, `${width}x${height}: ${value}`));
+      assert.deepEqual(motion, before);
+      assert.equal(view.orbitProjection, projection);
+    }
+  }
+});
+
+test("Orbit trails retain eight snapshots, expire in silence and survive crossfades independently of Bloom", () => {
+  for (const rate of [30, 60, 120]) {
+    const view = Object.assign(renderer(), { scene: "oscilloscope-orbit" });
+    for (let frame = 0; frame < rate; frame++) updateGeneralMotion(view, 1 / rate);
+    const motion = view.generalMotion;
+    const history = motion.orbitHistory;
+    assert.equal(history.count, 8);
+    assert.equal(history.frames.length, 8);
+    assert.equal(history.tick, 8);
+    assert(history.frames.every(frame => frame.clock > 0 && Number.isFinite(frame.mid)));
+    const before = structuredClone(history);
+    const active = render(view, view.scene).signature;
+    assert.equal(render(view, view.scene).signature, active);
+    assert.deepEqual(history, before);
+    motion.orbitHistory = undefined;
+    assert.notEqual(render(view, view.scene).signature, active);
+    motion.orbitHistory = history;
+    const buffers = history.frames.map(frame => frame.channels);
+    view.channels = [];
+    view.signal = { low: 0, mid: 0, high: 0, level: 0 };
+    updateGeneralMotion(view, 1.01);
+    const expired = render(view, view.scene).signature;
+    motion.orbitHistory = undefined;
+    assert.equal(render(view, view.scene).signature, expired);
+    motion.orbitHistory = history;
+    history.frames.forEach((frame, index) => assert.equal(frame.channels, buffers[index]));
+    view.scene = "feedback-bloom";
+    view.previousScene = "oscilloscope-orbit";
+    view.sceneTransition = .5;
+    updateGeneralMotion(view, .01);
+    assert.equal(motion.orbitHistory, history);
+    assert.notEqual(motion.feedback, history);
+    assert.equal(motion.feedback.frames.length, 24);
+    view.sceneTransition = 1;
+    updateGeneralMotion(view, .01);
+    assert.equal(motion.orbitHistory, undefined);
+    assert(motion.feedback);
+  }
+});
+
+test("Rotozoom Mosaic responds to bounded bands and both eased stereo channels without draw-time integration", async () => {
+  const view = Object.assign(renderer(), { scene: "rotozoom-mosaic" });
+  const motion = updateGeneralMotion(view, .1);
+  const signal = { low: 0, mid: 0, high: 0, level: .5 };
+  motion.signal = signal;
+  motion.impact = 0;
+  motion.shaderWaveform.channels = [new Float64Array(256), new Float64Array(256)];
+  const baseline = render(view, view.scene).signature;
+  for (const band of ["low", "mid", "high"]) {
+    motion.signal = { ...signal, [band]: 1 };
+    const active = render(view, view.scene).signature;
+    assert.notEqual(active, baseline, band);
+    motion.signal = { ...signal, [band]: 8 };
+    assert.equal(render(view, view.scene).signature, active, `${band} must be bounded`);
+  }
+  motion.signal = signal;
+  for (const side of [0, 1]) {
+    motion.shaderWaveform.channels[side].fill(.5);
+    assert.notEqual(render(view, view.scene).signature, baseline, `Stereo side ${side}`);
+    motion.shaderWaveform.channels[side].fill(0);
+  }
+  const before = structuredClone(motion);
+  assert.equal(render(view, view.scene).signature, baseline);
+  assert.deepEqual(motion, before);
+  const source = await readFile(new URL("../demo/shader-scenes.js", import.meta.url), "utf8");
+  const mosaic = source.slice(source.indexOf("const mosaicShader"), source.indexOf("const plasmaShader"));
+  assert.match(mosaic, /for \(int layer = 1; layer >= 0; layer--\)/);
+  assert.match(mosaic, /fwidth\(point\.x\) \+ fwidth\(point\.y\)/);
+  assert.match(mosaic, /smoothstep\(inner - edge, inner \+ edge, distanceToTile\)/);
+});
+
 test("Polar Plasma uses bounded independent audio controls and a nonsingular angular field", async () => {
   const view = Object.assign(renderer(), { scene: "polar-plasma" });
   const motion = updateGeneralMotion(view, .1);
@@ -654,7 +766,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
   updateGeneralMotion(view, .2);
   const before = [...view.generalMotion.values];
   for (const [width, height] of [[1440, 900], [780, 1688]]) {
-    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom"]) {
+    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit"]) {
       paths.begin(transform, .37);
       drawGeneralScene(view, paths, scene, width, height, width / 2, height / 2);
       assert(paths.vertexCount > 100);
@@ -694,13 +806,13 @@ test("GPU curves preserve crossfade alpha and bypass both raster allocation and 
   view.curveScenes = { draw: (...args) => { calls.push(args); return true; }, dispose() {} };
   const context = { globalAlpha: .37 };
   try {
-    for (const scene of ["aperture", "wavegarden", "helix", "terrain"]) {
+    for (const scene of ["aperture", "wavegarden", "helix", "terrain", "oscilloscope-orbit"]) {
       view.drawScene(context, scene, 3840, 2160, 1920, 1080, .4);
       assert.equal(calls.at(-1)[0], view);
       assert.equal(calls.at(-1)[1], context);
       assert.deepEqual(calls.at(-1).slice(2), [scene, 3840, 2160, 1920, 1080, .4]);
     }
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 5);
     assert.equal(view.sceneCanvas, undefined);
     assert.equal(context.globalAlpha, .37);
   } finally {
@@ -735,14 +847,14 @@ test("additive GPU scenes preserve parent alpha and restore blending when switch
   };
   const view = renderer();
   updateGeneralMotion(view, .5);
-  for (const scene of ["wavegarden", "helix", "terrain", "aperture"]) {
+  for (const scene of ["wavegarden", "helix", "terrain", "oscilloscope-orbit", "aperture"]) {
     assert(gpu.draw(view, context, scene, 1440, 900, 720, 450, .4));
     assert.equal(context.globalAlpha, .37);
     assert.equal(context.globalCompositeOperation, "source-over");
     for (let offset = 5; offset < paths.vertexCount * 9; offset += 9) assert(paths.vertices[offset] <= .37 + 1e-7);
   }
-  assert.deepEqual(blends, [AdditiveBlending, AdditiveBlending, AdditiveBlending, NormalBlending]);
-  assert.deepEqual(composites, [[1, "lighter"], [1, "lighter"], [1, "lighter"], [1, "source-over"]]);
+  assert.deepEqual(blends, [AdditiveBlending, AdditiveBlending, AdditiveBlending, AdditiveBlending, NormalBlending]);
+  assert.deepEqual(composites, [[1, "lighter"], [1, "lighter"], [1, "lighter"], [1, "lighter"], [1, "source-over"]]);
 });
 
 test("two-stop terrain gradients interpolate straight colors before fragment premultiplication", () => {
@@ -1205,9 +1317,9 @@ test("flight sky follows unit-length solar and lunar paths through day and night
   assert.deepEqual(flightSkyDirections(12, .4), flightSkyDirections(12, .4));
 });
 
-test("terrain, twister, Foundry and plasma refresh waveform uniforms on each draw", () => {
+test("terrain, twister, Foundry, plasma and mosaic refresh waveform uniforms on each draw", () => {
   const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
-    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}, {}, {}],
+    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}, {}, {}, {}],
     renderer: {
       domElement: { width: 1440, height: 900 },
       getContext: () => ({ isContextLost: () => false }), render() {}
@@ -1225,7 +1337,7 @@ test("terrain, twister, Foundry and plasma refresh waveform uniforms on each dra
   gpu.texture = { name: "original" };
   gpu.mountainTexture = { name: "smooth" };
   gpu.uniforms.cameraAudio.value.set = (...values) => cameraUploads.push(values);
-  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry", "polar-plasma"]) {
+  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry", "polar-plasma", "rotozoom-mosaic"]) {
     gpu.waveform.fill(0);
     assert.equal(gpu.draw({ drawImage() {} }, scene, 1440, 900, state, .4, 1), true);
     assert.equal(gpu.uniforms.terrainMap.value, scene === "voxel-flight" ? gpu.mountainTexture : gpu.texture);
@@ -1978,7 +2090,7 @@ test("general crossfade keeps the outgoing seed and balances both scenes around 
   view.music = { beatInterval: .5, toneFast: [], toneCentroidFast: .5 };
   view.sidSceneMode = false;
   view.sceneDeck = [...GENERAL_SCENES];
-  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma"]) {
+  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit"]) {
     calls.length = 0;
     context.globalAlpha = 1;
     view.scene = GENERAL_SCENES[GENERAL_SCENES.indexOf(scene) - 1];

@@ -18,7 +18,7 @@ ignored. Automatic scene rotation remains shuffled.
 
 ## Metaball Foundry
 
-The general deck now has 21 effects. Metaball Foundry is a full-screen Three.js
+The general deck now has 23 effects. Metaball Foundry is a full-screen Three.js
 raymarched chrome sculpture: six smoothly joined forms, a neutral softbox, and
 two reflected stereo waveform ribbons with faint cool/warm separation. These
 are directional environment reflections, not painted surface stripes or a
@@ -94,6 +94,38 @@ singularities. It renders at native resolution and reuses the existing filtered
 waveform texture. Without WebGL, a coarse adaptive Canvas color grid provides
 an approximation. The scene keeps the standard 20-second hold, automatic
 crossfades and immediate manual selection. SID's separate deck is unchanged.
+
+## Rotozoom Mosaic
+
+Rotozoom Mosaic follows Polar Plasma. Two counter-rotating tiled planes combine
+bounded zoom, beveled diamond rims and offset shadows for an illustrative sense
+of depth. Lemon-yellow, blue and silver tiles sit over charcoal; the rear plane
+is darker. Native-resolution derivative antialiasing keeps the edges crisp.
+
+Bass and beat momentum change scale, mids shift the lattice, treble opens the
+tile centers, and the two eased stereo waveforms independently shape the outer
+and inner rims. All bands are bounded; slow rotation and zoom continue in
+silence. Drawing reuses the shared audio state without integrating it again.
+The Canvas fallback uses filled diamond rings and shadows without the shader's
+bevel shading. The standard 20-second hold and immediate arrow-key selection
+remain unchanged, as does the separate SID deck.
+
+## Oscilloscope Orbit
+
+Oscilloscope Orbit follows Rotozoom Mosaic. Two closed stereo waveform curves
+rotate in three dimensions, projected with a Three.js perspective camera and
+rendered by the native-resolution GPU curve renderer. Ice-blue and gold cores
+retain fine edges, with a faint halo and short fading trails. Bass and beat
+momentum expand the orbit, mids shape its depth, and treble changes core width.
+The signed stereo waveforms shape both curves; this is an artistic oscilloscope
+projection, not a calibrated phase meter.
+
+Eight reusable snapshots at 120 ms intervals retain eased stereo audio and the
+actual rotation clock. Trails expire after 0.9 seconds; silence leaves a faint
+idle orbit. Orbit and Feedback Bloom have separate buffers, retained only while
+active or outgoing in a crossfade. Drawing does not update either history.
+Canvas fallback uses the same projected curves. Portrait framing, the standard
+20-second hold, immediate manual selection and the separate SID deck remain.
 
 ## Audio and display updates
 

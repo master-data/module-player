@@ -1,6 +1,6 @@
 import { PerspectiveCamera, TorusKnotGeometry, Vector3 } from "./vendor/three/three.module.min.js";
 
-export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma"];
+export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit"];
 
 const TAU = Math.PI * 2;
 const CURVE_KERNEL = Float64Array.from({ length: 33 }, (_, index) => Math.exp(-.5 * ((index - 16) / 7) ** 2));
@@ -140,9 +140,9 @@ function updateShaderWaveform(motion, delta, hasAudio) {
   }
 }
 
-function updateFeedbackHistory(motion, delta, hasAudio) {
-  const history = motion.feedback ??= { time: 0, tick: -1, head: 0, count: 0,
-    frames: Array.from({ length: 24 }, () => ({ time: 0, low: 0, impact: 0, level: 0,
+function updateFeedbackHistory(motion, delta, hasAudio, key = "feedback", capacity = 24) {
+  const history = motion[key] ??= { time: 0, tick: -1, head: 0, count: 0,
+    frames: Array.from({ length: capacity }, () => ({ time: 0, low: 0, impact: 0, level: 0,
       channels: [new Float32Array(96), new Float32Array(96)] })) };
   history.time += delta;
   const tick = Math.floor((history.time + 1e-9) / .12);
@@ -150,6 +150,8 @@ function updateFeedbackHistory(motion, delta, hasAudio) {
   history.tick = tick;
   const frame = history.frames[history.head];
   frame.time = history.time;
+  frame.clock = motion.time;
+  frame.mid = motion.signal.mid;
   frame.low = motion.signal.low;
   frame.impact = motion.impact;
   frame.level = hasAudio ? motion.signal.level : 0;
@@ -285,6 +287,11 @@ export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
   } else {
     motion.feedback = undefined;
   }
+  if (renderer.scene === "oscilloscope-orbit" || (renderer.previousScene === "oscilloscope-orbit" && renderer.sceneTransition < 1)) {
+    updateFeedbackHistory(motion, elapsed * (renderer.reducedMotion ? .22 : 1), channels.length > 0, "orbitHistory", 8);
+  } else {
+    motion.orbitHistory = undefined;
+  }
   return motion;
 }
 
@@ -320,7 +327,7 @@ export function drawCrystalFacets(context, scale, time, sectors, layers, cutoff,
 }
 
 export function drawGeneralScene(renderer, context, scene, width, height, centerX, centerY, seed = renderer.sceneSeed) {
-  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry" || scene === "polar-plasma") {
+  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry" || scene === "polar-plasma" || scene === "rotozoom-mosaic") {
     if (renderer.drawShaderScene?.(context, scene, width, height, seed)) return;
     if (scene === "voxel-flight") return drawGeneralScene(renderer, context, "terrain", width, height, centerX, centerY, seed + .37);
   }
@@ -337,7 +344,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const right = channels[1] ?? left;
   const traces = motion?.traceChannels ?? channels;
   const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
-  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma"].includes(scene)
+  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit"].includes(scene)
     ? filterCurveWaveform(renderer, motion?.shaderWaveform?.channels ?? traces) : undefined;
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
@@ -351,7 +358,56 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (scene === "polar-plasma") {
+  if (scene === "rotozoom-mosaic") {
+    const extent = detail(9, 4);
+    const density = extent / 9;
+    const bass = Math.max(0, Math.min(1, low));
+    const mids = Math.max(0, Math.min(1, mid));
+    const treble = Math.max(0, Math.min(1, high));
+    context.fillStyle = "#1e2125";
+    context.fillRect(-centerX, -centerY, width, height);
+    for (let layer = 1; layer >= 0; layer--) {
+      const angle = time * (.10 + layer * .035) * (1 - layer * 2) + seed * TAU + layer * .7;
+      const zoom = (2.4 + .35 * Math.sin(time * .13 + layer) + bass * .3 + impact * .16) * 1.45 ** layer * density;
+      const size = scale / (2 * zoom);
+      const driftX = Math.sin(time * .09) * (.18 + mids * .24);
+      const driftY = Math.cos(time * .07) * (.18 + mids * .24);
+      const maximumZoom = (2.4 + .35 + .3 + 1.2 * .16) * 1.45 ** layer * density;
+      const columns = Math.ceil((Math.abs(Math.cos(angle)) * width + Math.abs(Math.sin(angle)) * height) / scale * maximumZoom + 1);
+      const rows = Math.ceil((Math.abs(Math.sin(angle)) * width + Math.abs(Math.cos(angle)) * height) / scale * maximumZoom + 1);
+      const diamond = (column, row, radius) => {
+        for (let corner = 0; corner < 4; corner++) {
+          const phase = corner * Math.PI / 2;
+          const across = column - driftX + Math.cos(phase) * radius;
+          const down = row - driftY + Math.sin(phase) * radius;
+          const horizontal = (Math.cos(angle) * across - Math.sin(angle) * down) * size;
+          const vertical = -(Math.sin(angle) * across + Math.cos(angle) * down) * size;
+          if (corner === 0) context.moveTo(horizontal, vertical);
+          else context.lineTo(horizontal, vertical);
+        }
+        context.closePath();
+      };
+      for (let row = -rows; row <= rows; row++) {
+        for (let column = -columns; column <= columns; column++) {
+          const leftWave = sample(smoothTraces[0], .5 + .45 * Math.sin(column * .37));
+          const rightWave = sample(smoothTraces[1], .5 + .45 * Math.cos(row * .31));
+          const outer = .36 + bass * .03 + leftWave * .05;
+          const inner = .12 + treble * .10 + rightWave * .04;
+          context.beginPath();
+          diamond(column + .045, row - .065, outer);
+          context.fillStyle = "rgb(0 0 0 / .35)";
+          context.fill();
+          context.beginPath();
+          diamond(column, row, outer);
+          diamond(column, row, inner);
+          const pigment = ((column + row * 2 + layer) % 3 + 3) % 3;
+          const color = [[.68, .74, .025], [.035, .24, .65], [.64, .70, .75]][pigment];
+          context.fillStyle = `rgb(${color.map(value => Math.round((value * (1 - layer * .48) * .76) ** .4545 * 255)).join(" ")})`;
+          context.fill("evenodd");
+        }
+      }
+    }
+  } else if (scene === "polar-plasma") {
     const columns = detail(56, 16);
     const rows = Math.ceil(columns * height / width);
     const cellWidth = width / columns;
@@ -418,6 +474,53 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
         curve.end();
         context.strokeStyle = `hsla(${side ? 350 : 165} 52% ${layer === count ? 80 : 64}% / ${fade * (layer === count ? .5 : .12) * (.25 + Math.min(1, frame.level))})`;
         context.lineWidth = pixelRatio * (layer === count ? 2.2 : 1.3 + age * .55);
+        context.stroke();
+      }
+    }
+  } else if (scene === "oscilloscope-orbit") {
+    const projection = renderer.orbitProjection ??= { camera: new PerspectiveCamera(48, 1, .1, 80),
+      point: new Vector3(), axis: new Vector3(.2, .8, .35).normalize() };
+    const { camera, point, axis } = projection;
+    camera.aspect = width / height;
+    camera.position.set(0, 0, 12.5 * Math.max(1, .9 / camera.aspect));
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const history = motion?.orbitHistory;
+    const count = history?.count ?? 0;
+    const points = detail(192, 64);
+    const live = { time: history?.time ?? 0, clock: time, low, mid, impact, level, channels: smoothTraces };
+    context.globalCompositeOperation = "lighter";
+    for (let layer = 0; layer <= count; layer++) {
+      const frame = layer === count ? live : history.frames[(history.head - count + layer + history.frames.length) % history.frames.length];
+      const age = (history?.time ?? 0) - frame.time;
+      if (age > .9 || (layer < count && frame.level < .001)) continue;
+      const bass = Math.max(0, Math.min(1, frame.low));
+      const mids = Math.max(0, Math.min(1, frame.mid));
+      const expansion = 1 + bass * .18 + Math.max(0, Math.min(1.2, frame.impact)) * .28;
+      const opacity = Math.exp(-age * 3.5) * (.12 + Math.max(0, Math.min(1, frame.level)) * .7);
+      for (let side = 0; side < 2; side++) {
+        curve.begin(true);
+        for (let index = 0; index < points; index++) {
+          const phase = index / points * TAU;
+          const position = (1 - Math.cos(phase)) * .5;
+          const primary = sample(frame.channels[side], position);
+          const secondary = sample(frame.channels[1 - side], position);
+          point.set(Math.cos(phase) * (1.85 + primary * .8), Math.sin(phase) * (1.05 + secondary * .65),
+            Math.sin(phase * 2 + side * Math.PI / 2) * (.35 + mids * .5) + primary * .55);
+          point.multiplyScalar(expansion);
+          point.applyAxisAngle(axis, frame.clock * .12 + seed * TAU + side * .9);
+          point.project(camera);
+          curve.point(point.x * width * .5, -point.y * height * .5);
+        }
+        curve.end();
+        if (layer === count) {
+          context.strokeStyle = `hsla(${side ? 35 : 195} 75% 70% / ${opacity * .10})`;
+          context.lineWidth = pixelRatio * 6;
+          context.stroke();
+        }
+        context.strokeStyle = `hsla(${side ? 35 : 195} 65% ${layer === count ? 82 : 65}% / ${opacity * (layer === count ? 1 : .22)})`;
+        context.lineWidth = pixelRatio * (layer === count ? 2 + Math.max(0, Math.min(1, high)) * .8 : 1.2);
         context.stroke();
       }
     }

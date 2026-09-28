@@ -1,11 +1,11 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=46";
-import { ShaderScenes } from "./shader-scenes.js?v=29";
-import { CurveScenes } from "./curve-scenes.js?v=23";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=48";
+import { ShaderScenes } from "./shader-scenes.js?v=30";
+import { CurveScenes } from "./curve-scenes.js?v=25";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
 const SCENES = GENERAL_SCENES;
-const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom"]);
+const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit"]);
 const SPECTRAL_POINTS = 256;
 const SPECTRAL_BINS = [2, 3, 5, 7, 10, 14, 20, 28, 39, 54, 72, 96];
 let spectralKernels;
@@ -573,6 +573,7 @@ export class ImmersiveVisualizer {
     this.sceneArc = undefined;
     this.scene = nextScene;
     if (nextScene === "feedback-bloom" && this.generalMotion) this.generalMotion.feedback = undefined;
+    if (nextScene === "oscilloscope-orbit" && this.generalMotion) this.generalMotion.orbitHistory = undefined;
     this.sceneSeed = randomUnit();
     this.camera.phase = (this.camera.phase + 0.9 + this.sceneSeed * 2.2) % TAU;
     this.camera.gazeX = (randomUnit() - 0.5) * 0.026;
@@ -1245,7 +1246,7 @@ export class ImmersiveVisualizer {
     context.save();
     context.resetTransform();
     context.globalAlpha = 1;
-    if (["wavegarden", "helix", "terrain", "feedback-bloom"].includes(scene)) context.globalCompositeOperation = "lighter";
+    if (["wavegarden", "helix", "terrain", "feedback-bloom", "oscilloscope-orbit"].includes(scene)) context.globalCompositeOperation = "lighter";
     context.drawImage(this.sceneCanvas, 0, 0);
     context.restore();
   }
