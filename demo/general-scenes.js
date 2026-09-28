@@ -1,4 +1,6 @@
-export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight"];
+import { PerspectiveCamera, TorusKnotGeometry, Vector3 } from "./vendor/three/three.module.min.js";
+
+export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom"];
 
 const TAU = Math.PI * 2;
 const CURVE_KERNEL = Float64Array.from({ length: 33 }, (_, index) => Math.exp(-.5 * ((index - 16) / 7) ** 2));
@@ -138,6 +140,33 @@ function updateShaderWaveform(motion, delta, hasAudio) {
   }
 }
 
+function updateFeedbackHistory(motion, delta, hasAudio) {
+  const history = motion.feedback ??= { time: 0, tick: -1, head: 0, count: 0,
+    frames: Array.from({ length: 24 }, () => ({ time: 0, low: 0, impact: 0, level: 0,
+      channels: [new Float32Array(96), new Float32Array(96)] })) };
+  history.time += delta;
+  const tick = Math.floor((history.time + 1e-9) / .12);
+  if (history.tick === tick) return;
+  history.tick = tick;
+  const frame = history.frames[history.head];
+  frame.time = history.time;
+  frame.low = motion.signal.low;
+  frame.impact = motion.impact;
+  frame.level = hasAudio ? motion.signal.level : 0;
+  for (let side = 0; side < 2; side++) {
+    const source = hasAudio ? motion.shaderWaveform.channels[side] : undefined;
+    for (let point = 0; point < 96; point++) {
+      let value = 0;
+      for (let tap = 0; tap < CURVE_KERNEL.length; tap++) {
+        value += sample(source, point / 95 + (tap - 16) / 255) * CURVE_KERNEL[tap];
+      }
+      frame.channels[side][point] = value / CURVE_WEIGHT;
+    }
+  }
+  history.head = (history.head + 1) % history.frames.length;
+  history.count = Math.min(history.frames.length, history.count + 1);
+}
+
 export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
   const points = 96;
   const signalKeys = ["low", "mid", "high", "level"];
@@ -251,6 +280,11 @@ export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
     flight.values[index] = target + (offset + velocity * elapsed) * flightDecay;
     flight.velocities[index] = (flight.velocities[index] - flightFrequency * velocity * elapsed) * flightDecay;
   }
+  if (renderer.scene === "feedback-bloom" || (renderer.previousScene === "feedback-bloom" && renderer.sceneTransition < 1)) {
+    updateFeedbackHistory(motion, elapsed * (renderer.reducedMotion ? .22 : 1), channels.length > 0);
+  } else {
+    motion.feedback = undefined;
+  }
   return motion;
 }
 
@@ -286,7 +320,7 @@ export function drawCrystalFacets(context, scale, time, sectors, layers, cutoff,
 }
 
 export function drawGeneralScene(renderer, context, scene, width, height, centerX, centerY, seed = renderer.sceneSeed) {
-  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist") {
+  if (scene === "checker-tunnel" || scene === "voxel-flight" || scene === "raster-twist" || scene === "metaball-foundry") {
     if (renderer.drawShaderScene?.(context, scene, width, height, seed)) return;
     if (scene === "voxel-flight") return drawGeneralScene(renderer, context, "terrain", width, height, centerX, centerY, seed + .37);
   }
@@ -303,7 +337,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const right = channels[1] ?? left;
   const traces = motion?.traceChannels ?? channels;
   const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
-  const smoothTraces = ["silk", "wavegarden", "helix", "terrain"].includes(scene)
+  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom"].includes(scene)
     ? filterCurveWaveform(renderer, motion?.shaderWaveform?.channels ?? traces) : undefined;
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
@@ -317,7 +351,136 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (scene === "copper") {
+  if (scene === "feedback-bloom") {
+    const history = motion?.feedback;
+    const count = history?.count ?? 0;
+    const points = detail(96, 24);
+    const live = { time: history?.time ?? 0, low, impact, level, channels: smoothTraces };
+    context.globalCompositeOperation = "lighter";
+    for (let layer = 0; layer <= count; layer++) {
+      const frame = layer === count ? live : history.frames[(history.head - count + layer + history.frames.length) % history.frames.length];
+      const age = (history?.time ?? 0) - frame.time;
+      if (age > 3 || (layer < count && frame.level < .001)) continue;
+      const fade = Math.exp(-age * 1.15);
+      const reach = scale * (.14 + Math.max(0, Math.min(1, frame.low)) * .065 + Math.min(1.2, frame.impact) * .075) * (1 + age * .42);
+      for (let side = 0; side < 2; side++) {
+        curve.begin(true);
+        for (let point = 0; point < points; point++) {
+          const phase = point / points * TAU;
+          const angle = phase + time * .045 + seed * TAU + (side ? -1 : 1) * (.16 + age * .22);
+          const wave = sample(frame.channels[side], (1 - Math.cos(phase * 3)) * .5);
+          const radius = reach * (1 + wave * .42 + Math.cos(phase * 5) * .08);
+          curve.point(Math.cos(angle) * radius, Math.sin(angle) * radius);
+        }
+        curve.end();
+        context.strokeStyle = `hsla(${side ? 350 : 165} 52% ${layer === count ? 80 : 64}% / ${fade * (layer === count ? .5 : .12) * (.25 + Math.min(1, frame.level))})`;
+        context.lineWidth = pixelRatio * (layer === count ? 2.2 : 1.3 + age * .55);
+        context.stroke();
+      }
+    }
+  } else if (scene === "particle-assembly") {
+    if (!renderer.assemblyProjection) {
+      const geometry = new TorusKnotGeometry(1.7, .5, 128, 8);
+      renderer.assemblyProjection = { camera: new PerspectiveCamera(58, 1, .1, 80),
+        point: new Vector3(), axis: new Vector3(.3, .8, .2).normalize(), targets: geometry.getAttribute("position") };
+      geometry.dispose();
+    }
+    const { camera, point, axis, targets } = renderer.assemblyProjection;
+    const arc = scene === renderer.scene ? renderer.sceneArc : renderer.previousSceneArc;
+    const reveal = arc?.reveal ?? 1;
+    const development = arc?.development ?? 1;
+    const climax = arc?.climax ?? 0;
+    const release = arc?.release ?? 0;
+    const gather = Math.min(1, .05 + development * .9 + climax * .2) * (1 - release);
+    const response = renderer.reducedMotion ? .25 : 1;
+    const bass = Math.max(0, Math.min(1, low));
+    const mids = Math.max(0, Math.min(1, mid));
+    const treble = Math.max(0, Math.min(1, high));
+    const cameraTime = renderer.elapsed ?? time;
+    camera.aspect = width / height;
+    camera.position.set(Math.sin(cameraTime * .08 + seed * TAU) * .3 * response,
+      Math.cos(cameraTime * .065 + seed) * .22 * response,
+      (12 - (.25 + Math.sin(cameraTime * .09) * .25 + bass * .2) * response) * Math.max(1, .8 / camera.aspect));
+    camera.lookAt(Math.sin(cameraTime * .05 + seed) * .14 * response, Math.cos(cameraTime * .07) * .1 * response, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const hash = value => {
+      const noise = Math.sin(value * 127.1 + seed * 311.7) * 43758.5453;
+      return noise - Math.floor(noise);
+    };
+    const count = detail(900, 240);
+    const expansion = 1 + (bass * .24 + impact * .35) * response;
+    for (let particle = 0; particle < count; particle++) {
+      const index = Math.floor(particle / count * targets.count);
+      point.fromBufferAttribute(targets, index);
+      point.x = point.x * gather + ((hash(index * 3) - .5) * 7 + Math.sin(time * .19 + index) * .3) * (1 - gather);
+      point.y = point.y * gather + ((hash(index * 3 + 1) - .5) * 7 + Math.cos(time * .17 + index) * .3) * (1 - gather);
+      point.z = point.z * gather + (hash(index * 3 + 2) - .5) * 7 * (1 - gather);
+      const position = index / (targets.count - 1);
+      const leftWave = sample(smoothTraces[0], position);
+      const rightWave = sample(smoothTraces[1], position);
+      point.x += leftWave * (.5 + mids * .5) * response;
+      point.y += rightWave * (.5 + mids * .5) * response;
+      point.z += (leftWave - rightWave) * .3 * response;
+      point.multiplyScalar(expansion);
+      point.applyAxisAngle(axis, time * .17 + seed * TAU);
+      const depth = point.z;
+      point.project(camera);
+      const horizontal = point.x * width * .5;
+      const vertical = -point.y * height * .5;
+      const radius = pixelRatio * (1.1 + (depth + 5) * .13 + treble * .6);
+      const opacity = (.28 + reveal * .6) * (.65 + depth * .055);
+      curve.begin(true);
+      curve.point(horizontal - radius, vertical);
+      curve.point(horizontal, vertical - radius);
+      curve.point(horizontal + radius, vertical);
+      curve.point(horizontal, vertical + radius);
+      curve.end();
+      context.fillStyle = particle % 7 === 0 ? `hsla(8 58% 70% / ${opacity})`
+        : particle % 3 === 0 ? `hsla(165 52% 70% / ${opacity})` : `hsla(0 0% 92% / ${opacity})`;
+      context.fill();
+    }
+  } else if (scene === "metaball-foundry") {
+    const rings = detail(10, 4);
+    const points = detail(32, 12);
+    const arc = scene === renderer.scene ? renderer.sceneArc : renderer.previousSceneArc;
+    const reveal = arc?.reveal ?? 1;
+    const climax = arc?.climax ?? 0;
+    const spread = (1 + (arc?.development ?? 1) * .2 + (arc?.release ?? 0) * .25) * (1 - climax * .84);
+    for (let body = 0; body < 6; body++) {
+      const phase = body / 6 * TAU + time * .19 + seed * TAU;
+      const horizontal = body ? Math.cos(phase) * width * .2 * spread : 0;
+      const vertical = body ? Math.sin(phase * 1.6) * height * .2 * spread : 0;
+      const radius = scale * (.075 + low * .055 + impact * .12)
+        * (body ? .15 + reveal * .85 : 1.3 + climax * .6);
+      for (let ring = 0; ring < rings; ring++) {
+        const depth = 1 - ring / rings;
+        curve.begin(true);
+        for (let point = 0; point < points; point++) {
+          const angle = point / points * TAU;
+          curve.point(horizontal + Math.cos(angle) * radius * depth - ring * radius * .015,
+            vertical + Math.sin(angle) * radius * depth - ring * radius * .025);
+        }
+        curve.end();
+        context.fillStyle = `hsla(0 0% ${18 + ring / rings * 65}% / .9)`;
+        context.fill();
+      }
+      for (let side = 0; side < 2; side++) {
+        curve.begin();
+        for (let point = 0; point <= points; point++) {
+          const position = point / points;
+          const across = (position * 2 - 1) * .9;
+          const reflection = ((side ? .22 : -.22) + sample(smoothTraces[side], position) * .32)
+            * Math.sqrt(1 - across * across);
+          curve.point(horizontal + across * radius, vertical + reflection * radius);
+        }
+        curve.end();
+        context.strokeStyle = "hsla(0 0% 96% / .6)";
+        context.lineWidth = lineWidth;
+        context.stroke();
+      }
+    }
+  } else if (scene === "copper") {
     const barHeight = height * (.055 + low * .025 + impact * .03);
     for (let bar = 0; bar < 9; bar++) {
       const phase = time * .48 + bar * .57 + seed * TAU;

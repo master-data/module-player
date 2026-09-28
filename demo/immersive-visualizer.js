@@ -1,11 +1,11 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=39";
-import { ShaderScenes } from "./shader-scenes.js?v=24";
-import { CurveScenes } from "./curve-scenes.js?v=16";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=44";
+import { ShaderScenes } from "./shader-scenes.js?v=27";
+import { CurveScenes } from "./curve-scenes.js?v=21";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
 const SCENES = GENERAL_SCENES;
-const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain"]);
+const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom"]);
 const SPECTRAL_POINTS = 256;
 const SPECTRAL_BINS = [2, 3, 5, 7, 10, 14, 20, 28, 39, 54, 72, 96];
 let spectralKernels;
@@ -494,6 +494,27 @@ export class ImmersiveVisualizer {
     camera.microY = motion * (Math.cos(time * 1.41 + camera.phase) * 0.00055 + Math.sin(time * 2.11) * 0.0003);
   }
 
+  updateSceneArc(musicalEvent = {}) {
+    const elapsed = this.sceneElapsed;
+    const duration = this.sceneDuration;
+    const arc = this.sceneArc ??= { peakAt: undefined };
+    const ease = value => { const bounded = clamp(value); return bounded * bounded * (3 - 2 * bounded); };
+    const cue = musicalEvent.returnFromDrop || (musicalEvent.strongBeat
+      && (musicalEvent.phraseBoundary || musicalEvent.sectionBoundary || musicalEvent.toneBoundary));
+    if (["metaball-foundry", "particle-assembly"].includes(this.scene) && arc.peakAt === undefined && elapsed >= duration * .35 && elapsed < duration - 6
+      && this.signal.level > .08 && cue && this.elapsed - (this.lastScenePeakAt ?? -Infinity) >= 24) {
+      arc.peakAt = elapsed;
+      this.lastScenePeakAt = this.elapsed;
+    }
+    const peakAge = arc.peakAt === undefined ? -1 : elapsed - arc.peakAt;
+    arc.reveal = ease(elapsed / 4);
+    arc.development = ease((elapsed - 4) / (duration * .5));
+    arc.release = ease((elapsed - duration + 5) / 5);
+    arc.climax = peakAge < 0 ? 0 : ease(peakAge / .8) * (1 - ease((peakAge - 3) / 3));
+    arc.phase = arc.release > 0 ? "release" : elapsed < 4 ? "arrival"
+      : peakAge >= 0 && peakAge < 6 ? "peak" : "development";
+  }
+
   directScene(delta, musicalEvent = {}, sidState) {
     const sidMode = Boolean(sidState);
     if (sidMode !== this.sidSceneMode) {
@@ -505,6 +526,8 @@ export class ImmersiveVisualizer {
       this.sceneDeck = shuffle(scenes.filter((scene) => scene !== this.scene));
       this.sceneElapsed = 0;
       this.sceneDuration = 20;
+      this.sceneArc = undefined;
+      this.previousSceneArc = undefined;
       this.sceneTransition = 1;
       this.canvas.dataset.scene = this.scene;
       this.canvas.dataset.transitionReason = "opening";
@@ -513,6 +536,7 @@ export class ImmersiveVisualizer {
     const directionSpeed = this.reducedMotion ? 0.4 : 1;
     this.sceneElapsed += delta * directionSpeed;
     this.sceneTransition = Math.min(1, this.sceneTransition + delta / this.transitionDuration);
+    if (!sidMode) this.updateSceneArc(musicalEvent);
     const minimumHold = this.sceneDuration;
     const fallbackAt = this.sceneDuration + 2;
     let transitionReason;
@@ -539,20 +563,24 @@ export class ImmersiveVisualizer {
     const nextScene = scenes[(scenes.indexOf(this.scene) + step + scenes.length) % scenes.length];
     this.sceneDeck = this.sceneDeck.filter(scene => scene !== nextScene);
     this.transitionScene(nextScene, step > 0 ? "keyboard-next" : "keyboard-previous");
-    if (sidState?.playing === false) this.sceneTransition = 1;
+    this.sceneTransition = 1;
   }
 
   transitionScene(nextScene, transitionReason) {
     this.previousScene = this.scene;
     this.previousSceneSeed = this.sceneSeed;
+    this.previousSceneArc = this.sceneArc;
+    this.sceneArc = undefined;
     this.scene = nextScene;
+    if (nextScene === "feedback-bloom" && this.generalMotion) this.generalMotion.feedback = undefined;
     this.sceneSeed = randomUnit();
     this.camera.phase = (this.camera.phase + 0.9 + this.sceneSeed * 2.2) % TAU;
     this.camera.gazeX = (randomUnit() - 0.5) * 0.026;
     this.camera.gazeY = (randomUnit() - 0.5) * 0.02;
     this.camera.kick = Math.max(this.camera.kick, 0.016);
     this.sceneElapsed = 0;
-    this.sceneDuration = this.scene === "voxel-flight" ? 60 : 20;
+    this.sceneDuration = this.scene === "voxel-flight" ? 60 : ["metaball-foundry", "particle-assembly"].includes(this.scene) ? 36 : 20;
+    this.updateSceneArc();
     this.transitionDuration = clamp(this.music.beatInterval * 2, 0.8, 1.2) * (this.reducedMotion ? 1.25 : 1);
     this.sceneTransition = 0;
     this.music.beatsSinceScene = 0;
@@ -1217,7 +1245,7 @@ export class ImmersiveVisualizer {
     context.save();
     context.resetTransform();
     context.globalAlpha = 1;
-    if (["wavegarden", "helix", "terrain"].includes(scene)) context.globalCompositeOperation = "lighter";
+    if (["wavegarden", "helix", "terrain", "feedback-bloom"].includes(scene)) context.globalCompositeOperation = "lighter";
     context.drawImage(this.sceneCanvas, 0, 0);
     context.restore();
   }
@@ -1252,7 +1280,8 @@ export class ImmersiveVisualizer {
     if (!this.prepareShaderScenes()) return false;
     return this.shaderScenes.draw(context, scene, width, height,
       this.generalMotion ?? { time: this.elapsed, signal: this.signal, channels: this.channels }, seed, this.quality,
-      this.strobeEnabled ? (this.strobe?.opacity ?? 0) / .28 : 0, this.elapsed);
+      this.strobeEnabled ? (this.strobe?.opacity ?? 0) / .28 : 0, this.elapsed,
+      scene === this.scene ? this.sceneArc : this.previousSceneArc);
   }
 
   drawVignette(context, width, height) {

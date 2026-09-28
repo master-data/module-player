@@ -9,10 +9,75 @@ GPU. Native canvas resolution is preserved. The component's optional
 While the visualizer is open, **Right/Down** selects the next effect and
 **Left/Up** selects the previous effect. Manual navigation follows the current
 deck's listed order, wraps at either end, and bypasses the automatic hold time.
-Each selection restarts that effect's normal hold and uses the existing
-crossfade; paused SID playback switches immediately without resuming audio.
+Each selection restarts that effect's normal hold and shows only the selected
+effect on the next frame. Manual selection does not crossfade, so rapid arrow
+presses cannot leave the previous effect visible under the new label. Paused
+SID playback switches without resuming audio. Automatic changes still crossfade.
 Held-key repeats, modified arrow shortcuts, and arrows in editable controls are
 ignored. Automatic scene rotation remains shuffled.
+
+## Metaball Foundry
+
+The general deck now has 20 effects. Metaball Foundry is a full-screen Three.js
+raymarched chrome sculpture: six smoothly joined forms, a neutral softbox, and
+two reflected stereo waveform ribbons with faint cool/warm separation. These
+are directional environment reflections, not painted surface stripes or a
+recursive mirror of the rendered scene. They use the shared phase-aligned,
+spatially filtered waveform texture; PCM changes lighting, not surface geometry.
+The previous colored strips and procedural surface seams are removed. Smoothed
+audio bands still reshape the forms, and orbital motion is unchanged. The
+Canvas fallback approximates silver discs with curved waveform highlights and
+the same gathering gesture, without 3D fusion.
+
+Foundry holds for 36 seconds. Its first four seconds reveal the smaller bodies,
+then development opens the composition. After 35% of the hold, a return from a
+drop or a strong beat coinciding with a phrase, section or tonal boundary can
+trigger one fusion peak. Quiet input cannot trigger it; there is no fabricated
+peak when no suitable cue arrives. The fusion eases in over .8 seconds and out
+over three seconds, with a 24-second cooldown across visits. During the final
+five seconds the bodies separate and the camera withdraws before the usual
+music-guided crossfade. Clock-based phase envelopes are refresh-independent.
+An outgoing scene retains its own phase state throughout the crossfade.
+
+Existing scenes and the SID deck keep their behavior and holds, including Voxel
+Flight's minute. Manual arrows still bypass holds and restart the selected
+scene's sequence. Native pixels and uncapped callbacks remain unchanged; the
+Foundry shader has a bounded 192-256-step adaptive ray budget and a spatial bound
+that skips empty background. This is not a guarantee of any particular FPS.
+
+## Particle Assembly
+
+Particle Assembly follows Foundry in manual navigation and joins the shuffled
+general deck. A scattered point cloud gathers into a rotating torus knot built
+with Three.js geometry. Depth-shaded silver, jade and coral particles retain
+individual identities during the transformation. Bass and beat momentum expand
+both the cloud and the structure; eased stereo waveforms displace particles in
+three dimensions and mids control that displacement. Treble changes point size.
+The camera has a bounded slow pan and a few-percent zoom, driven by elapsed time
+with a small bass response, independent of audio-accelerated object rotation.
+A suitable musical peak completes the
+assembly, and release disperses it back into the cloud.
+
+The scene shares Foundry's 36-second hold and cue/cooldown rules, without forcing
+a peak during silence. Quality adjusts the sampled particle count (240-900).
+The shared GPU curve renderer draws the points at native resolution, with the
+same projection in the Canvas fallback. Drawing never advances the assembly
+state, and outgoing composition is preserved through crossfades. Existing
+effects, SID navigation and other hold times remain unchanged.
+
+## Feedback Bloom
+
+Feedback Bloom follows Particle Assembly. Live stereo waveform contours leave
+expanding, counter-rotating jade and rose trails. A fixed ring stores at most 24
+filtered stereo snapshots, sampled on a 120 ms clock while the effect is active
+or fading out. Trails expire after three seconds and new silence contributes no
+historical light. Drawing reads the history without advancing it, so crossfades
+cannot double the trail speed. Re-entering starts a fresh history.
+
+This is retained waveform geometry, not recursive framebuffer feedback. It uses
+the shared native-resolution GPU curve renderer with additive blending and the
+equivalent Canvas fallback, without allocating full-screen history textures.
+It retains the standard 20-second hold and immediate manual navigation.
 
 ## Audio and display updates
 

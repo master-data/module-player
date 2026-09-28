@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { drawGeneralScene } from "./general-scenes.js?v=39";
+import { drawGeneralScene } from "./general-scenes.js?v=44";
 
 const STRIDE = 9;
 const PAINTS = 32;
@@ -353,7 +353,7 @@ export class CurveScenes {
 
   draw(view, context, name, width, height, centerX, centerY, seed) {
     if (this.renderer.getContext().isContextLost()) return false;
-    const additive = ["wavegarden", "helix", "terrain"].includes(name);
+    const additive = ["wavegarden", "helix", "terrain", "feedback-bloom"].includes(name);
     this.material.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
     const canvas = this.renderer.domElement;
     if (canvas.width !== width || canvas.height !== height) this.renderer.setSize(width, height, false);

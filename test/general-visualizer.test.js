@@ -5,7 +5,7 @@ import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion } from "../demo/g
 import { CurveSceneGeometry, CurveScenes } from "../demo/curve-scenes.js";
 import { ImmersiveVisualizer } from "../demo/immersive-visualizer.js";
 import { SHADER_SCENES, ShaderScenes, WAVEFORM_POINTS, createFlightHeightTexture, flightSkyDirections } from "../demo/shader-scenes.js";
-import { AdditiveBlending, NormalBlending, DataUtils, RepeatWrapping, LinearFilter } from "../demo/vendor/three/three.module.min.js";
+import { AdditiveBlending, NormalBlending, DataUtils, RepeatWrapping, LinearFilter, Vector4 } from "../demo/vendor/three/three.module.min.js";
 
 function renderer() {
   return Object.assign(Object.create(ImmersiveVisualizer.prototype), {
@@ -368,7 +368,7 @@ test("every scene uses inertial audio and drawing never advances its shared cros
 });
 
 test("all general scenes are distinct, finite and adapt geometry at desktop and mobile sizes", () => {
-  assert.equal(GENERAL_SCENES.length, 17);
+  assert.equal(GENERAL_SCENES.length, 20);
   const view = renderer();
   for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     const signatures = new Set();
@@ -415,7 +415,7 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       const view = Object.assign(renderer(), { quality: .25, canvas: { clientWidth: width } });
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
-        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
+        if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
         if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
@@ -423,10 +423,13 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
 });
 
 test("GPU scenes dispatch at native dimensions with shared motion and fall back without WebGL", () => {
-  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist"]);
+  assert.deepEqual(SHADER_SCENES, ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry"]);
   const view = renderer();
   const motion = updateGeneralMotion(view, .1);
   const calls = [];
+  view.scene = "metaball-foundry";
+  view.sceneArc = { reveal: .5, development: .3, climax: 0, release: 0 };
+  view.previousSceneArc = { reveal: 1, development: 1, climax: 0, release: 1 };
   view.shaderScenes = { draw: (...args) => { calls.push(args); return true; } };
   view.canvas = { getContext() {} };
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -441,12 +444,168 @@ test("GPU scenes dispatch at native dimensions with shared motion and fall back 
       assert.equal(args[4], motion);
       assert.equal(args[5], view.sceneSeed);
       assert.equal(args[6], view.quality);
+      assert.equal(args[9], scene === view.scene ? view.sceneArc : view.previousSceneArc);
     }
     view.shaderScenes.draw = () => false;
     for (const scene of SHADER_SCENES) assert(render(view, scene).points > 38, scene);
   } finally {
     if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
     else delete globalThis.document;
+  }
+});
+
+test("Foundry body uniforms fuse at the peak and stay bounded without advancing shared state", () => {
+  const shader = Object.assign(Object.create(ShaderScenes.prototype), { uniforms: {
+    composition: { value: new Vector4() },
+    foundryBodies: { value: Array.from({ length: 6 }, () => new Vector4()) }
+  } });
+  const state = updateGeneralMotion(renderer(), .1);
+  const before = structuredClone(state);
+  const arc = { reveal: 1, development: 1, climax: 0, release: 0 };
+  const bodies = shader.uniforms.foundryBodies.value;
+  shader.updateFoundry(state, .4, arc);
+  const developed = bodies.map(body => body.clone());
+  shader.updateFoundry(state, .4, { ...arc, climax: 1 });
+  assert(bodies[0].w > developed[0].w);
+  for (let body = 1; body < bodies.length; body++) {
+    assert(Math.hypot(bodies[body].x, bodies[body].y, bodies[body].z)
+      < Math.hypot(developed[body].x, developed[body].y, developed[body].z) * .2);
+  }
+  shader.updateFoundry(state, .4, arc);
+  assert.deepEqual(bodies, developed);
+  assert.deepEqual(state, before);
+  assert.equal(shader.uniforms.foundryBodies.value, bodies);
+  for (const release of [0, .5, 1]) {
+    shader.updateFoundry({ time: 300, signal: { low: 8, mid: 8, high: 8 }, impact: 8 }, .9, { ...arc, release });
+    for (const body of bodies) assert(Math.hypot(body.x, body.y, body.z) + body.w < 3);
+  }
+  const view = renderer();
+  view.scene = "metaball-foundry";
+  view.sceneArc = arc;
+  const fallback = render(view, view.scene);
+  view.sceneArc = { ...arc, climax: 1 };
+  assert.notEqual(render(view, view.scene).signature, fallback.signature);
+});
+
+test("Foundry reflects stereo waveforms without using them to deform its surface", async () => {
+  const source = await readFile(new URL("../demo/shader-scenes.js", import.meta.url), "utf8");
+  const shader = source.slice(source.indexOf("const foundryShader"), source.indexOf("function heightTexture"));
+  assert.match(shader, /common \+ waveformShader/);
+  const distance = shader.slice(shader.indexOf("float foundryDistance"), shader.indexOf("vec3 studio"));
+  assert.doesNotMatch(distance, /waveAt|waveform/);
+  assert.match(shader, /vec2 wave = waveAt\(direction\.x/);
+  assert.match(shader, /studio\(reflection\)/);
+  assert.match(shader, /ribbon\.x[\s\S]*ribbon\.y/);
+  assert.doesNotMatch(shader, /float seam|float strip|float rim/);
+});
+
+test("Particle Assembly gathers deterministically and preserves its outgoing composition", () => {
+  const view = Object.assign(renderer(), { scene: "particle-assembly", sceneDuration: 36,
+    sceneArc: { reveal: 1, development: 1, climax: 0, release: 0 } });
+  for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
+    for (const quality of [1, .25]) {
+      view.quality = quality;
+      const drawing = capture();
+      let particles = 0;
+      const context = new Proxy(drawing.context, { get(target, name) {
+        if (name === "fill") return () => { particles++; target.fill(); };
+        return target[name];
+      } });
+      drawGeneralScene(view, context, view.scene, width, height, width / 2, height / 2);
+      assert(particles >= 240 && particles <= 900);
+      assert.equal(view.assemblyProjection.camera.aspect, width / height);
+      assert(drawing.result().coordinates.every(value => Number.isFinite(value) && Math.abs(value) < Math.max(width, height) * 4));
+    }
+  }
+  const developed = render(view, view.scene).signature;
+  const projection = view.assemblyProjection;
+  view.sceneArc = { ...view.sceneArc, climax: 1 };
+  const peak = render(view, view.scene).signature;
+  assert.notEqual(peak, developed);
+  assert.equal(render(view, view.scene).signature, peak);
+  assert.equal(view.assemblyProjection, projection);
+  const outgoing = view.sceneArc;
+  view.scene = "silk";
+  view.previousSceneArc = outgoing;
+  view.sceneArc = { reveal: 0, development: 0, climax: 0, release: 0 };
+  assert.equal(render(view, "particle-assembly").signature, peak, "The outgoing assembly retains its own composition");
+  view.scene = "particle-assembly";
+  view.sceneArc = undefined;
+  view.elapsed = view.sceneElapsed = 14;
+  view.updateSceneArc({ returnFromDrop: true });
+  view.elapsed = view.sceneElapsed = 15;
+  view.updateSceneArc();
+  assert.equal(view.sceneArc.phase, "peak");
+  assert.equal(view.sceneArc.climax, 1);
+});
+
+test("Particle Assembly reacts before gathering and pans gently with audio time held fixed", () => {
+  const view = Object.assign(renderer(), { scene: "particle-assembly",
+    sceneArc: { reveal: 1, development: 0, climax: 0, release: 0 } });
+  const motion = updateGeneralMotion(view, .1);
+  const resting = render(view, view.scene);
+  const camera = view.assemblyProjection.camera;
+  const position = camera.position.clone();
+  motion.impact = 1;
+  assert.notDeepEqual(render(view, view.scene).coordinates, resting.coordinates);
+  motion.impact = 0;
+  const flat = [new Float64Array(256), new Float64Array(256)];
+  motion.shaderWaveform.channels = flat;
+  const neutral = render(view, view.scene);
+  flat[0].fill(.6);
+  assert.notDeepEqual(render(view, view.scene).coordinates, neutral.coordinates);
+  flat[0].fill(0);
+  flat[1].fill(.6);
+  assert.notDeepEqual(render(view, view.scene).coordinates, neutral.coordinates);
+  const clock = motion.time;
+  view.elapsed += 12;
+  render(view, view.scene);
+  assert.notDeepEqual(camera.position, position);
+  assert(Math.abs(camera.position.x) <= .3 && Math.abs(camera.position.y) <= .22);
+  assert(camera.position.z >= 11.2 && camera.position.z <= 12);
+  assert.equal(motion.time, clock);
+  motion.signal = { low: 8, mid: 8, high: 8, level: 8 };
+  const loud = render(view, view.scene);
+  assert(camera.position.z >= 11.2 && camera.position.z <= 12);
+  motion.signal = { low: 1, mid: 1, high: 1, level: 1 };
+  assert.deepEqual(render(view, view.scene).coordinates, loud.coordinates, "Above-unity input must not cause runaway camera or particle deformation");
+});
+
+test("Feedback Bloom retains bounded stereo history, expires silence and never advances during drawing", () => {
+  for (const rate of [30, 60, 120]) {
+    const view = Object.assign(renderer(), { scene: "feedback-bloom",
+      channels: [new Float32Array(256).fill(.4), new Float32Array(256).fill(-.2)] });
+    for (let frame = 0; frame < rate * 3; frame++) updateGeneralMotion(view, 1 / rate);
+    const motion = view.generalMotion;
+    const history = motion.feedback;
+    assert.equal(history.count, 24);
+    assert.equal(history.frames.length, 24);
+    assert.equal(history.tick, 25);
+    const latest = history.frames[(history.head + 23) % 24];
+    assert(latest.channels[0][48] > .1 && latest.channels[1][48] < -.05);
+    const before = structuredClone(history);
+    const signature = render(view, view.scene).signature;
+    assert.equal(render(view, view.scene).signature, signature);
+    assert.deepEqual(history, before);
+    const buffers = history.frames.map(frame => frame.channels);
+    view.channels = [];
+    view.signal = { low: 0, mid: 0, high: 0, level: 0 };
+    updateGeneralMotion(view, .2);
+    const trails = render(view, view.scene).signature;
+    motion.feedback = undefined;
+    assert.notEqual(render(view, view.scene).signature, trails, "Old audio must remain visible in the fading trails");
+    motion.feedback = history;
+    updateGeneralMotion(view, 3.1);
+    assert(history.frames.every(frame => history.time - frame.time > 3 || frame.level === 0));
+    history.frames.forEach((frame, index) => assert.equal(frame.channels, buffers[index]));
+    view.scene = "silk";
+    view.previousScene = "feedback-bloom";
+    view.sceneTransition = .5;
+    updateGeneralMotion(view, .01);
+    assert.equal(motion.feedback, history);
+    view.sceneTransition = 1;
+    updateGeneralMotion(view, .01);
+    assert.equal(motion.feedback, undefined);
   }
 });
 
@@ -457,7 +616,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
   updateGeneralMotion(view, .2);
   const before = [...view.generalMotion.values];
   for (const [width, height] of [[1440, 900], [780, 1688]]) {
-    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain"]) {
+    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom"]) {
       paths.begin(transform, .37);
       drawGeneralScene(view, paths, scene, width, height, width / 2, height / 2);
       assert(paths.vertexCount > 100);
@@ -1008,9 +1167,9 @@ test("flight sky follows unit-length solar and lunar paths through day and night
   assert.deepEqual(flightSkyDirections(12, .4), flightSkyDirections(12, .4));
 });
 
-test("terrain and twister refresh waveform uniforms on each draw", () => {
+test("terrain, twister and Foundry refresh waveform uniforms on each draw", () => {
   const gpu = Object.assign(Object.create(ShaderScenes.prototype), {
-    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}],
+    waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {}, mesh: {}, materials: [{}, {}, {}, {}],
     renderer: {
       domElement: { width: 1440, height: 900 },
       getContext: () => ({ isContextLost: () => false }), render() {}
@@ -1019,7 +1178,8 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
       resolution: { value: { set() {} } }, clock: {}, flightClock: {}, seed: {}, terrainMap: {},
       audio: { value: { set() {} } }, cameraAudio: { value: { set() {} } }, impact: {}, detail: {}, beaconPulse: {},
       pigmentFlow: { value: { set() {} } }, pigmentSpectrum: { value: { set() {} } }, terrainAudio: { value: { set() {} } },
-      sunDirection: { value: { set() {} } }, moonDirection: { value: { set() {} } }
+      sunDirection: { value: { set() {} } }, moonDirection: { value: { set() {} } },
+      composition: { value: new Vector4() }, foundryBodies: { value: Array.from({ length: 6 }, () => new Vector4()) }
     }
   });
   const state = { time: 12, signal: renderer().signal, channels: [new Float32Array(96)], traceChannels: [new Float32Array([.5, -.5])] };
@@ -1027,7 +1187,7 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
   gpu.texture = { name: "original" };
   gpu.mountainTexture = { name: "smooth" };
   gpu.uniforms.cameraAudio.value.set = (...values) => cameraUploads.push(values);
-  for (const scene of ["raster-twist", "voxel-flight"]) {
+  for (const scene of ["raster-twist", "voxel-flight", "metaball-foundry"]) {
     gpu.waveform.fill(0);
     assert.equal(gpu.draw({ drawImage() {} }, scene, 1440, 900, state, .4, 1), true);
     assert.equal(gpu.uniforms.terrainMap.value, scene === "voxel-flight" ? gpu.mountainTexture : gpu.texture);
@@ -1630,8 +1790,8 @@ test("manual scene navigation wraps both decks, resets holds and supports paused
       assert.equal(view.previousScene, previous);
       assert.equal(view.previousSceneSeed, previousSeed);
       assert.equal(view.sceneElapsed, 0);
-      assert.equal(view.sceneDuration, view.scene === "voxel-flight" ? 60 : 20);
-      assert.equal(view.sceneTransition, sidState?.playing === false ? 1 : 0);
+      assert.equal(view.sceneDuration, view.scene === "voxel-flight" ? 60 : ["metaball-foundry", "particle-assembly"].includes(view.scene) ? 36 : 20);
+      assert.equal(view.sceneTransition, 1, "Manual selection must show the selected effect without an outgoing crossfade");
       assert.equal(view.canvas.dataset.scene, view.scene);
       assert.equal(view.canvas.dataset.transitionReason, "keyboard-next");
       assert(!view.sceneDeck.includes(view.scene));
@@ -1663,10 +1823,62 @@ test("all scene changes respect a persistent hold before musical transitions", (
         assert.equal(view.scene, previous, reason);
         view.directScene(4.1, { [reason]: true }, sidState);
         assert.notEqual(view.scene, previous, reason);
-        assert.equal(view.sceneDuration, view.scene === "voxel-flight" ? 60 : 20);
+        assert.equal(view.sceneDuration, view.scene === "voxel-flight" ? 60 : ["metaball-foundry", "particle-assembly"].includes(view.scene) ? 36 : 20);
       }
     }
   }
+});
+
+test("scene arcs reveal gradually, reserve peaks for strong cues and release before exit", () => {
+  const view = Object.assign(renderer(), { scene: "metaball-foundry", sceneElapsed: 0, sceneDuration: 36 });
+  view.updateSceneArc();
+  assert.equal(view.sceneArc.phase, "arrival");
+  assert.equal(view.sceneArc.reveal, 0);
+  view.sceneElapsed = 14;
+  view.elapsed = 14;
+  view.updateSceneArc({ beat: true, strongBeat: true });
+  assert.equal(view.sceneArc.phase, "development");
+  assert.equal(view.sceneArc.peakAt, undefined);
+  view.updateSceneArc({ strongBeat: true, phraseBoundary: true });
+  assert.equal(view.sceneArc.peakAt, 14);
+  view.sceneElapsed = 15;
+  view.updateSceneArc();
+  assert.equal(view.sceneArc.phase, "peak");
+  assert.equal(view.sceneArc.climax, 1);
+  view.sceneElapsed = 33;
+  view.updateSceneArc({ returnFromDrop: true });
+  assert.equal(view.sceneArc.phase, "release");
+  assert(view.sceneArc.release > 0 && view.sceneArc.release < 1);
+  assert.equal(view.sceneArc.peakAt, 14);
+  view.sceneArc = undefined;
+  view.sceneElapsed = 14;
+  view.elapsed = 20;
+  view.updateSceneArc({ returnFromDrop: true });
+  assert.equal(view.sceneArc.peakAt, undefined, "A recent reveal must not repeat immediately");
+  view.elapsed = 50;
+  view.signal.level = 0;
+  view.updateSceneArc({ returnFromDrop: true });
+  assert.equal(view.sceneArc.peakAt, undefined, "Silence must not trigger a peak");
+});
+
+test("Foundry choreography is refresh-independent and preserves the outgoing arc", () => {
+  const states = [];
+  for (const rate of [30, 60, 120, 240]) {
+    const view = Object.assign(renderer(), { scene: "metaball-foundry", sceneDuration: 36 });
+    for (let frame = 0; frame <= rate * 36; frame++) {
+      view.elapsed = view.sceneElapsed = frame / rate;
+      view.updateSceneArc({ returnFromDrop: frame === rate * 14 });
+    }
+    states.push(structuredClone(view.sceneArc));
+    const outgoing = view.sceneArc;
+    view.sceneArc = undefined;
+    view.sceneElapsed = 0;
+    view.updateSceneArc();
+    assert.deepEqual(outgoing, states.at(-1));
+    assert.equal(view.sceneArc.reveal, 0);
+  }
+  for (const state of states) assert.deepEqual(state, states[0]);
+  assert.equal(states[0].release, 1);
 });
 
 test("Voxel Flight stays featured for a full minute under continuous musical events", () => {
@@ -1723,6 +1935,19 @@ test("general crossfade keeps the outgoing seed and balances both scenes around 
   assert.equal(calls.length, 2);
   assert(calls[0][2] > 0);
   assert.equal(starDraws, 3);
+  view.canvas.dataset = {};
+  view.camera.phase = 0;
+  view.music = { beatInterval: .5, toneFast: [], toneCentroidFast: .5 };
+  view.sidSceneMode = false;
+  view.sceneDeck = [...GENERAL_SCENES];
+  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom"]) {
+    calls.length = 0;
+    context.globalAlpha = 1;
+    view.scene = GENERAL_SCENES[GENERAL_SCENES.indexOf(scene) - 1];
+    view.stepScene(1);
+    view.paint(.016);
+    assert.deepEqual(calls, [[scene, view.sceneSeed, 1]], "The first manual frame must paint only the selected scene");
+  }
 });
 
 test("starfield persists through scene changes and drawing never advances it", () => {

@@ -1,6 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 
-export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist"];
+export const SHADER_SCENES = ["checker-tunnel", "voxel-flight", "raster-twist", "metaball-foundry"];
 export const WAVEFORM_POINTS = 256;
 const WAVEFORM_RADIUS = 16;
 const waveformKernel = Float64Array.from({ length: WAVEFORM_RADIUS * 2 + 1 }, (_, index) =>
@@ -487,6 +487,74 @@ void main() {
   gl_FragColor = vec4(finish(color) + (jitter - .5) / 255.0, 1.0);
 }`;
 
+const foundryShader = common + waveformShader + `
+uniform vec4 foundryBodies[6];
+uniform vec4 composition;
+float foundryDistance(vec3 point) {
+  float distanceToBody = length(point - foundryBodies[0].xyz) - foundryBodies[0].w;
+  float softness = .32 + composition.z * .22;
+  for (int body = 1; body < 6; body++) {
+    float nextDistance = length(point - foundryBodies[body].xyz) - foundryBodies[body].w;
+    float blend = clamp(.5 + .5 * (nextDistance - distanceToBody) / softness, 0.0, 1.0);
+    distanceToBody = mix(nextDistance, distanceToBody, blend) - softness * blend * (1.0 - blend);
+  }
+  return distanceToBody;
+}
+vec3 studio(vec3 direction) {
+  vec3 shade = mix(vec3(.02), vec3(.18), smoothstep(-.5, .8, direction.y));
+  float key = exp(-pow(abs(direction.x + .38) / .28, 4.0) - pow(abs(direction.y - .42) / .62, 4.0));
+  vec2 wave = waveAt(direction.x * .46 + .5);
+  vec2 gap = direction.y - vec2(.24, -.24) - wave * .3;
+  vec2 width = max(vec2(.012), min(vec2(.045), fwidth(gap) * 1.2));
+  vec2 ribbon = exp(-pow(gap / width, vec2(2.0)))
+    + .18 * exp(-pow(gap / .065, vec2(2.0)));
+  float ends = 1.0 - smoothstep(.8, .97, abs(direction.x));
+  return shade + key * vec3(.95) + ends * (ribbon.x * vec3(.85, .92, 1.0)
+    + ribbon.y * vec3(1.0, .94, .87)) * (.65 + min(audio.w, 1.0) * .35);
+}
+void main() {
+  vec2 screen = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
+  float aspect = resolution.x / resolution.y;
+  float distanceToCamera = (4.7 + composition.w * .7) * max(1.0, .85 / aspect);
+  float angle = clock * .065 + seed * PI * 2.0;
+  vec3 origin = vec3(sin(angle) * distanceToCamera, .45, cos(angle) * distanceToCamera);
+  vec3 forward = normalize(-origin);
+  vec3 right = normalize(cross(forward, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(right, forward);
+  vec3 direction = normalize(forward * 2.0 + right * screen.x + up * screen.y);
+  vec3 color = mix(vec3(.003, .006, .008), vec3(.028, .037, .038), exp(-dot(screen, screen) * .35));
+  float projection = dot(origin, direction);
+  float discriminant = projection * projection - dot(origin, origin) + 9.0;
+  if (discriminant > 0.0) {
+    float distanceAlong = max(0.0, -projection - sqrt(discriminant));
+    float farDistance = -projection + sqrt(discriminant);
+    bool hit = false;
+    vec3 point = origin;
+    for (int stepIndex = 0; stepIndex < 256; stepIndex++) {
+      if (stepIndex >= int(mix(192.0, 256.0, detail)) || distanceAlong > farDistance) break;
+      point = origin + direction * distanceAlong;
+      float gap = foundryDistance(point);
+      if (gap < max(.001, distanceAlong / resolution.y * .65)) { hit = true; break; }
+      distanceAlong += max(.001, gap * .95);
+    }
+    if (hit) {
+      float epsilon = max(.0015, distanceAlong / resolution.y * .35);
+      vec2 offset = vec2(1.0, -1.0) * .5773 * epsilon;
+      vec3 normal = normalize(offset.xyy * foundryDistance(point + offset.xyy)
+        + offset.yyx * foundryDistance(point + offset.yyx)
+        + offset.yxy * foundryDistance(point + offset.yxy)
+        + offset.xxx * foundryDistance(point + offset.xxx));
+      vec3 reflection = reflect(direction, normal);
+      float facing = max(dot(normal, -direction), 0.0);
+      float fresnel = .55 + .45 * pow(1.0 - facing, 5.0);
+      float diffuse = max(dot(normal, normalize(vec3(-.6, .8, .5))), 0.0);
+      color = studio(reflection) * fresnel + vec3(.075, .085, .09) * diffuse;
+      color *= .45 + composition.x * .55;
+    }
+  }
+  gl_FragColor = vec4(finish(color), 1.0);
+}`;
+
 function heightTexture(octaves = 6) {
   const size = 512;
   const values = new Uint16Array(size * size * 4);
@@ -588,11 +656,13 @@ export class ShaderScenes {
       terrainMap: { value: this.texture }, flightMap: { value: this.flightTexture },
       waveformMap: { value: this.waveformTexture }, beaconPulse: { value: 0 }, flightClock: { value: 0 },
       cameraAudio: { value: new THREE.Vector4() },
+      composition: { value: new THREE.Vector4(1, 1, 0, 0) },
+      foundryBodies: { value: Array.from({ length: 6 }, () => new THREE.Vector4()) },
       pigmentFlow: { value: new THREE.Vector3() }, pigmentSpectrum: { value: new THREE.Vector3() },
       terrainAudio: { value: new THREE.Vector4() },
       sunDirection: { value: new THREE.Vector3() }, moonDirection: { value: new THREE.Vector3() }
     };
-    this.materials = [tunnelShader, terrainShader, rasterShader].map(fragmentShader => new THREE.ShaderMaterial({
+    this.materials = [tunnelShader, terrainShader, rasterShader, foundryShader].map(fragmentShader => new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false
     }));
     this.mesh = new THREE.Mesh(this.geometry, this.materials[0]);
@@ -635,7 +705,28 @@ export class ShaderScenes {
     this.waveformTexture.needsUpdate = true;
   }
 
-  draw(context, name, width, height, state, seed, quality, beaconPulse = 0, flightTime = state.time) {
+  updateFoundry(state, seed, arc) {
+    const reveal = arc?.reveal ?? 1;
+    const development = arc?.development ?? 1;
+    const climax = arc?.climax ?? 0;
+    const release = arc?.release ?? 0;
+    this.uniforms.composition.value.set(reveal, development, climax, release);
+    const bodies = this.uniforms.foundryBodies.value;
+    const low = THREE.MathUtils.clamp(state.signal.low, 0, 1);
+    const beat = THREE.MathUtils.clamp(state.impact ?? 0, 0, 1.2);
+    bodies[0].set(0, 0, 0, .7 + low * .18 + beat * .06 + climax * .35);
+    for (let body = 1; body < 6; body++) {
+      const phase = body / 5 * Math.PI * 2 + state.time * .19 + seed * Math.PI * 2;
+      const spread = (1.05 + development * .3 + release * .35) * (1 - climax * .84);
+      const energy = THREE.MathUtils.clamp([state.signal.low, state.signal.mid, state.signal.high][body % 3], 0, 1);
+      bodies[body].set(Math.cos(phase) * spread,
+        Math.sin(phase * 1.6 + state.time * .13) * spread * .65,
+        Math.sin(phase) * spread * .65,
+        (.35 + energy * .14 + beat * .045) * (.15 + reveal * .85) * (1 - release * .35));
+    }
+  }
+
+  draw(context, name, width, height, state, seed, quality, beaconPulse = 0, flightTime = state.time, arc) {
     if (this.renderer.getContext().isContextLost()) return false;
     const canvas = this.renderer.domElement;
     if (canvas.width !== width || canvas.height !== height) this.renderer.setSize(width, height, false);
@@ -663,9 +754,10 @@ export class ShaderScenes {
     this.uniforms.audio.value.set(signal.low, signal.mid, signal.high, signal.level);
     this.uniforms.impact.value = impact;
     this.uniforms.detail.value = quality;
+    if (name === "metaball-foundry") this.updateFoundry(state, seed, arc);
     this.uniforms.terrainMap.value = name === "voxel-flight" ? this.mountainTexture : this.texture;
     this.uniforms.beaconPulse.value = Number.isFinite(beaconPulse) ? THREE.MathUtils.clamp(beaconPulse, 0, 1) : 0;
-    if (name === "raster-twist" || name === "voxel-flight") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
+    if (name === "raster-twist" || name === "voxel-flight" || name === "metaball-foundry") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
     this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
     this.renderer.render(this.scene, this.camera);
     context.drawImage(canvas, 0, 0, width, height);
