@@ -682,32 +682,36 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     let pressure = 0;
     for (const value of envelope) pressure += Math.abs(value);
     pressure /= Math.max(1, envelope.length);
-    const opening = scale * zoom * (.13 + response * (low * .055 + impact * .04 + pressure * .12));
-    for (let layer = 0; layer < 2; layer++) {
-      const direction = layer ? 1 : -1;
-      const energyData = motion?.energyChannels?.[layer];
+    const frequencyGroups = [bands[0], (bands[1] + bands[2]) * .5, (bands[3] + bands[4]) * .5, bands[5]];
+    for (let layer = 0; layer < 4; layer++) {
+      const direction = layer % 2 ? 1 : -1;
+      const side = layer % 2;
+      const frequency = Math.min(1, frequencyGroups[layer] * level * 6);
+      const opacity = .28 + frequency * .2;
+      const energyData = motion?.energyChannels?.[side];
       const contourAt = position => {
-        const energy = energyData ? sample(energyData, position) : Math.abs(sample(layer ? right : left, position));
+        const energy = energyData ? sample(energyData, position) : Math.abs(sample(side ? right : left, position));
         return energy * 4 / (1 + energy * 3);
       };
-      const outer = reach * (layer ? .58 : .72) * zoom;
-      const rotation = Math.sin(time * .19) * .12 * direction + seed * TAU + layer * .12
-        + direction * response * (mid * .18 + impact * .12);
-      const twist = .52 + response * (mid * .18 + impact * .12);
+      const outer = reach * (.72 - layer * .045) * zoom;
+      const rotation = seed * TAU + layer * .27 + direction * response
+        * (time * (.075 + layer * .018) + frequency * .28 + impact * .12);
+      const twist = .52 + response * (frequency * .18 + impact * .12);
+      const inner = scale * zoom * (.105 + layer * .035
+        + response * (frequency * .075 + impact * .04 + pressure * .12));
       for (let blade = 0; blade < blades; blade++) {
         const contour = contourAt((blade + .5) / blades);
-        const energy = Math.min(1, bands[blade % 6] * Math.min(1, level * 3) * 2 + contour * .6 + high * .25);
-        const inner = opening * (layer ? 1 : 1.3);
+        const energy = Math.min(1, frequency * .7 + contour * .3);
         const start = blade / blades * TAU + rotation;
-        const hue = palette[(blade + layer * 3) % palette.length];
+        const hue = palette[(blade + layer) % palette.length];
         const gradient = context.createLinearGradient(
           Math.cos(start) * inner, Math.sin(start) * inner,
           Math.cos(start + twist) * outer, Math.sin(start + twist) * outer);
-        gradient.addColorStop(0, ink(hue, .98, 88 + high * 5));
-        gradient.addColorStop(.22, ink(hue, .96, 42 + energy * 12));
-        gradient.addColorStop(.48, ink(hue, .94, 7 + energy * 4));
-        gradient.addColorStop(.52, ink(hue, .98, 76 + energy * 10));
-        gradient.addColorStop(1, ink(hue, .94, 13 + energy * 9));
+        gradient.addColorStop(0, ink(hue, opacity + .12, 78 + energy * 12));
+        gradient.addColorStop(.22, ink(hue, opacity, 42 + energy * 12));
+        gradient.addColorStop(.48, ink(hue, opacity * .65, 9 + energy * 4));
+        gradient.addColorStop(.52, ink(hue, opacity + .08, 68 + energy * 14));
+        gradient.addColorStop(1, ink(hue, opacity * .8, 18 + energy * 9));
         const end = start + TAU / blades;
         const tipX = Math.cos(start) * inner;
         const tipY = Math.sin(start) * inner;
@@ -721,11 +725,11 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
         context.closePath();
         context.fillStyle = gradient;
         context.fill();
-        stroke(context, hue, (layer ? .26 : .12) + energy * .18, lineWidth);
+        stroke(context, hue, .08 + frequency * .12, lineWidth * .7);
         context.beginPath();
         context.moveTo(tipX, tipY);
         context.lineTo(Math.cos(end) * inner, Math.sin(end) * inner);
-        stroke(context, hue, .85, lineWidth * .55);
+        stroke(context, hue, .24 + frequency * .25, lineWidth * .55);
       }
     }
   }

@@ -97,16 +97,18 @@ use synthetic PCM, not the user's music.
 
 ## Smooth surfaces and a coherent sky
 
-Aperture uses a six-hue demo-scene palette (pink, blue, yellow, violet, red and
-cyan) with near-opaque chrome blades, a dark midtone and a narrow bright
-reflection. Six rigid, overlapping leaves now meet at a shared hexagonal opening,
-with a recessed six-leaf backing layer. Bass, transients and waveform energy drive
-the shared opening instead of distorting individual leaf edges. A small rocking
-motion replaces continuous blade spinning. Only blade seams and opening-edge
-glints remain: the decorative ribs, pins and segmented ring have been removed.
+Aperture interleaves four translucent six-leaf irises with staggered openings
+and alternating rotation directions at different speeds. Bass, low-mid, high-mid
+and treble groups independently control their assigned iris's opening, angular
+offset, shading and opacity. These use the existing smoothed six-band analysis;
+stereo waveform energy and transients also provide shared musical movement.
+Each iris retains straight edges and a shared hexagonal opening. Pink, blue,
+yellow, violet, red and cyan chrome reflections blend through the layers using
+source-over alpha (gradient alpha .18-.6), without additive whiteout. The 24
+blade gradients fit the existing GPU paint buffer. Only blade seams and
+opening-edge glints remain; no decorative ribs, pins or segmented rings.
 A bounded 1.12-1.52x zoom cycle, lateral drift and gentle roll use elapsed time
-independently of musical energy. A larger base opening and softer bass/transient
-response reduce the pumping sensation while preserving musical movement. The iris
+independently of musical energy, complementing the counter-rotation. The iris
 remains an expressive camera-inspired mechanism, not a physical lens simulation;
 its corners are retained at every quality level in both GPU and Canvas rendering.
 

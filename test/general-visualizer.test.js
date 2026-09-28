@@ -448,7 +448,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
       assert(paths.indexCount > paths.vertexCount * 2, "Triangle vertices should be shared");
       assert(paths.indices.subarray(0, paths.indexCount).every(index => index < paths.vertexCount));
       assert.equal(paths.stack.length, 0);
-      assert.equal(paths.paintCount, scene === "aperture" ? 12 : 0);
+      assert.equal(paths.paintCount, scene === "aperture" ? 24 : 0);
       for (let offset = 0; offset < paths.vertexCount * 9; offset += 9) {
         for (let component = 0; component < 9; component++) assert(Number.isFinite(paths.vertices[offset + component]));
         assert(paths.vertices[offset + 5] <= .37 + 1e-7);
@@ -592,7 +592,7 @@ test("dense curve scenes fall back when the native raster surface is unavailable
   }
 });
 
-test("Aperture retains two six-leaf iris layers and an open center at every detail level", () => {
+test("Aperture retains four six-leaf iris layers and an open center at every detail level", () => {
   for (const quality of [.25, 1]) {
     for (const impact of [0, 1.2]) {
       const view = Object.assign(renderer(), { quality });
@@ -609,8 +609,8 @@ test("Aperture retains two six-leaf iris layers and an open center at every deta
         }
       });
       view.drawScene(context, "aperture", 1440, 900, 720, 450);
-      assert.equal(fills, 12);
-      assert.equal(gradients, 12);
+      assert.equal(fills, 24);
+      assert.equal(gradients, 24);
       const coordinates = drawing.result().coordinates;
       for (let index = 0; index < coordinates.length; index += 2) {
         const radius = Math.hypot(coordinates[index], coordinates[index + 1]);
@@ -641,8 +641,8 @@ test("Aperture leaves share a straight-sided hexagonal opening without decorativ
     }
   });
   drawGeneralScene(view, context, "aperture", 1440, 900, 720, 450);
-  assert.equal(leaves.length, 12);
-  for (let layer = 0; layer < 2; layer++) {
+  assert.equal(leaves.length, 24);
+  for (let layer = 0; layer < 4; layer++) {
     for (let blade = 0; blade < 6; blade++) {
       const leaf = leaves[layer * 6 + blade];
       const next = leaves[layer * 6 + (blade + 1) % 6];
@@ -653,7 +653,7 @@ test("Aperture leaves share a straight-sided hexagonal opening without decorativ
       assert(Math.abs(chord - radius) < 1e-8, "Six shared edges form a regular hexagon");
     }
   }
-  assert.equal(strokes, 24, "Only blade seams and opening edges remain");
+  assert.equal(strokes, 48, "Only blade seams and opening edges remain");
 });
 
 test("Aperture zoom and drift continue with musical state held fixed", () => {
@@ -670,7 +670,7 @@ test("Aperture zoom and drift continue with musical state held fixed", () => {
   assert.deepEqual(render(view, "aperture"), after);
 });
 
-test("Aperture uses saturated demo-scene hues and opaque chrome highlights", () => {
+test("Aperture uses saturated demo-scene hues and translucent chrome highlights", () => {
   const view = renderer();
   const drawing = capture();
   const paints = [];
@@ -682,11 +682,64 @@ test("Aperture uses saturated demo-scene hues and opaque chrome highlights", () 
     } : target[name]
   });
   drawGeneralScene(view, context, "aperture", 1440, 900, 720, 450);
-  assert.equal(paints.length, 12);
+  assert.equal(paints.length, 24);
   assert.deepEqual(paints.slice(0, 6).map(stops => Number(stops[0].color.match(/hsla\((\d+)/)[1])), [330, 205, 48, 265, 8, 185]);
   for (const stops of paints) {
     assert.deepEqual(stops.map(stop => stop.offset), [0, .22, .48, .52, 1]);
-    assert(stops.every(stop => Number(stop.color.match(/\/ ([\d.]+)/)[1]) >= .94));
+    assert(stops.every(stop => {
+      const alpha = Number(stop.color.match(/\/ ([\d.]+)/)[1]);
+      return alpha >= .18 && alpha <= .6;
+    }));
+  }
+});
+
+test("Aperture irises counter-rotate and respond independently to four frequency groups", () => {
+  const view = renderer();
+  const motion = updateGeneralMotion(view, .2);
+  motion.bands.fill(0);
+  motion.signal.level = .5;
+  const snapshot = () => {
+    const drawing = capture();
+    const leaves = [];
+    let tip;
+    let paint;
+    const context = new Proxy(drawing.context, {
+      get: (target, name) => (...values) => {
+        if (name === "moveTo") tip = values;
+        if (name === "createLinearGradient") {
+          paint = [];
+          return { addColorStop: (offset, color) => paint.push([offset, color]) };
+        }
+        if (name === "fill") leaves.push({ tip, paint });
+        return target[name](...values);
+      }
+    });
+    drawGeneralScene(view, context, "aperture", 1440, 900, 720, 450);
+    return [0, 6, 12, 18].map(index => leaves[index]);
+  };
+  const baseline = snapshot();
+  for (const [layer, indices] of [[0, [0]], [1, [1, 2]], [2, [3, 4]], [3, [5]]]) {
+    for (const index of indices) {
+      motion.bands[index] = .25;
+      const active = snapshot();
+      for (let other = 0; other < 4; other++) {
+        if (other === layer) {
+          assert(Math.hypot(...active[other].tip) > Math.hypot(...baseline[other].tip) + 10);
+          assert.notDeepEqual(active[other].paint, baseline[other].paint);
+        } else assert.deepEqual(active[other], baseline[other], "Unrelated frequency groups must retain their shape and opacity");
+      }
+      assert.deepEqual(snapshot(), active, "Drawing must not advance a layer's response");
+      motion.bands[index] = 0;
+    }
+  }
+  motion.time += .5;
+  const rotated = snapshot();
+  for (let layer = 0; layer < 4; layer++) {
+    const before = baseline[layer].tip;
+    const after = rotated[layer].tip;
+    const turn = Math.atan2(before[0] * after[1] - before[1] * after[0], before[0] * after[0] + before[1] * after[1]);
+    assert.equal(Math.sign(turn), layer % 2 ? 1 : -1);
+    assert(Math.abs(turn) > .03 && Math.abs(turn) < .08);
   }
 });
 
