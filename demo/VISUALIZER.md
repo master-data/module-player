@@ -18,7 +18,7 @@ ignored. Automatic scene rotation remains shuffled.
 
 ## Metaball Foundry
 
-The general deck now has 24 effects. Metaball Foundry is a full-screen Three.js
+The general deck now has 25 effects. Metaball Foundry is a full-screen Three.js
 raymarched chrome sculpture: six smoothly joined forms, a neutral softbox, and
 two reflected stereo waveform ribbons with faint cool/warm separation. These
 are directional environment reflections, not painted surface stripes or a
@@ -147,6 +147,22 @@ rotation continue during silence without advancing audio state during drawing.
 Without WebGL, an adaptive coarse Canvas grid approximates the same shading and
 crossings. The standard 20-second hold, immediate manual navigation and separate
 SID deck are unchanged.
+
+## Echo Chamber
+
+Echo Chamber follows Ribbon Loom: nested chamfered frames recede into a shifting
+perspective corridor. Three bands of solid bevel shading use restrained pewter
+and petrol tones. The outer frames can extend past the viewport, while the
+distant opening remains visible. Three.js projects the faces; the native GPU
+curve renderer and Canvas fallback draw the same geometry.
+
+Bass and beat momentum expand the frames, mids twist the corridor, and treble
+gently lifts the bevel highlights. Eased left/right waveforms independently
+shift the frame centers. Near and far fades hide frame recycling, with continuous
+depth-based placement through the travel loop. Aspect-bounded tilt keeps frames
+in front of the camera. Projection buffers are reused, and drawing does not
+advance audio state. The standard 20-second hold and immediate manual selection
+remain unchanged; SID's separate deck is unaffected.
 
 ## Audio and display updates
 

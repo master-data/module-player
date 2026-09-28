@@ -1,6 +1,6 @@
 import { PerspectiveCamera, TorusKnotGeometry, Vector3 } from "./vendor/three/three.module.min.js";
 
-export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom"];
+export const GENERAL_SCENES = ["aperture", "silk", "contours", "diffraction", "cascade", "interference", "weave", "prism", "monolith", "wavegarden", "terrain", "helix", "copper", "checker-tunnel", "raster-twist", "dot-vortex", "voxel-flight", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber"];
 
 const TAU = Math.PI * 2;
 const CURVE_KERNEL = Float64Array.from({ length: 33 }, (_, index) => Math.exp(-.5 * ((index - 16) / 7) ** 2));
@@ -344,7 +344,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   const right = channels[1] ?? left;
   const traces = motion?.traceChannels ?? channels;
   const trace = (position, side = 0) => sample(traces[side] ?? traces[0], position);
-  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom"].includes(scene)
+  const smoothTraces = ["silk", "wavegarden", "helix", "terrain", "metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber"].includes(scene)
     ? filterCurveWaveform(renderer, motion?.shaderWaveform?.channels ?? traces) : undefined;
   const audio = (position, side = 0) => {
     const value = sample(side ? right : left, position);
@@ -358,7 +358,66 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  if (scene === "ribbon-loom") {
+  if (scene === "echo-chamber") {
+    const projection = renderer.chamberProjection ??= {
+      camera: new PerspectiveCamera(58, 1, .1, 100), point: new Vector3(),
+      yawAxis: new Vector3(0, 1, 0), rollAxis: new Vector3(0, 0, 1),
+      vertices: new Float64Array(64),
+      corners: [[-1, -.7], [-.7, -1], [.7, -1], [1, -.7], [1, .7], [.7, 1], [-.7, 1], [-1, .7]]
+    };
+    const { camera, point, yawAxis, rollAxis, vertices, corners } = projection;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const count = detail(18, 6);
+    const bass = Math.max(0, Math.min(1, low));
+    const mids = Math.max(0, Math.min(1, mid));
+    const treble = Math.max(0, Math.min(1, high));
+    const phase = ((time * .38) % 1 + 1) % 1;
+    const expansion = 1 + bass * .15 + impact * .17;
+    const radii = [1, .96, .86, .835];
+    const recess = [.05, 0, 0, .12];
+    for (let frame = count - 1; frame >= 0; frame--) {
+      const depth = (frame + 1 - phase) / count;
+      const fade = Math.min(1, depth * count) * Math.min(1, (1 - depth) * count);
+      const opacity = fade * (.3 + (1 - depth) * .65);
+      const distance = 3.5 + depth * 32;
+      const yaw = Math.sin(depth * 3 + time * .18) * .20 / Math.max(1, camera.aspect);
+      const roll = Math.sin(time * .13 + seed * TAU) * .16 + depth * (.15 + mids * .3);
+      const driftX = Math.sin(depth * 4 + time * .15) * .45 + sample(smoothTraces[0], depth) * .9;
+      const driftY = Math.cos(depth * 3 + time * .11) * .3 + sample(smoothTraces[1], depth) * .75;
+      for (let band = 0; band < radii.length; band++) {
+        for (let corner = 0; corner < corners.length; corner++) {
+          point.set(corners[corner][0] * 3.8 * camera.aspect * radii[band] * expansion,
+            corners[corner][1] * 3.8 * radii[band] * expansion, -recess[band]);
+          point.applyAxisAngle(yawAxis, yaw).applyAxisAngle(rollAxis, roll);
+          point.x += driftX;
+          point.y += driftY;
+          point.z -= distance;
+          point.project(camera);
+          const offset = (band * 8 + corner) * 2;
+          vertices[offset] = point.x * width * .5;
+          vertices[offset + 1] = -point.y * height * .5;
+        }
+      }
+      for (let side = 0; side < 8; side++) {
+        const light = .6 + Math.cos(side * Math.PI / 4 - .8 + roll) * .25 + treble * .06;
+        for (let band = 0; band < 3; band++) {
+          const start = band * 8 + side;
+          const next = band * 8 + (side + 1) % 8;
+          context.beginPath();
+          context.moveTo(vertices[start * 2], vertices[start * 2 + 1]);
+          context.lineTo(vertices[next * 2], vertices[next * 2 + 1]);
+          context.lineTo(vertices[(next + 8) * 2], vertices[(next + 8) * 2 + 1]);
+          context.lineTo(vertices[(start + 8) * 2], vertices[(start + 8) * 2 + 1]);
+          context.closePath();
+          const brightness = band === 0 ? 30 + light * 20 : band === 1 ? 18 + light * 14 : 12 + light * 8;
+          context.fillStyle = `hsla(192 ${band === 1 ? 18 : 10}% ${brightness}% / ${opacity})`;
+          context.fill();
+        }
+      }
+    }
+  } else if (scene === "ribbon-loom") {
     const columns = detail(56, 16);
     const rows = Math.ceil(columns * height / width);
     const cellWidth = width / columns;

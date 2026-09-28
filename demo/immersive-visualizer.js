@@ -1,11 +1,11 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=50";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=51";
 import { ShaderScenes } from "./shader-scenes.js?v=32";
-import { CurveScenes } from "./curve-scenes.js?v=27";
+import { CurveScenes } from "./curve-scenes.js?v=29";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
 const SCENES = GENERAL_SCENES;
-const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit"]);
+const RASTER_SCENES = new Set(["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "echo-chamber"]);
 const SPECTRAL_POINTS = 256;
 const SPECTRAL_BINS = [2, 3, 5, 7, 10, 14, 20, 28, 39, 54, 72, 96];
 let spectralKernels;

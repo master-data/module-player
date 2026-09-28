@@ -1,12 +1,12 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { drawGeneralScene } from "./general-scenes.js?v=50";
+import { drawGeneralScene } from "./general-scenes.js?v=51";
 
 const STRIDE = 9;
 const PAINTS = 32;
 const PAINT_WIDTH = 6;
 
 function color(value, opacity, premultiply = true) {
-  const components = value.match(/[-+]?(?:\d*\.)?\d+/g).map(Number);
+  const components = value.match(/[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi).map(Number);
   const shade = new THREE.Color().setHSL(components[0] / 360, components[1] / 100, components[2] / 100);
   const alpha = (components[3] ?? 1) * opacity;
   const factor = premultiply ? alpha : 1;

@@ -372,7 +372,7 @@ test("every scene uses inertial audio and drawing never advances its shared cros
 });
 
 test("all general scenes are distinct, finite and adapt geometry at desktop and mobile sizes", () => {
-  assert.equal(GENERAL_SCENES.length, 24);
+  assert.equal(GENERAL_SCENES.length, 25);
   const view = renderer();
   for (const [width, height] of [[1440, 900], [390, 844], [320, 568]]) {
     const signatures = new Set();
@@ -420,7 +420,7 @@ test("waveforms stay broad in CSS pixels and curved even at minimum adaptive det
       for (const scene of GENERAL_SCENES) {
         const result = render(view, scene, width * resolution, height * resolution);
         if (!["aperture", "terrain", "voxel-flight", "prism", "helix", "copper", "silk", "particle-assembly", "feedback-bloom", "oscilloscope-orbit"].includes(scene)) assert(result.minimumWidth / resolution >= 4.5, scene);
-        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic", "ribbon-loom"].includes(scene)) assert(result.curves > 0, scene);
+        if (!["aperture", "cascade", "prism", "monolith", "checker-tunnel", "raster-twist", "dot-vortex", "polar-plasma", "rotozoom-mosaic", "ribbon-loom", "echo-chamber"].includes(scene)) assert(result.curves > 0, scene);
       }
     }
   }
@@ -694,6 +694,87 @@ test("Orbit trails retain eight snapshots, expire in silence and survive crossfa
   }
 });
 
+test("Echo Chamber responds to bounded bands and stereo while reusing its projection without advancing audio", () => {
+  const view = Object.assign(renderer(), { scene: "echo-chamber" });
+  const motion = updateGeneralMotion(view, .1);
+  const signal = { low: 0, mid: 0, high: 0, level: .5 };
+  motion.signal = signal;
+  motion.impact = 0;
+  motion.shaderWaveform.channels = [new Float64Array(256), new Float64Array(256)];
+  const baseline = render(view, view.scene).signature;
+  const projection = view.chamberProjection;
+  for (const band of ["low", "mid", "high"]) {
+    motion.signal = { ...signal, [band]: 1 };
+    const active = render(view, view.scene).signature;
+    assert.notEqual(active, baseline, band);
+    motion.signal = { ...signal, [band]: 8 };
+    assert.equal(render(view, view.scene).signature, active, `${band} must be bounded`);
+  }
+  motion.signal = signal;
+  for (const side of [0, 1]) {
+    motion.shaderWaveform.channels[side].fill(.5);
+    assert.notEqual(render(view, view.scene).signature, baseline, `Stereo side ${side}`);
+    motion.shaderWaveform.channels[side].fill(0);
+  }
+  assert.equal(render(view, view.scene).signature, baseline);
+  motion.signal = { low: 1, mid: 1, high: 1, level: 1 };
+  motion.impact = 1.2;
+  for (const [width, height] of [[1440, 900], [390, 844], [3200, 900]]) {
+    for (const time of [0, 12, 80]) {
+      motion.time = time;
+      const before = structuredClone(motion);
+      const result = render(view, view.scene, width, height);
+      assert(result.coordinates.every(value => Math.abs(value) < Math.max(width, height) * 4));
+      assert.equal(view.chamberProjection, projection);
+      assert.deepEqual(motion, before);
+    }
+  }
+});
+
+test("GPU curve colors preserve tiny scientific-notation opacity instead of making fades opaque", () => {
+  const paths = new CurveSceneGeometry();
+  paths.begin({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, .37);
+  for (const opacity of ["3.61e-8", "2E-7", "1e-1", "0.12"]) {
+    const paint = paths.paint(`hsla(192 10% 40% / ${opacity})`);
+    const alpha = Number(opacity) * .37;
+    assert(Math.abs(paint.shade[3] - alpha) < 1e-12);
+    assert(paint.shade.slice(0, 3).every(component => component >= 0 && component <= alpha));
+  }
+});
+
+test("Echo Chamber travel wraps continuously with dark end fades and restrained bevels", () => {
+  const view = Object.assign(renderer(), { scene: "echo-chamber" });
+  const motion = updateGeneralMotion(view, .1);
+  const draw = time => {
+    motion.time = time;
+    const paints = [];
+    const drawing = capture();
+    const context = new Proxy(drawing.context, {
+      set: (target, name, value) => {
+        if (name === "fillStyle") {
+          const match = /^hsla\(192 (\d+)% ([\d.]+)% \/ ([\d.e+-]+)\)$/.exec(value);
+          assert(match, value);
+          paints.push({ saturation: Number(match[1]), brightness: Number(match[2]), opacity: Number(match[3]) });
+        }
+        target[name] = value;
+        return true;
+      }
+    });
+    drawGeneralScene(view, context, view.scene, 1440, 900, 720, 450);
+    assert(paints.every(paint => paint.brightness < 50 && paint.saturation <= 18 && paint.opacity >= 0 && paint.opacity <= 1));
+    return { paints, ...drawing.result() };
+  };
+  const before = draw(1 / .38 - 1e-7);
+  const after = draw(1 / .38 + 1e-7);
+  const stride = 24 * 4 * 2;
+  assert(before.paints.slice(-24).every(paint => paint.opacity < 1e-6));
+  assert(after.paints.slice(0, 24).every(paint => paint.opacity < 1e-6));
+  const continuing = before.coordinates.slice(0, -stride);
+  const wrapped = after.coordinates.slice(stride);
+  assert.equal(continuing.length, wrapped.length);
+  continuing.forEach((value, index) => assert(Math.abs(value - wrapped[index]) < .001));
+});
+
 test("Plasma, Mosaic and Loom keep their large color surfaces mellow at peak audio", () => {
   const view = renderer();
   const motion = updateGeneralMotion(view, .2);
@@ -836,7 +917,7 @@ test("GPU curve batches retain original scene geometry, gradient stops and reusa
   updateGeneralMotion(view, .2);
   const before = [...view.generalMotion.values];
   for (const [width, height] of [[1440, 900], [780, 1688]]) {
-    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit"]) {
+    for (const scene of ["aperture", "diffraction", "silk", "contours", "interference", "weave", "wavegarden", "helix", "terrain", "particle-assembly", "feedback-bloom", "oscilloscope-orbit", "echo-chamber"]) {
       paths.begin(transform, .37);
       drawGeneralScene(view, paths, scene, width, height, width / 2, height / 2);
       assert(paths.vertexCount > 100);
@@ -876,13 +957,13 @@ test("GPU curves preserve crossfade alpha and bypass both raster allocation and 
   view.curveScenes = { draw: (...args) => { calls.push(args); return true; }, dispose() {} };
   const context = { globalAlpha: .37 };
   try {
-    for (const scene of ["aperture", "wavegarden", "helix", "terrain", "oscilloscope-orbit"]) {
+    for (const scene of ["aperture", "wavegarden", "helix", "terrain", "oscilloscope-orbit", "echo-chamber"]) {
       view.drawScene(context, scene, 3840, 2160, 1920, 1080, .4);
       assert.equal(calls.at(-1)[0], view);
       assert.equal(calls.at(-1)[1], context);
       assert.deepEqual(calls.at(-1).slice(2), [scene, 3840, 2160, 1920, 1080, .4]);
     }
-    assert.equal(calls.length, 5);
+    assert.equal(calls.length, 6);
     assert.equal(view.sceneCanvas, undefined);
     assert.equal(context.globalAlpha, .37);
   } finally {
@@ -2160,7 +2241,7 @@ test("general crossfade keeps the outgoing seed and balances both scenes around 
   view.music = { beatInterval: .5, toneFast: [], toneCentroidFast: .5 };
   view.sidSceneMode = false;
   view.sceneDeck = [...GENERAL_SCENES];
-  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom"]) {
+  for (const scene of ["metaball-foundry", "particle-assembly", "feedback-bloom", "polar-plasma", "rotozoom-mosaic", "oscilloscope-orbit", "ribbon-loom", "echo-chamber"]) {
     calls.length = 0;
     context.globalAlpha = 1;
     view.scene = GENERAL_SCENES[GENERAL_SCENES.indexOf(scene) - 1];
