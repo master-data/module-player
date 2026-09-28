@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion } from "../demo/general-scenes.js";
 import { CurveSceneGeometry, CurveScenes } from "../demo/curve-scenes.js";
@@ -142,6 +143,58 @@ test("waveform snapshots preserve fresh signed PCM without temporal cancellation
   view.channels = [];
   updateGeneralMotion(view, 0);
   assert(motion.traceChannels.every(channel => channel.every(value => value === 0)));
+});
+
+test("shader waveform smoothing holds targets, aligns stereo phase and settles without losing fresh traces", () => {
+  const view = renderer();
+  const left = Float32Array.from({ length: 256 }, (_, index) => Math.sin(index / 256 * Math.PI * 4) * .6);
+  const right = Float32Array.from(left, value => -value * .5);
+  view.channels = [left, right];
+  updateGeneralMotion(view, 0);
+  const state = view.generalMotion.shaderWaveform;
+  const storage = state.channels[0];
+  assert(state.channels[0].every(value => value === 0));
+  updateGeneralMotion(view, .1);
+  assert(state.channels[0][32] > .1 && state.channels[0][32] < .25, "The surface must ease into the waveform");
+  const targets = state.targets.map(channel => [...channel]);
+  view.channels = [Float32Array.from(left, value => -value), Float32Array.from(right, value => -value)];
+  updateGeneralMotion(view, .04);
+  assert.deepEqual(state.targets.map(channel => [...channel]), targets, "Rapid reads cannot replace a held target");
+  assert.equal(view.generalMotion.traceChannels[0][32], -left[32], "Fresh audio snapshots remain available");
+  updateGeneralMotion(view, .02);
+  state.targets[0].forEach((value, index) => {
+    assert(Math.abs(value - left[index]) < 1e-6, "A phase inversion must not flatten a steady waveform");
+    assert(Math.abs(state.targets[1][index] + value * .5) < 1e-6, "Both channels must use the same phase alignment");
+  });
+  assert.equal(state.channels[0], storage);
+  view.channels = [new Float32Array(256).fill(.25)];
+  updateGeneralMotion(view, .2);
+  view.channels[0].fill(.75);
+  updateGeneralMotion(view, .12);
+  assert(state.targets[0].every(value => value === .25), "A delayed frame cannot shorten the next refractory period");
+  view.channels = [];
+  for (let frame = 0; frame < 120; frame++) updateGeneralMotion(view, 1 / 120);
+  assert(state.channels.every(channel => channel.every(value => Math.abs(value) < .001)));
+  assert(state.targets.every(channel => channel.every(value => value === 0)));
+});
+
+test("shader waveform easing matches across refresh rates and drawing cannot advance it", () => {
+  const results = [];
+  for (const rate of [30, 60, 120, 144, 240, 360]) {
+    const view = renderer();
+    view.channels = [new Float32Array(256).fill(.5)];
+    updateGeneralMotion(view, 0);
+    for (let frame = 0; frame < rate / 2; frame++) updateGeneralMotion(view, 1 / rate);
+    const state = view.generalMotion.shaderWaveform;
+    results.push([...state.channels[0]]);
+    assert.deepEqual([...state.channels[0]], [...state.channels[1]]);
+    const gpu = Object.assign(Object.create(ShaderScenes.prototype), { waveform: new Float32Array(WAVEFORM_POINTS * 2), waveformTexture: {} });
+    const before = [...state.channels[0]];
+    gpu.updateWaveform(state.channels);
+    gpu.updateWaveform(state.channels);
+    assert.deepEqual([...state.channels[0]], before);
+  }
+  results.forEach(result => result.forEach((value, index) => assert(Math.abs(value - results[0][index]) < 1e-10)));
 });
 
 test("terrain pigment currents follow spectral balance, freeze in silence and respect reduced motion", () => {
@@ -687,6 +740,10 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
     assert(gpu.waveform[(WAVEFORM_POINTS - 1) * 2] < -.5, scene);
     gpu.draw({ drawImage() {} }, scene, 1440, 900, { ...state, channels: [], traceChannels: [] }, .4, 1);
     assert(gpu.waveform.every(value => value === 0), `${scene} must not retain another scene's waveform`);
+    const eased = new Float64Array(WAVEFORM_POINTS).fill(.2);
+    gpu.draw({ drawImage() {} }, scene, 1440, 900, { ...state, shaderWaveform: { channels: [eased] } }, .4, 1);
+    assert(gpu.waveform.every(value => Math.abs(value - .5) < 1e-6), `${scene} must prefer the eased waveform over raw snapshots`);
+    assert(eased.every(value => value === .2), "Crossfade draws cannot mutate the waveform envelope");
   }
   for (const [pulse, expected] of [[1, 1], [.25, .25], [-1, 0], [2, 1], [NaN, 0], [undefined, 0]]) {
     gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1, pulse);
@@ -737,6 +794,19 @@ test("terrain and twister refresh waveform uniforms on each draw", () => {
   assert.deepEqual(terrainUploads.at(-1), [0, 1, 1, 1.2], "Shape uploads must stay inside the camera-clearance bounds");
   gpu.draw({ drawImage() {} }, "voxel-flight", 1440, 900, state, .4, 1);
   assert.deepEqual(terrainUploads.at(-1), [state.signal.low, state.signal.mid, state.signal.high, 0]);
+});
+
+test("Voxel Flight's terrain shape uses signed stereo rather than generic band-driven pulses", async () => {
+  const source = await readFile(new URL("../demo/shader-scenes.js", import.meta.url), "utf8");
+  const geometry = source.slice(source.indexOf("float mountainMass("), source.indexOf("const float flightRange"));
+  assert.match(geometry, /return pow\(coarse, 2\.2\) \* 93\.2;/, "The noise field remains a static clearance envelope");
+  assert.match(geometry, /vec2 along = waveAt\(/);
+  assert.match(geometry, /vec2 across = waveAt\(/);
+  assert.match(geometry, /crest = clamp\(\.5 \+ along\.x \* \.3 \+ across\.y \* \.2, 0\.0, 1\.0\)/);
+  assert.match(geometry, /separation = abs\(along\.x - across\.y\)/);
+  assert.match(geometry, /ridges = mass \* \(\.18 \+ crest \* \.82\)/, "Waveforms must control the main relief, not a small surface ripple");
+  assert.match(geometry, /- separation \* 9\.0/);
+  assert.doesNotMatch(geometry, /terrainAudio|pigmentFlow|flightClock|impact|audio\./, "Band or beat changes alone must not pump the ground");
 });
 
 test("flight clearance map smooths peaks while conservatively covering terrain and wrapped edges", () => {
@@ -1125,6 +1195,43 @@ test("general director visits every replacement and never enters the retired sce
     visited.add(view.scene);
   }
   assert.equal(visited.size, GENERAL_SCENES.length);
+});
+
+test("manual scene navigation wraps both decks, resets holds and supports paused SID", () => {
+  for (const sidState of [undefined, { playing: true }, { playing: false }]) {
+    const view = Object.assign(renderer(), {
+      canvas: { dataset: {} }, camera: { phase: 0 }, transitionDuration: 1,
+      music: { beatInterval: .5, toneFast: [], toneCentroidFast: .5 },
+      getSidState: () => sidState
+    });
+    view.directScene(0, {}, sidState);
+    const initial = view.scene;
+    const visited = new Set();
+    const count = sidState ? 8 : GENERAL_SCENES.length;
+    for (let index = 0; index < count; index++) {
+      const previous = view.scene;
+      const previousSeed = view.sceneSeed;
+      view.stepScene(1);
+      assert.equal(view.previousScene, previous);
+      assert.equal(view.previousSceneSeed, previousSeed);
+      assert.equal(view.sceneElapsed, 0);
+      assert.equal(view.sceneDuration, view.scene === "voxel-flight" ? 60 : 20);
+      assert.equal(view.sceneTransition, sidState?.playing === false ? 1 : 0);
+      assert.equal(view.canvas.dataset.scene, view.scene);
+      assert.equal(view.canvas.dataset.transitionReason, "keyboard-next");
+      assert(!view.sceneDeck.includes(view.scene));
+      visited.add(view.scene);
+    }
+    assert.equal(visited.size, count);
+    assert.equal(view.scene, initial);
+    view.stepScene(-1);
+    assert.notEqual(view.scene, initial);
+    assert.equal(view.canvas.dataset.transitionReason, "keyboard-previous");
+    view.stepScene(1);
+    assert.equal(view.scene, initial);
+    view.directScene(.1, { beat: true, strongBeat: true }, sidState);
+    assert.equal(view.scene, initial, "Automatic transitions must honor the restarted hold");
+  }
 });
 
 test("all scene changes respect a persistent hold before musical transitions", () => {

@@ -177,24 +177,23 @@ uniform vec3 pigmentSpectrum;
 uniform vec4 terrainAudio;
 float mountainMass(vec2 position) {
   float coarse = texture2D(terrainMap, position / 190.0).r;
-  return pow(coarse, 2.2) * (72.0 + terrainAudio.x * 20.0 + terrainAudio.w);
+  return pow(coarse, 2.2) * 93.2;
 }
 float baseElevation(vec2 position) {
   float rolling = texture2D(terrainMap, position / 100.0 + vec2(.31, .67)).r;
   float mass = mountainMass(position);
   float drainage = texture2D(terrainMap, position / 38.0 + vec2(.17, .43)).r;
   float gullies = pow(1.0 - abs(drainage * 2.0 - 1.0), 3.0);
-  return mass + rolling * 3.0 - gullies * (6.0 + terrainAudio.y * 12.0) * smoothstep(5.0, 28.0, mass);
+  vec2 along = waveAt(.5 + sin(position.x * .009 + position.y * .003) * .5);
+  vec2 across = waveAt(.5 + sin(position.y * .008 - position.x * .004) * .5);
+  float crest = clamp(.5 + along.x * .3 + across.y * .2, 0.0, 1.0);
+  float separation = abs(along.x - across.y) * .5;
+  float ridges = mass * (.18 + crest * .82);
+  return ridges + rolling * 3.0 - gullies * 4.0 * smoothstep(5.0, 28.0, mass)
+    - separation * 9.0;
 }
 float elevation(vec2 position) {
-  vec2 wave = waveAt(.5 + sin(position.x * .035 + position.y * .018) * .5);
-  vec2 crossing = waveAt(.5 + sin(position.y * .027 - position.x * .016) * .5);
-  float surge = .5 + .5 * sin(length(position) * .065 - pigmentFlow.x);
-  float fold = .5 + .5 * sin(position.x * .055 + position.y * .03 + pigmentFlow.y * .6);
-  float displacement = (1.0 - surge) * (terrainAudio.x * 5.0 + terrainAudio.w * 3.0)
-    + fold * terrainAudio.y * 5.0;
-  return baseElevation(position) - displacement + wave.x * (.6 + terrainAudio.z * .6)
-    + crossing.y * (.4 + terrainAudio.y * .1);
+  return baseElevation(position);
 }
 const float flightRange = 240.0;
 vec2 flightPath(float travel) {
@@ -570,7 +569,7 @@ export class ShaderScenes {
     this.uniforms.detail.value = quality;
     this.uniforms.terrainMap.value = name === "voxel-flight" ? this.mountainTexture : this.texture;
     this.uniforms.beaconPulse.value = Number.isFinite(beaconPulse) ? THREE.MathUtils.clamp(beaconPulse, 0, 1) : 0;
-    if (name === "raster-twist" || name === "voxel-flight") this.updateWaveform(state.traceChannels ?? state.channels);
+    if (name === "raster-twist" || name === "voxel-flight") this.updateWaveform(state.shaderWaveform?.channels ?? state.traceChannels ?? state.channels);
     this.mesh.material = this.materials[SHADER_SCENES.indexOf(name)];
     this.renderer.render(this.scene, this.camera);
     context.drawImage(canvas, 0, 0, width, height);

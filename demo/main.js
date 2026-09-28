@@ -4,7 +4,7 @@ import { createXmpPlayer } from "../xmp/index.js?v=7";
 import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=5";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
-import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=85";
+import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=88";
 import { SystemAudioCapture } from "./system-audio.js?v=7";
 
 const $ = (id) => document.getElementById(id);
@@ -2297,6 +2297,17 @@ function showImmersiveCursor() {
     immersiveCursorTimer = undefined;
   }, 1800);
 }
+function handleImmersiveKeydown(event) {
+  if (!$("immersive-dialog").open || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1
+    : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+  if (!direction || event.target?.closest?.("input:not([type='checkbox']), textarea, select, [contenteditable], [role='slider']")) return;
+  event.preventDefault();
+  if (event.repeat) return;
+  immersiveVisualizer.stepScene(direction);
+  showImmersiveCursor();
+}
+
 function openImmersive(mode, opener) {
   if (visualizationInput === "system" && (mode !== "visualizer" || systemAudio.state !== "active")) return;
   setImmersiveMode(mode);
@@ -2326,6 +2337,7 @@ $("open-mega").addEventListener("click", (event) => openImmersive("mega", event.
 $("immersive-stage").addEventListener("pointermove", showImmersiveCursor, { passive: true });
 $("immersive-stage").addEventListener("pointerdown", showImmersiveCursor, { passive: true });
 $("immersive-stage").addEventListener("keydown", showImmersiveCursor);
+document.addEventListener("keydown", handleImmersiveKeydown);
 document.addEventListener("fullscreenchange", () => {
   const fullscreen = document.fullscreenElement === $("immersive-stage");
   if (fullscreen) immersiveOwnedFullscreen = true;

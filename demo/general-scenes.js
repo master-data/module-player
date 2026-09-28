@@ -71,6 +71,56 @@ class CurvedPath {
   }
 }
 
+function updateShaderWaveform(motion, delta, hasAudio) {
+  const size = 256;
+  const state = motion.shaderWaveform ??= {
+    channels: [new Float64Array(size), new Float64Array(size)],
+    velocities: [new Float64Array(size), new Float64Array(size)],
+    targets: [new Float32Array(size), new Float32Array(size)],
+    age: 0, ready: false
+  };
+  state.age += delta;
+  if (!hasAudio) {
+    state.targets.forEach(channel => channel.fill(0));
+    state.ready = false;
+    state.age = 0;
+  } else if (!state.ready || state.age >= .16) {
+    let bestOffset = 0;
+    let bestScore = -Infinity;
+    if (state.ready) {
+      for (let offset = 0; offset < size; offset++) {
+        let score = 0;
+        for (let index = 0; index < size; index += 8) {
+          const sourceIndex = (index + offset) % size;
+          score += state.targets[0][index] * motion.traceChannels[0][sourceIndex]
+            + state.targets[1][index] * motion.traceChannels[1][sourceIndex];
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          bestOffset = offset;
+        }
+      }
+    }
+    for (let side = 0; side < 2; side++) {
+      for (let index = 0; index < size; index++) {
+        state.targets[side][index] = motion.traceChannels[side][(index + bestOffset) % size];
+      }
+    }
+    state.age = 0;
+    state.ready = true;
+  }
+  const frequency = 10;
+  const decay = Math.exp(-frequency * delta);
+  for (let side = 0; side < 2; side++) {
+    for (let index = 0; index < size; index++) {
+      const offset = state.channels[side][index] - state.targets[side][index];
+      const momentum = state.velocities[side][index] + frequency * offset;
+      state.channels[side][index] = state.targets[side][index] + (offset + momentum * delta) * decay;
+      state.velocities[side][index] = (state.velocities[side][index] - frequency * momentum * delta) * decay;
+    }
+  }
+}
+
 export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
   const points = 96;
   const signalKeys = ["low", "mid", "high", "level"];
@@ -119,6 +169,7 @@ export function updateGeneralMotion(renderer, delta, musicalEvent = {}) {
     motion.targets[points * 2 + signalKeys.length + index] = channels.length ? renderer.tone?.bands[index] ?? 0 : 0;
   }
   const elapsed = Math.max(0, delta);
+  updateShaderWaveform(motion, elapsed, channels.length > 0);
   const waveformFrequency = renderer.reducedMotion ? 8 : 22;
   const envelopeFrequency = renderer.reducedMotion ? 8 : 32;
   const waveformDecay = Math.exp(-waveformFrequency * elapsed);

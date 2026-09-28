@@ -6,6 +6,14 @@ FPS cap, including 240 Hz and higher when supported by the display, browser and
 GPU. Native canvas resolution is preserved. The component's optional
 `reducedMotion` mode described below is not enabled by the demo.
 
+While the visualizer is open, **Right/Down** selects the next effect and
+**Left/Up** selects the previous effect. Manual navigation follows the current
+deck's listed order, wraps at either end, and bypasses the automatic hold time.
+Each selection restarts that effect's normal hold and uses the existing
+crossfade; paused SID playback switches immediately without resuming audio.
+Held-key repeats, modified arrow shortcuts, and arrows in editable controls are
+ignored. Automatic scene rotation remains shuffled.
+
 ## Audio and display updates
 
 Dashboard scopes default to **Display**, rendering on every animation callback.
@@ -30,11 +38,19 @@ the same envelope response across display rates. The six tone bands remain a
 visual descriptor, not a calibrated full-spectrum audio measurement.
 
 Fresh waveform snapshots retain the strongest signed peak per bin when reducing
-longer buffers to 256 points. Terrain and Raster Twist upload those snapshots
-to a reusable 256-point-per-channel float texture every draw, replacing the old
-64-point uniform fed by smoothed geometry. The existing inertial shape motion
-remains for the other effects. Both representations are artistic summaries, not
-sample-for-sample oscilloscopes, and adaptive geometry detail remains enabled.
+longer buffers to 256 points. Voxel Flight and Raster Twist upload an eased
+version to a reusable 256-point-per-channel float texture every draw. Targets
+are refreshed at most once per 160 ms; a shared cyclic phase alignment for both
+channels reduces phase-driven flicker without collapsing stereo differences.
+A critically damped 10 rad/s envelope then morphs continuously toward the target
+(about 475 ms to settle 95% of a fixed step from rest). There is no geometry snap
+when a held target is replaced. Absent audio releases smoothly toward zero.
+The envelope advances once per animation frame, never once per crossfade draw.
+Fresh audio snapshots, analysis, camera motion and native-rate rendering are not
+throttled. The existing inertial shape motion remains for the other effects.
+These are artistic waveform summaries, not sample-for-sample oscilloscopes, and
+adaptive geometry detail remains enabled. Automatic scene hold times and manual
+arrow navigation are unchanged.
 
 SID analyser freshness follows its audio clock independently of emulator block
 revisions. Register/MEGABOOST telemetry still caches by the original revision.
@@ -54,6 +70,30 @@ The waveform texture compiled and responded to waveform-only changes at both
 1440x900 and 780x1688, with no GL errors. Full syntax/test checks: 124 passed.
 Actual Windows sharing, real-track behavior and 240 Hz presentation remain
 separate manual checks.
+
+## Waveform-authored Voxel Flight
+
+Voxel Flight keeps its continuous landscape, not discrete cubes. Two broad,
+crossing spatial sweeps read signed left/right PCM. Their crests scale the main
+mountain envelope from 18% to 100%; stereo differences carve valleys by up to
+nine world units. Waveform shape and polarity therefore determine substantial
+terrain structure, rather than only adding a small surface ripple.
+
+The noise field now supplies a static clearance envelope and surface texture.
+Band-driven mountain scaling and generic animated bass swells are removed from
+terrain elevation. Bands still control pigments and the existing camera motion,
+so this is not a claim that the entire scene ignores level or beat information.
+Silence settles to a neutral landscape. The geometry stays below the original
+93.2-unit mountain envelope plus three units of rolling ground; the existing
+conservative flight-height map, native resolution, beacon and minute-long hold
+are retained. The Canvas fallback is unchanged.
+
+Fixed-camera GPU depth checks at 1440x900 and 390x844 changed only a waveform's
+frequency while keeping its amplitude, band levels, time and colors fixed:
+35-38% of pixels changed depth by more than one 8-bit depth step. Changing only
+band levels/impact left depth identical. Sixteen sharper-waveform/flight-time
+diagnostic cases found no unfinished rays or camera-inside flags. These checks
+use synthetic PCM, not the user's music.
 
 ## Windows system audio
 

@@ -1,6 +1,6 @@
-import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=26";
-import { ShaderScenes } from "./shader-scenes.js?v=19";
-import { CurveScenes } from "./curve-scenes.js?v=2";
+import { GENERAL_SCENES, drawGeneralScene, updateGeneralMotion, drawCrystalFacets } from "./general-scenes.js?v=27";
+import { ShaderScenes } from "./shader-scenes.js?v=21";
+import { CurveScenes } from "./curve-scenes.js?v=3";
 
 const TAU = Math.PI * 2;
 const SID_SCENES = ["sid-warp", "sid-weave", "sid-crystal", "sid-storm", "sid-matrix", "sid-lissajous", "sid-radar", "sid-machine"];
@@ -528,7 +528,21 @@ export class ImmersiveVisualizer {
     if (!transitionReason) return;
 
     if (!this.sceneDeck.length) this.sceneDeck = shuffle((sidMode ? SID_SCENES : SCENES).filter((scene) => scene !== this.scene));
-    const nextScene = this.sceneDeck.shift();
+    this.transitionScene(this.sceneDeck.shift(), transitionReason);
+  }
+
+  stepScene(direction = 1) {
+    const sidState = this.getSidState?.();
+    if (Boolean(sidState) !== this.sidSceneMode) this.directScene(0, {}, sidState);
+    const scenes = this.sidSceneMode ? SID_SCENES : SCENES;
+    const step = direction < 0 ? -1 : 1;
+    const nextScene = scenes[(scenes.indexOf(this.scene) + step + scenes.length) % scenes.length];
+    this.sceneDeck = this.sceneDeck.filter(scene => scene !== nextScene);
+    this.transitionScene(nextScene, step > 0 ? "keyboard-next" : "keyboard-previous");
+    if (sidState?.playing === false) this.sceneTransition = 1;
+  }
+
+  transitionScene(nextScene, transitionReason) {
     this.previousScene = this.scene;
     this.previousSceneSeed = this.sceneSeed;
     this.scene = nextScene;

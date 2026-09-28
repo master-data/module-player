@@ -76,6 +76,40 @@ test("scope display refresh paints every callback and manual rates remain frame 
   }
 });
 
+test("arrow shortcuts navigate only the open visualizer without taking over controls", async () => {
+  const source = await readFile(new URL("../demo/main.js", import.meta.url), "utf8");
+  const directions = [];
+  let cursorShows = 0;
+  const dialog = { open: true };
+  const runtime = vm.createContext({
+    $: () => dialog, immersiveVisualizer: { stepScene: direction => directions.push(direction) },
+    showImmersiveCursor: () => cursorShows++
+  });
+  vm.runInContext(source.slice(source.indexOf("function handleImmersiveKeydown("), source.indexOf("function openImmersive(")), runtime);
+  assert(source.includes('document.addEventListener("keydown", handleImmersiveKeydown)'));
+  const send = (key, properties = {}) => {
+    let prevented = false;
+    runtime.handleImmersiveKeydown({ key, preventDefault: () => { prevented = true; }, ...properties });
+    return prevented;
+  };
+  for (const key of ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"]) assert.equal(send(key), true);
+  assert.deepEqual(directions, [1, 1, -1, -1]);
+  assert.equal(cursorShows, 4);
+  assert.equal(send("ArrowRight", { target: { closest: selector => {
+    assert(selector.includes("input:not([type='checkbox'])"));
+    return null;
+  } } }), true, "The auto-focused strobe checkbox must not block navigation");
+  assert.equal(send("ArrowRight", { repeat: true }), true);
+  for (const property of ["defaultPrevented", "altKey", "ctrlKey", "metaKey", "shiftKey"]) {
+    assert.equal(send("ArrowRight", { [property]: true }), false);
+  }
+  assert.equal(send("ArrowRight", { target: { closest: () => ({}) } }), false);
+  assert.equal(send("Escape"), false);
+  dialog.open = false;
+  assert.equal(send("ArrowRight"), false);
+  assert.equal(directions.length, 5);
+});
+
 test("system audio refreshes stable stereo buffers and revision without audible routing", async () => {
   const setup = fixture();
   assert.equal(await setup.adapter.start(), true);
