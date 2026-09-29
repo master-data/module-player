@@ -802,7 +802,7 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
     camera.aspect = width / height;
     camera.position.set(Math.sin(time * .10 + cameraPhase) * 1.1 * movement,
       Math.cos(time * .083 + cameraPhase) * .65 * movement,
-      (11.8 + Math.sin(time * .065 + cameraPhase) * .35 * movement) * Math.max(1, .9 / camera.aspect));
+      (11.8 + Math.sin(time * .065 + cameraPhase) * .35 * movement) * Math.max(1, .96 / camera.aspect));
     camera.lookAt(Math.sin(time * .073 + cameraPhase) * .42 * movement,
       Math.sin(time * .057 + cameraPhase) * .28 * movement, 0);
     camera.updateProjectionMatrix();
@@ -1111,7 +1111,8 @@ export function drawGeneralScene(renderer, context, scene, width, height, center
       gradient.addColorStop(0, `hsla(${hue + layer * 18} 94% 68% / ${.13 + (8 - layer) * .012})`);
       gradient.addColorStop(1, `hsla(${hue + 110 + layer * 9} 84% 24% / .015)`);
       context.fillStyle = gradient;
-      context.fill();
+      if (context.fillBelowCurve) context.fillBelowCurve(bottom);
+      else context.fill();
     }
     const streaks = detail(64, 18);
     for (let streak = 0; streak < streaks; streak++) {

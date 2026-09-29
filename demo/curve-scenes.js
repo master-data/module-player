@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { drawGeneralScene } from "./general-scenes.js?v=57";
+import { drawGeneralScene } from "./general-scenes.js?v=59";
 
 const STRIDE = 9;
 const PAINTS = 32;
@@ -222,11 +222,27 @@ export class CurveSceneGeometry {
   fill() {
     if (this.path.length < 3) return;
     const paint = this.paint(this.fillStyle);
-    const triangles = THREE.ShapeUtils.triangulateShape(this.path, []);
+    const triangles = this.fillBaseline === undefined ? THREE.ShapeUtils.triangulateShape(this.path, []) : undefined;
     const start = this.vertexCount;
     for (const point of this.path) this.vertex(point.x, point.y, paint);
-    for (const triangle of triangles) {
-      this.triangle(start + triangle[0], start + triangle[1], start + triangle[2]);
+    if (triangles) {
+      for (const triangle of triangles) {
+        this.triangle(start + triangle[0], start + triangle[1], start + triangle[2]);
+      }
+    } else {
+      const matrix = this.transform;
+      const determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+      const baseline = this.vertexCount;
+      for (let index = 0; index < this.path.length - 2; index++) {
+        const point = this.path[index];
+        const horizontal = ((point.x - matrix[4]) * matrix[3] - (point.y - matrix[5]) * matrix[2]) / determinant;
+        this.vertex(matrix[0] * horizontal + matrix[2] * this.fillBaseline + matrix[4],
+          matrix[1] * horizontal + matrix[3] * this.fillBaseline + matrix[5], paint);
+        if (index > 0) {
+          this.triangle(start + index - 1, start + index, baseline + index);
+          this.triangle(start + index - 1, baseline + index, baseline + index - 1);
+        }
+      }
     }
     this.offsets(true);
     const outward = THREE.ShapeUtils.isClockWise(this.path) ? 1 : -1;
@@ -236,6 +252,15 @@ export class CurveSceneGeometry {
       const next = (index + 1) % this.path.length;
       this.triangle(start + index, start + next, fringe + next);
       this.triangle(start + index, fringe + next, fringe + index);
+    }
+  }
+
+  fillBelowCurve(baseline) {
+    this.fillBaseline = baseline;
+    try {
+      this.fill();
+    } finally {
+      this.fillBaseline = undefined;
     }
   }
 

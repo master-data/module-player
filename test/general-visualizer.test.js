@@ -29,7 +29,7 @@ function capture() {
   const coordinates = [];
   const hash = value => { signature = (signature * 31 + Math.round(value * 100)) % 1000000007; };
   const context = new Proxy({}, {
-    get: (_, name) => name === "globalAlpha" ? globalAlpha : (...values) => {
+    get: (_, name) => name === "fillBelowCurve" ? undefined : name === "globalAlpha" ? globalAlpha : (...values) => {
       if (name === "createLinearGradient") return { addColorStop: (offset, color) => {
         assert(Number.isFinite(offset));
         for (const character of color) hash(character.charCodeAt(0));
@@ -643,7 +643,7 @@ test("Oscilloscope Orbit uses bounded stereo geometry, independent bands and a r
   motion.shaderWaveform.channels[0].fill(1);
   motion.shaderWaveform.channels[1].fill(-1);
   for (const [width, height] of [[1440, 900], [390, 844], [3200, 900]]) {
-    for (const time of [0, 12, 80]) {
+    for (const time of [0, 12, 40, 80, 160, 240]) {
       motion.time = time;
       const before = structuredClone(motion);
       const result = render(view, view.scene, width, height);
@@ -651,6 +651,42 @@ test("Oscilloscope Orbit uses bounded stereo geometry, independent bands and a r
       assert.deepEqual(motion, before);
       assert.equal(view.orbitProjection, projection);
     }
+  }
+});
+
+test("Orbit camera pans and dollies smoothly with restrained reduced motion and deterministic precession", () => {
+  const snapshots = reducedMotion => {
+    const view = Object.assign(renderer(), { scene: "oscilloscope-orbit", reducedMotion });
+    const motion = updateGeneralMotion(view, .1);
+    motion.orbitHistory = undefined;
+    const frames = [];
+    for (const time of [0, 10, 20, 40, 60, 80]) {
+      motion.time = time;
+      const before = structuredClone(motion);
+      const signature = render(view, view.scene).signature;
+      const { camera, axis } = view.orbitProjection;
+      frames.push({ position: camera.position.toArray(), aim: new Vector3().project(camera).toArray(), axis: axis.toArray() });
+      assert.equal(render(view, view.scene).signature, signature);
+      assert.deepEqual(motion, before);
+      const position = camera.position.clone();
+      const rotation = camera.quaternion.clone();
+      motion.time += 1 / 240;
+      render(view, view.scene);
+      assert(camera.position.distanceTo(position) < .002, "Camera motion must be continuous between frames");
+      assert(camera.quaternion.angleTo(rotation) < .001);
+    }
+    return frames;
+  };
+  const full = snapshots(false);
+  const reduced = snapshots(true);
+  const span = (frames, key, component) => Math.max(...frames.map(frame => frame[key][component]))
+    - Math.min(...frames.map(frame => frame[key][component]));
+  assert(span(full, "position", 0) > 1, "Camera must orbit sideways");
+  assert(span(full, "position", 2) > .5, "Camera must gently dolly");
+  assert(span(full, "aim", 0) > .04, "The composition must pan rather than stay locked to the origin");
+  assert(span(full, "axis", 0) > .1, "Trace rotation must precess");
+  for (const component of [0, 1, 2]) {
+    assert(Math.abs(span(reduced, "position", component) / span(full, "position", component) - .25) < 1e-10);
   }
 });
 
@@ -1195,6 +1231,57 @@ test("Terrain GPU fills preserve each complete contour without missing or overla
     }
   }
   assert.equal(fills, 180);
+});
+
+test("Terrain strip fills stay below the spline without cross-screen diagonals under camera transforms", () => {
+  const paths = new CurveSceneGeometry();
+  const view = renderer();
+  updateGeneralMotion(view, .2);
+  const originalFill = paths.fill;
+  let width;
+  let fills = 0;
+  paths.fill = function () {
+    const matrix = this.transform;
+    const determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+    const local = (horizontal, vertical) => ({
+      x: ((horizontal - matrix[4]) * matrix[3] - (vertical - matrix[5]) * matrix[2]) / determinant,
+      y: ((vertical - matrix[5]) * matrix[0] - (horizontal - matrix[4]) * matrix[1]) / determinant
+    });
+    const ridge = this.path.slice(0, -2).map(point => local(point.x, point.y));
+    const firstIndex = this.indexCount;
+    originalFill.call(this);
+    for (let index = firstIndex; index < this.indexCount; index += 3) {
+      const offsets = [0, 1, 2].map(corner => this.indices[index + corner] * 9);
+      if (offsets.some(offset => this.vertices[offset + 8] !== 1)) continue;
+      const triangle = offsets.map(offset => local(this.vertices[offset], this.vertices[offset + 1]));
+      const span = Math.max(...triangle.map(point => point.x)) - Math.min(...triangle.map(point => point.x));
+      assert(span < width * .13, `A Terrain triangle spans ${span}px of a ${width}px viewport`);
+      const horizontal = triangle.reduce((sum, point) => sum + point.x, 0) / 3;
+      const vertical = triangle.reduce((sum, point) => sum + point.y, 0) / 3;
+      const end = ridge.findIndex(point => point.x >= horizontal);
+      const first = ridge[Math.max(0, end - 1)];
+      const last = ridge[end];
+      const crest = first.y + (last.y - first.y) * (horizontal - first.x) / (last.x - first.x || 1);
+      assert(vertical >= crest - .02, "A fill triangle cannot extend above the spline");
+      assert(triangle.every(point => point.y <= this.fillBaseline + .02));
+    }
+    fills++;
+  };
+  for (const size of [[1440, 900], [7680, 960], [390, 844]]) {
+    const height = size[1];
+    width = size[0];
+    for (const quality of [1, .25]) {
+      view.quality = quality;
+      for (const rotation of [-.06, 0, .06]) {
+        const cosine = Math.cos(rotation) * 1.035;
+        const sine = Math.sin(rotation) * 1.035;
+        paths.begin({ a: cosine, b: sine, c: -sine, d: cosine, e: -width * .02, f: -height * .01 });
+        drawGeneralScene(view, paths, "terrain", width, height, width / 2, height / 2);
+        assert.equal(paths.fillBaseline, undefined);
+      }
+    }
+  }
+  assert.equal(fills, 90);
 });
 
 test("GPU curve batches retain original scene geometry, gradient stops and reusable buffers", () => {

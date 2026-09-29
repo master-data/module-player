@@ -120,6 +120,13 @@ momentum expand the orbit, mids shape its depth, and treble changes core width.
 The signed stereo waveforms shape both curves; this is an artistic oscilloscope
 projection, not a calibrated phase meter.
 
+A slightly closer camera follows a slow sideways orbit, gentle dolly and drifting
+aim point. The rotation axis gradually tilts, revealing depth in the stereo curves
+and their trails. Camera motion uses the existing eased animation clock; historical
+traces retain their original rotation and tilt under the current camera. Reduced
+motion uses quarter-sized camera and tilt excursions as well as the slower shared
+clock. No extra animation loop, history buffer or rendering pass is introduced.
+
 Eight reusable snapshots at 120 ms intervals retain eased stereo audio and the
 actual rotation clock. Trails expire after 0.9 seconds; silence leaves a faint
 idle orbit. Orbit and Feedback Bloom have separate buffers, retained only while
