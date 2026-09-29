@@ -1,8 +1,10 @@
 export class SystemAudioCapture {
-  constructor({ mediaDevices = globalThis.navigator?.mediaDevices, createContext = () => new AudioContext(), onChange = () => {} } = {}) {
+  constructor({ mediaDevices = globalThis.navigator?.mediaDevices, createContext = () => new AudioContext(), onChange = () => {},
+    platform = globalThis.navigator?.userAgentData?.platform ?? globalThis.navigator?.platform ?? "" } = {}) {
     this.mediaDevices = mediaDevices;
     this.createContext = createContext;
     this.onChange = onChange;
+    this.isMac = /mac/i.test(platform);
     this.state = "idle";
     this.error = "";
     this.session = undefined;
@@ -43,7 +45,7 @@ export class SystemAudioCapture {
   async start() {
     if (this.session) return false;
     if (!this.supported) {
-      this.notify("error", "System audio capture is unavailable. Use Chrome or Edge on Windows over HTTPS or localhost.");
+      this.notify("error", "Audio sharing is unavailable. Try current Chrome or Edge over HTTPS or localhost; audio support depends on the browser and selected source.");
       return false;
     }
     const session = { nodes: [], onEnded: () => this.stop() };
@@ -53,9 +55,10 @@ export class SystemAudioCapture {
       session.context = this.createContext();
       const resumed = session.context.resume().then(() => undefined, error => error);
       const stream = await this.mediaDevices.getDisplayMedia({
-        video: { displaySurface: "monitor", frameRate: 1 },
+        video: { displaySurface: this.isMac ? "window" : "monitor", frameRate: 1 },
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: false },
         systemAudio: "include",
+        ...(this.isMac ? { windowAudio: "system" } : {}),
         selfBrowserSurface: "exclude"
       });
       session.stream = stream;
@@ -65,7 +68,9 @@ export class SystemAudioCapture {
       }
       const audioTrack = stream.getAudioTracks()[0];
       if (!audioTrack || audioTrack.readyState !== "live") {
-        throw new Error("No audio was shared. Select Entire Screen and enable Share system audio.");
+        throw new Error(this.isMac
+          ? "No audio was shared. Select Window, choose Module Player, and enable system audio if offered. If unavailable, try a music-playing browser tab with Share tab audio. Audio options depend on your macOS and browser version."
+          : "No audio was shared. Enable audio sharing for the selected screen or browser tab; not every source supports audio.");
       }
       for (const track of stream.getTracks()) track.addEventListener("ended", session.onEnded);
       const resumeError = await resumed;
@@ -133,8 +138,10 @@ export class SystemAudioCapture {
       this.release(session);
       if (this.session !== session) return false;
       this.session = undefined;
-      const message = error.name === "NotAllowedError"
-        ? "Audio sharing was cancelled or denied."
+      const message = ["NotAllowedError", "NotReadableError", "AbortError"].includes(error.name)
+        ? this.isMac
+          ? "Audio sharing could not start. The picker may have been dismissed, or capture may be blocked. Check System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older macOS) for your browser, then quit and reopen the browser if macOS requests it. Select Window and enable system audio if offered, or try a music-playing browser tab with Share tab audio."
+          : "Audio sharing could not start. The picker may have been dismissed, permission denied, or capture blocked by the browser or operating system. Check capture permissions and try again."
         : error.message || "System audio capture failed.";
       this.notify("error", message);
       return false;

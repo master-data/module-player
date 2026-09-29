@@ -436,7 +436,8 @@ without loading a module or initializing a playback engine.
 2. Set **Visualizer source** to **System Audio** and select **Start capture**.
 3. In the browser picker, select **Entire Screen**, enable **Share system audio**,
     and confirm sharing. The wording may vary with browser version.
-4. Play music in the other application and select **Visualizer view**.
+4. The visualizer opens automatically after audio capture succeeds. Play music
+    in the other application. Fullscreen remains subject to browser gesture rules.
 5. Select **Close visualizer** or press Escape to return to the player. Sharing
     stays active; select **Visualizer view** to reopen without another prompt.
 6. Select **Stop capture** on the player, or stop sharing in the browser, to

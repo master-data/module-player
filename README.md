@@ -86,15 +86,42 @@ The demo can visualize music from another application or browser tab, independen
 
 1. Set **Visualizer source** to **System Audio**.
 2. Select **Start capture**. In the browser's sharing dialog, choose an audio-capable source and enable audio sharing. For full system audio on Windows, choose **Entire Screen** and **Share system audio**.
-3. Play audio in the shared source, then select **Visualizer view** to open the immersive display.
+3. Confirm sharing. The visualizer opens automatically once audio capture succeeds; play audio in the shared source.
+
+The browser still requires its sharing picker for each new capture and may require a separate user gesture for fullscreen. Failed or cancelled sharing does not open the visualizer.
 
 Use Chrome or Edge on Windows over **HTTPS or localhost** for system-audio capture. Available sources and audio-sharing options depend on the browser and operating system; sharing a screen without its audio will not work. The browser requires screen-sharing permission even though the visualizer only analyzes audio and does not display the captured video. Captured audio is not routed back to the speakers, avoiding duplicate playback.
+
+On **macOS**, the confirmed working flow is **Window > Module Player**, enable **system audio**, then **Share**. The demo requests the Window picker category and system audio for window sharing (`displaySurface: "window"`, `windowAudio: "system"`). These are browser hints, not automatic selection or consent: the browser may ignore them, and you must still choose the window, enable audio, and confirm sharing. The visualizer opens after capture succeeds. If window audio is unavailable, try a music-playing browser tab with **Share tab audio**; that captures the tab, not separate desktop apps. Available audio sources depend on macOS and browser versions. If capture fails, check **System Settings > Privacy & Security > Screen & System Audio Recording** (called **Screen Recording** on older macOS) for the browser, then quit and reopen it if requested. A capture denial or abort does not necessarily mean the user cancelled the picker.
 
 The visualizer cycles through audio-reactive Canvas and Three.js scenes, including smooth mountain flight, with stereo waveform response and native-resolution rendering. WebGL scenes have Canvas fallbacks. An optional **Strobe** control follows detected bass attacks; flashing lights can trigger seizures or discomfort. Reduced-motion preferences slow animation and disable the strobe.
 
 Press **Escape** or select **Close visualizer** to return to the demo. Closing the view leaves capture active for reopening; select **Stop capture** or stop sharing through the browser to release it. Select **Module** as the source to return to module visualization.
 
 This standalone mode is part of the repository demo, not an exported player API. See [demo/VISUALIZER.md](demo/VISUALIZER.md) for scene descriptions and rendering details.
+
+### iPhone and iPad
+
+For module playback, tap **Initialize** or **Start** directly to unlock audio.
+UADE, XMP and SID share gesture-based audio activation. After an interruption,
+tap the page to retry audio activation; intentionally paused playback still
+requires **Start**. Automatic, background and lock-screen playback are subject
+to iOS restrictions and cannot be guaranteed.
+
+The visualizer works in-page when element fullscreen is unavailable or denied.
+Tap the view to reveal **Close visualizer**; a hardware Escape key is not required.
+
+Capturing another app's audio requires browser/OS display-audio capture support,
+which must not be assumed on iOS. If **Start capture** is unavailable, use
+**Module** with a loaded music file. Switching to another iOS browser does not
+guarantee system-audio capture. The demo never substitutes microphone capture.
+
+Automated tests cover missing fullscreen APIs, rejected fullscreen and audio
+activation, repeated interruptions, and unavailable capture. These are not
+real-device certification: verify playback and visualizer entry/exit with each
+engine on the target iPhone/iPad, then test app switching, locking/unlocking,
+calls, and headphone/Bluetooth route changes. Native capture must be tested
+separately wherever the browser offers it.
 
 ## ESM APIs
 

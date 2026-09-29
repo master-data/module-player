@@ -5,7 +5,7 @@ import { isSidFile, parseSidMetadata } from "../sid/sid-metadata.js";
 import { createSidPlayer } from "../sid/sid-player.js?v=5";
 import { scoutFile } from "../uade/vendor/format-scout/index.js";
 import { ImmersiveVisualizer } from "./immersive-visualizer.js?v=127";
-import { SystemAudioCapture } from "./system-audio.js?v=7";
+import { SystemAudioCapture } from "./system-audio.js?v=9";
 
 const $ = (id) => document.getElementById(id);
 const controls = ["play", "pause", "stop", "songs", "file"];
@@ -1944,9 +1944,9 @@ function updateControls(state = player?.state) {
   $("capture-audio").hidden = !external;
   $("capture-audio").disabled = !capturing && (!systemAudio.supported || initializing || currentState === "loading");
   $("capture-audio").textContent = systemAudio.state === "requesting" ? "Cancel capture" : capturing ? "Stop capture" : "Start capture";
-  $("close-immersive-visualizer").hidden = !external;
+  $("close-immersive-visualizer").hidden = false;
   $("capture-status").textContent = !external ? "" : !systemAudio.supported
-    ? "System audio unavailable in this browser or connection."
+    ? "System audio sharing is unavailable in this browser or connection. Select Module to visualize a loaded music file."
     : systemAudio.error || ({ idle: "Capture stopped.", requesting: "Awaiting sharing permission...", active: "System audio active." })[systemAudio.state];
   $("songs").disabled = initializing || (!xmpActive && currentState === "disposed") || !songs.length;
   $("file").disabled = initializing || (!xmpActive && currentState === "disposed");
@@ -2318,7 +2318,12 @@ function openImmersive(mode, opener) {
   setImmersiveStrobe(immersiveStrobePreference);
   immersiveVisualizer.start();
   showImmersiveCursor();
-  if (!document.fullscreenElement) void $("immersive-stage").requestFullscreen().catch(() => {});
+  if (!document.fullscreenElement) {
+    try {
+      const stage = $("immersive-stage");
+      if (typeof stage.requestFullscreen === "function") void Promise.resolve(stage.requestFullscreen()).catch(() => {});
+    } catch {}
+  }
 }
 $("open-visualizer").addEventListener("click", (event) => openImmersive("visualizer", event.currentTarget));
 $("visualizer-source").addEventListener("change", (event) => {
@@ -2328,9 +2333,12 @@ $("visualizer-source").addEventListener("change", (event) => {
     updateControls();
   }
 });
-$("capture-audio").addEventListener("click", () => {
+$("capture-audio").addEventListener("click", async (event) => {
+  const opener = event.currentTarget;
   if (systemAudio.state === "active" || systemAudio.state === "requesting") systemAudio.stop();
-  else void systemAudio.start();
+  else if (await systemAudio.start() && visualizationInput === "system" && systemAudio.state === "active" && !$("immersive-dialog").open) {
+    openImmersive("visualizer", opener);
+  }
 });
 $("close-immersive-visualizer").addEventListener("click", () => closeDialog($("immersive-dialog")));
 $("open-mega").addEventListener("click", (event) => openImmersive("mega", event.currentTarget));

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import { SystemAudioCapture } from "../demo/system-audio.js";
 
-function fixture({ channelCount = 2, audio = true, capture, sampleRate = 48000 } = {}) {
+function fixture({ channelCount = 2, audio = true, capture, sampleRate = 48000, platform = "Win32" } = {}) {
   const tracks = Array.from({ length: audio ? 2 : 1 }, () => Object.assign(new EventTarget(), {
     readyState: "live", stops: 0,
     stop() { this.stops++; this.readyState = "ended"; },
@@ -29,6 +29,7 @@ function fixture({ channelCount = 2, audio = true, capture, sampleRate = 48000 }
   };
   let options;
   const adapter = new SystemAudioCapture({
+    platform,
     mediaDevices: { getDisplayMedia: async value => { options = value; return capture ? capture() : stream; } },
     createContext: () => context
   });
@@ -115,6 +116,7 @@ test("system audio refreshes stable stereo buffers and revision without audible 
   assert.equal(await setup.adapter.start(), true);
   assert.equal(setup.options().systemAudio, "include");
   assert.equal(setup.options().video.displaySurface, "monitor");
+  assert.equal(setup.options().windowAudio, undefined);
   const source = setup.adapter.readSource();
   const channels = source.readChannels();
   assert.equal(source.streamCount, 2);
@@ -236,9 +238,34 @@ test("missing audio and denied permission produce recoverable errors", async () 
   assert(silent.tracks.every(track => track.stops === 1));
   const denied = fixture({ capture: () => { throw new DOMException("Denied", "NotAllowedError"); } });
   assert.equal(await denied.adapter.start(), false);
-  assert.match(denied.adapter.error, /cancelled or denied/);
+  assert.match(denied.adapter.error, /permission denied/);
   assert.equal(denied.context.state, "closed");
   assert.equal(denied.adapter.session, undefined);
+});
+
+test("macOS prefers window sharing with system audio and explains OS capture failures", async () => {
+  for (const platform of ["MacIntel", "macOS"]) {
+    const setup = fixture({ platform });
+    assert.equal(await setup.adapter.start(), true);
+    assert.equal(setup.options().video.displaySurface, "window");
+    assert.equal(setup.options().windowAudio, "system");
+    assert.equal(setup.options().systemAudio, "include");
+    setup.adapter.stop();
+  }
+  for (const name of ["NotAllowedError", "NotReadableError", "AbortError"]) {
+    const setup = fixture({ platform: "MacIntel", capture: () => { throw new DOMException("Cancelled by user", name); } });
+    assert.equal(await setup.adapter.start(), false);
+    assert.match(setup.adapter.error, /Privacy & Security/);
+    assert.match(setup.adapter.error, /Share tab audio/);
+    assert.doesNotMatch(setup.adapter.error, /Cancelled by user/);
+    assert.equal(setup.context.state, "closed");
+    assert.equal(setup.adapter.session, undefined);
+  }
+  const silent = fixture({ platform: "MacIntel", audio: false });
+  assert.equal(await silent.adapter.start(), false);
+  assert.match(silent.adapter.error, /No audio.*Share tab audio/);
+  assert.match(silent.adapter.error, /Select Window, choose Module Player/);
+  assert(silent.tracks.every(track => track.stops === 1));
 });
 
 test("cancelling pending permission releases a late stream and prevents activation", async () => {
@@ -291,6 +318,70 @@ test("context resume failure releases all tracks and allows a retry", async () =
   setup.adapter.createContext = () => retry.context;
   assert.equal(await setup.adapter.start(), true);
   setup.adapter.stop();
+});
+
+test("capture button opens the visualizer only after a successful current sharing request", async () => {
+  const source = await readFile(new URL("../demo/main.js", import.meta.url), "utf8");
+  const handler = source.slice(source.indexOf('$("capture-audio").addEventListener'), source.indexOf('$("close-immersive-visualizer").addEventListener'));
+  for (const outcome of ["success", "denied", "no-audio", "cancelled", "source-changed", "already-open"]) {
+    let resolve;
+    let reject;
+    const setup = fixture({ audio: outcome !== "no-audio", capture: () => new Promise((done, fail) => { resolve = done; reject = fail; }) });
+    const dialog = { open: false };
+    const opened = [];
+    let click;
+    const button = { addEventListener: (_, callback) => { click = callback; } };
+    const runtime = vm.createContext({
+      systemAudio: setup.adapter, visualizationInput: "system",
+      $: name => name === "capture-audio" ? button : dialog,
+      openImmersive: (mode, opener) => { opened.push({ mode, opener }); dialog.open = true; }
+    });
+    vm.runInContext(handler, runtime);
+    const event = { currentTarget: button };
+    const pending = click(event);
+    event.currentTarget = null;
+    assert.equal(setup.adapter.state, "requesting");
+    assert.equal(opened.length, 0, "The picker must complete before the visualizer opens");
+    if (outcome === "cancelled") await click({ currentTarget: button });
+    if (outcome === "source-changed") runtime.visualizationInput = "module";
+    if (outcome === "already-open") dialog.open = true;
+    if (outcome === "denied") reject(new DOMException("Denied", "NotAllowedError"));
+    else resolve(setup.stream);
+    await pending;
+    assert.equal(opened.length, outcome === "success" ? 1 : 0, outcome);
+    if (outcome === "success") {
+      assert.equal(opened[0].mode, "visualizer");
+      assert.equal(opened[0].opener, button, "Retain the focus target across the asynchronous picker");
+      await click({ currentTarget: button });
+      assert.equal(setup.adapter.state, "idle", "Stop capture must remain available");
+      assert.equal(opened.length, 1);
+    }
+    setup.adapter.stop();
+    assert.equal(setup.context.state, "closed");
+    if (outcome !== "denied") assert(setup.tracks.every(track => track.stops === 1));
+  }
+});
+
+test("visualizer remains usable when fullscreen is unavailable or denied on mobile", async () => {
+  const source = await readFile(new URL("../demo/main.js", import.meta.url), "utf8");
+  for (const requestFullscreen of [undefined, () => Promise.reject(new Error("Gesture required")), () => { throw new Error("Unavailable"); }, () => undefined]) {
+    for (const visualizationInput of ["module", "system"]) {
+      let starts = 0;
+      let opens = 0;
+      const runtime = vm.createContext({
+        visualizationInput, systemAudio: { state: "active" }, immersiveStrobePreference: false,
+        document: { fullscreenElement: null }, $: () => ({ requestFullscreen }),
+        setImmersiveMode() {}, updateImmersiveLabels() {}, openDialog: () => opens++,
+        stopScopeLoop() {}, updateSidWriteTracing() {}, setImmersiveStrobe() {}, showImmersiveCursor() {},
+        immersiveVisualizer: { start: () => starts++ }
+      });
+      vm.runInContext(source.slice(source.indexOf("function openImmersive("), source.indexOf('$("open-visualizer").addEventListener')), runtime);
+      assert.doesNotThrow(() => runtime.openImmersive("visualizer", {}));
+      await Promise.resolve();
+      assert.equal(opens, 1);
+      assert.equal(starts, 1);
+    }
+  }
 });
 
 test("closing and reopening the visualizer reuses live capture until explicitly stopped", async () => {
@@ -468,6 +559,11 @@ test("demo enables system visualization without a module or scopes and returns w
   runtime.updateControls();
   assert.equal(element("open-visualizer").disabled, true);
   assert.equal(element("capture-audio").disabled, false);
+  runtime.systemAudio.supported = false;
+  runtime.updateControls();
+  assert.equal(element("capture-audio").disabled, true);
+  assert.match(element("capture-status").textContent, /Select Module/);
+  runtime.systemAudio.supported = true;
   runtime.systemAudio.state = "requesting";
   runtime.updateControls();
   assert.equal(element("capture-audio").textContent, "Cancel capture");
@@ -494,6 +590,7 @@ test("demo enables system visualization without a module or scopes and returns w
   assert.equal(runtime.visualizationInput, "module");
   assert.equal(element("visualizer-source").value, "module");
   assert.equal(element("capture-audio").hidden, true);
+  assert.equal(element("close-immersive-visualizer").hidden, false, "Module visualization needs a touch-accessible exit without fullscreen");
   assert.equal(element("immersive-title").hidden, false);
   assert.equal(element("immersive-title").textContent, "Module title");
   assert.equal(runtime.player.state, "paused");

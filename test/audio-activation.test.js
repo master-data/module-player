@@ -10,7 +10,7 @@ function browserMock(context) {
   const calls = [];
   const document = new EventTarget();
   document.createElement = () => ({ setAttribute() {} });
-  const globals = ["document", "AudioContext", "window", "navigator"];
+  const globals = ["document", "AudioContext", "webkitAudioContext", "window", "navigator"];
   const originals = globals.map(name => Object.getOwnPropertyDescriptor(globalThis, name));
   context.after(() => {
     globals.forEach((name, index) => {
@@ -71,6 +71,40 @@ test("interrupted audio retries but intentionally suspended audio stays paused",
   audio.setState("running");
   document.dispatchEvent(new Event("keydown"));
   assert.equal(calls.length, 5);
+});
+
+test("Safari-style prefixed audio works without an audioSession API", async (context) => {
+  const { calls, document } = browserMock(context);
+  globalThis.webkitAudioContext = globalThis.AudioContext;
+  globalThis.AudioContext = undefined;
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+  const audio = createPlaybackAudioContext();
+  assert.deepEqual(calls, ["create", "resume", "start"]);
+  audio.setState("running");
+  for (let interruption = 0; interruption < 3; interruption++) {
+    audio.setState("interrupted");
+    const before = calls.length;
+    document.dispatchEvent(new Event("touchend"));
+    assert.deepEqual(calls.slice(before), ["resume", "start"]);
+    audio.setState("running");
+    document.dispatchEvent(new Event("click"));
+    assert.equal(calls.length, before + 2);
+  }
+  await audio.close();
+});
+
+test("audio activation survives denied resume and restricted audioSession settings", async (context) => {
+  const { calls, document } = browserMock(context);
+  Object.defineProperty(navigator.audioSession, "type", { set() { throw new Error("Unavailable"); } });
+  const audio = createPlaybackAudioContext();
+  context.mock.method(audio, "resume", () => Promise.reject(new Error("Gesture required")));
+  document.dispatchEvent(new Event("touchend"));
+  await Promise.resolve();
+  context.mock.method(audio, "resume", () => { calls.push("resumed"); audio.setState("running"); return Promise.resolve(); });
+  document.dispatchEvent(new Event("touchend"));
+  assert.equal(audio.state, "running");
+  assert(calls.includes("resumed"));
+  await audio.close();
 });
 
 test("closing a context removes its activation listeners", async (context) => {
